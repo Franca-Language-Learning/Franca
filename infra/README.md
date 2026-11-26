@@ -11,6 +11,9 @@ Franca runs as a set of containers, which are small separate programs that Docke
 | `updater/franca_updater.py` | The updater (story E01-007) |
 | `caddy/Caddyfile` | The web server's configuration: the client, the `/api` forwarding and the security headers |
 | `tests/test-bundle.sh` | Starts the bundle and checks it. The pipeline runs it on every pull request |
+| `images/backup.Dockerfile` | The image for the backup, with restic |
+| `backup/franca_backup.py` | The nightly backup and the monthly restore test (story E01-008) |
+| `tests/rehearse_backup.py` | A rehearsal of a backup, a restore test and a restore with real containers. The pipeline runs it after the update rehearsal |
 | `tests/rehearse_update.py` | A rehearsal of an update and a rollback with real containers. The pipeline runs it after the bundle check |
 
 Secrets are files in a folder on the PC (`FRANCA_SECRETS_DIR`, by default `infra/secrets`): `google_client_secret` and `session_secret`. Docker passes them to the app container under `/run/secrets`, with the files' own permissions, so the app's user (number 10001) has to be able to read them. The installer writes them (story E01-011).
@@ -41,6 +44,14 @@ The updater reaches Docker only through the socket proxy. Calls about containers
 
 The installer switches the updater on with `COMPOSE_PROFILES=updates` in `.env`, and writes the path of the bundle folder to `FRANCA_BUNDLE_DIR`, so that the updater sees the bundle at the same path as Docker does. The updater runs as user 10003 and writes `.env`, so that user has to be able to write to the bundle folder. On the Windows PC, the folder has to be given as a path that Docker's Linux containers can use; the installer (story E01-011) chooses that path and is tested on the PC.
 
+## Backups
+
+Each night at 03:30 UTC (an hour after the update check), a copy of the database is taken and added to an encrypted restic repository in `FRANCA_BACKUP_DIR`, a folder on a second disk in the PC (disk J:) until an off-site store is chosen. The time can be changed with `FRANCA_BACKUP_AT_UTC`. Old backups are thinned out: one a day for 14 days, one a week for 8 weeks and one a month for 12 months are kept. Once a month the latest backup is restored into a scratch folder and checked, and part of the repository's data is read back.
+
+The backup password is the `backup_password` secret. The installer writes it and shows it to the owner once, to keep in a password manager; without it the backups cannot be read. `docs/restoring-a-backup.md` has the steps for a restore. The results are in the `backup-status` volume, in `backup.json` and `restore-test.json`.
+
+The backup container runs as the app's user (10001), so the backup folder on disk J: has to be writable by that user.
+
 ## Containers in later stories
 
 The other containers will be added in later stories:
@@ -50,7 +61,6 @@ The other containers will be added in later stories:
 | `worker` | The first story with a background job (pack import, WP3) |
 | `speech` | E09-011 and the later speech stories |
 | `languagetool` | The answer-checking stories (WP4) |
-| `backup` | E01-008 |
 | `status` | E01-010 |
 | `tailscale` | E01-009 |
 

@@ -12,6 +12,7 @@ FRANCA_SECRETS_DIR="$(mktemp -d)"
 export FRANCA_SECRETS_DIR
 : > "$FRANCA_SECRETS_DIR/google_client_secret"
 head -c 32 /dev/urandom | base64 > "$FRANCA_SECRETS_DIR/session_secret"
+head -c 32 /dev/urandom | base64 > "$FRANCA_SECRETS_DIR/backup_password"
 # Compose mounts secret files with their own permissions, so the app's user (10001) has to be able to read them.
 chmod 0644 "$FRANCA_SECRETS_DIR"/*
 compose=(docker compose -f infra/compose.yaml)
@@ -67,6 +68,12 @@ else
     fail "the updater image lacks docker, compose or cosign"
 fi
 if [[ "$(docker inspect --format '{{.Config.User}}' "$updater_image")" == "10003:10003" ]]; then pass "the updater runs as user 10003"; else fail "the updater does not run as user 10003"; fi
+
+# The backup image (story E01-008) is in the "backups" profile, so it is built and checked on its own here.
+if "${compose[@]}" --profile backups build backup >/dev/null; then pass "the backup image builds"; else fail "the backup image does not build"; fi
+backup_image="franca/backup:${FRANCA_VERSION:-0.1.0-dev}"
+if docker run --rm --entrypoint restic "$backup_image" version >/dev/null 2>&1; then pass "the backup image has restic"; else fail "the backup image lacks restic"; fi
+if [[ "$(docker inspect --format '{{.Config.User}}' "$backup_image")" == "10001:10001" ]]; then pass "the backup runs as the app's user"; else fail "the backup does not run as user 10001"; fi
 
 if [[ "$failures" -ne 0 ]]; then
     "${compose[@]}" logs --no-color | tail -50

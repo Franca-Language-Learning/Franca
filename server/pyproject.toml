@@ -41,7 +41,7 @@ dev = [
 package = false
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "../contracts/db/tests", "../tools/tests", "../infra/updater/tests"]
+testpaths = ["tests", "../contracts/db/tests", "../tools/tests", "../infra/updater/tests", "../infra/backup/tests"]
 addopts = "-q --strict-markers"
 pythonpath = ["src"]
 
@@ -62,6 +62,9 @@ ignore = ["E501"]
 # The updater runs docker and cosign by name, with arguments it builds itself.
 "../infra/updater/**" = ["S603", "S607"]
 "../infra/updater/tests/**" = ["S101", "S102", "S603", "S607"]
+# The backup runs restic by name, with arguments it builds itself.
+"../infra/backup/**" = ["S603", "S607"]
+"../infra/backup/tests/**" = ["S101", "S603", "S607"]
 "../infra/tests/**" = ["S603", "S607", "S608"]
 
 [tool.mypy]

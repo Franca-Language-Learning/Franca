@@ -15,11 +15,11 @@ tools/check-startup-files.sh .venv
 
 cd "$root/server"
 step "Lint and format"
-uv run ruff check . ../contracts ../tools ../infra/updater ../infra/tests
-uv run ruff format --check . ../contracts ../tools ../infra/updater ../infra/tests
+uv run ruff check . ../contracts ../tools ../infra/updater ../infra/backup ../infra/tests
+uv run ruff format --check . ../contracts ../tools ../infra/updater ../infra/backup ../infra/tests
 step "Type check"
 uv run mypy
-uv run mypy --strict ../tools/content_guard.py ../infra/updater/franca_updater.py ../infra/tests/rehearse_update.py
+uv run mypy --strict ../tools/content_guard.py ../infra/updater/franca_updater.py ../infra/backup/franca_backup.py ../infra/tests/rehearse_update.py ../infra/tests/rehearse_backup.py
 step "Module boundaries"
 PYTHONPATH=src uv run lint-imports
 step "Server, contract and tool tests"
