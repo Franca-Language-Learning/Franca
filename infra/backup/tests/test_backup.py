@@ -449,6 +449,37 @@ def test_before_the_app_has_made_its_database_the_first_backup_waits(tmp_path: P
     assert backup.healthy(NOW)
 
 
+def test_the_wait_for_the_database_keeps_the_time_it_started(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    (tmp_path / "data" / "franca.db").unlink()
+
+    backup.back_up(NOW)
+    backup.back_up(NOW + timedelta(hours=3))
+
+    assert backup.status.read("backup-waiting.json")["waitingSince"] == NOW.astimezone(UTC).isoformat(timespec="seconds")
+
+
+def test_no_database_a_day_after_installation_is_a_failure(tmp_path: Path) -> None:
+    backup, restic = make(tmp_path)
+    (tmp_path / "data" / "franca.db").unlink()
+    backup.back_up(NOW)
+
+    result = backup.back_up(NOW + timedelta(hours=25))
+
+    assert result == "backup-failed"
+    assert "data volume" in backup.status.read("backup.json")["message"]
+    assert restic.commands == []
+    assert not backup.healthy(NOW + timedelta(hours=25))
+
+
+def test_a_missing_backup_disk_is_a_failure_while_waiting_for_the_database(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    (tmp_path / "data" / "franca.db").unlink()
+    (backup.backups / fb.DISK_MARKER).unlink()
+
+    assert backup.back_up(NOW) == "backup-failed"
+
+
 def test_a_database_that_goes_missing_after_a_backup_is_a_failure(tmp_path: Path) -> None:
     backup, _restic = make(tmp_path)
     backup.back_up(NOW)
