@@ -124,6 +124,9 @@ services:
         FRANCA_VERSION: ${FRANCA_VERSION:-0.1.0-dev}
     image: ${FRANCA_BACKUP_IMAGE:-franca/backup:${FRANCA_VERSION:-0.1.0-dev}}
     profiles: [backups]
+    # A small init process passes stop signals on, so a stop does not cut restic off mid-way.
+    init: true
+    stop_grace_period: 2m
     environment:
       FRANCA_BACKUP_AT_UTC: ${FRANCA_BACKUP_AT_UTC:-03:30}
       FRANCA_HEALTH_URL: http://app:8000/api/v1/health

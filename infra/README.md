@@ -56,7 +56,7 @@ Once a month the latest backup is restored into a scratch folder and checked, an
 
 The backup password is the `backup_password` secret. The installer writes it and shows it to the owner once, to keep in a password manager; without it the backups cannot be read. `docs/restoring-a-backup.md` has the steps for a restore. The backup and restore-test results are in the `backup-status` volume, in `backup.json` and `restore-test.json`.
 
-The backup container runs as the app's user (10001), so the backup folder on disk J: has to be writable by that user.
+The backup container runs as the app's user (10001), so the backup folder on disk J: has to be writable by that user. The installer puts a file called `.franca-backup-disk` in the backup folder. Without that file the disk counts as missing and no backup is made, so a backup never goes to an empty folder on another disk when disk J: is not connected. A night when the PC was off is made up when it is on again.
 
 ## Containers in later stories
 

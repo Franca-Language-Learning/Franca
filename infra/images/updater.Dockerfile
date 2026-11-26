@@ -9,12 +9,15 @@ FROM docker:29.10.0-cli AS docker-cli
 # releases with Go 1.27.4 and compress 1.20.2. Remove this stage when the published binaries have these versions.
 FROM golang:1.27.4-trixie AS tools
 ENV CGO_ENABLED=0 GOFLAGS=-trimpath
+# Each tag is checked against its commit, so a moved tag is noticed.
 RUN git clone --quiet --depth 1 --branch v5.8.0 https://github.com/docker/compose /src/compose \
     && cd /src/compose \
+    && test "$(git rev-parse HEAD)" = aee88dcde588d9dc7d8d2902f97b6b5502fdb771 \
     && go get github.com/klauspost/compress@v1.20.2 \
     && go build -ldflags "-s -w -X github.com/docker/compose/v5/internal.Version=v5.8.0" -o /out/docker-compose ./cmd
 RUN git clone --quiet --depth 1 --branch v3.1.4 https://github.com/sigstore/cosign /src/cosign \
     && cd /src/cosign \
+    && test "$(git rev-parse HEAD)" = 0e48502cf5ef34e2e60bbd3617aa19945712f705 \
     && go get github.com/klauspost/compress@v1.20.2 \
     && go build -ldflags "-s -w" -o /out/cosign ./cmd/cosign
 

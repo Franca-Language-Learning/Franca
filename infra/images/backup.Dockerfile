@@ -6,8 +6,10 @@
 # with versions that have known vulnerabilities. Remove this stage when a restic release has these versions or newer.
 FROM golang:1.27.4-trixie AS restic
 ENV CGO_ENABLED=0 GOFLAGS=-trimpath
+# The tag is checked against its commit, so a moved tag is noticed.
 RUN git clone --quiet --depth 1 --branch v0.19.1 https://github.com/restic/restic /src/restic \
     && cd /src/restic \
+    && test "$(git rev-parse HEAD)" = 6aa3a516ce654808a1f28f9fa21e9b7c8e6e90bf \
     && go get github.com/klauspost/compress@v1.20.2 \
     && go build -ldflags "-s -w -X main.version=0.19.1" -o /out/restic ./cmd/restic
 
@@ -30,5 +32,6 @@ ENV HOME=/tmp \
     RESTIC_CACHE_DIR=/cache/restic \
     FRANCA_VERSION=$FRANCA_VERSION
 USER 10001:10001
-HEALTHCHECK --interval=60s --timeout=5s --retries=3 CMD ["python", "-c", "import os; os.kill(1, 0)"]
+# Healthy until the first backup is tried, then while the last successful backup is less than two days old.
+HEALTHCHECK --interval=5m --timeout=10s --retries=1 CMD ["python", "/app/franca_backup.py", "health"]
 CMD ["python", "/app/franca_backup.py", "serve"]

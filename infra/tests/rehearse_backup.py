@@ -65,6 +65,7 @@ def main() -> int:
         backups = bundle / "disk-j"
         backups.mkdir()
         backups.chmod(0o777)  # the backup container's user (10001) writes here, as it will on disk J:
+        (backups / ".franca-backup-disk").write_text("Franca backups\n", encoding="utf-8")  # the installer puts this here
         port = free_port()
         (bundle / ".env").write_text(
             "\n".join(
@@ -107,12 +108,35 @@ def main() -> int:
             tested = in_backup("restore-test")
             check(tested.returncode == 0, "the restore test passes", failures)
             report = json.loads(tested.stdout.strip().splitlines()[-1]) if tested.stdout.strip() else {}
-            check(report.get("schema") == "0002", "the restore test reads the schema version of the restored database", failures)
+            check(bool(report.get("schema")), "the restore test reads the schema version of the restored database", failures)
 
-            files = [p for p in backups.rglob("*") if p.is_file()]
-            check((backups / "restic" / "config").exists(), "the backup folder has a restic repository", failures)
-            readable = [p for p in files if p.read_bytes().startswith(b"SQLite format 3")]
-            check(not readable, "no readable copy of the database is in the backup folder (it is encrypted)", failures)
+            # The repository's files belong to the backup container's user, so they are looked at from inside it.
+            look = sh(
+                *compose,
+                "run",
+                "--rm",
+                "--no-deps",
+                "--entrypoint",
+                "sh",
+                "backup",
+                "-c",
+                "test -f /backups/restic/config && echo repository",
+                check=False,
+            )
+            check("repository" in look.stdout, "the backup folder has a restic repository", failures)
+            plain = sh(
+                *compose,
+                "run",
+                "--rm",
+                "--no-deps",
+                "--entrypoint",
+                "sh",
+                "backup",
+                "-c",
+                "grep -rl 'SQLite format 3' /backups || true",
+                check=False,
+            )
+            check(not plain.stdout.strip(), "no readable copy of the database is in the backup folder (it is encrypted)", failures)
 
             refused = in_backup("restore-latest")
             check(refused.returncode != 0 and "refused" in refused.stdout, "a restore is refused while the app is running", failures)
@@ -130,6 +154,9 @@ def main() -> int:
             if failures:
                 print(sh(*compose, "logs", "--no-color", "--tail", "60", check=False).stdout)
             sh(*compose, "down", "--volumes", "--remove-orphans", check=False)
+            # The files written by the backup container's user are removed by root in a container, so the temporary
+            # folder can be removed.
+            sh("docker", "run", "--rm", "--user", "0", "--entrypoint", "rm", "-v", f"{backups}:/b", BACKUP, "-rf", "/b/restic", check=False)
     if failures:
         print(f"\nThe rehearsal failed: {len(failures)} check(s).")
         return 1

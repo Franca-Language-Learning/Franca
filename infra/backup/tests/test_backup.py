@@ -6,6 +6,7 @@ import sqlite3
 import subprocess
 import sys
 from collections.abc import Sequence
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -19,7 +20,7 @@ NOW = datetime(2026, 12, 7, 3, 30, tzinfo=UTC)
 
 
 def make_database(path: Path, rows: int = 1) -> None:
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("CREATE TABLE alembic_version (version_num TEXT)")
         connection.execute("INSERT INTO alembic_version VALUES ('0002')")
@@ -35,6 +36,8 @@ class FakeRestic:
         self.fail_on = fail_on
         self.store = tmp_path / "fake-store"
         self.repository_exists = False
+        self.missing_code = 10
+        self.summary = True
 
     def __call__(self, command: Sequence[str]) -> subprocess.CompletedProcess[str]:
         command = list(command)
@@ -43,7 +46,7 @@ class FakeRestic:
         if verb == self.fail_on:
             return subprocess.CompletedProcess(command, 1, "", f"Fatal: {verb} failed\n")
         if verb == "cat" and not self.repository_exists:
-            return subprocess.CompletedProcess(command, 10, "", "Fatal: repository does not exist\n")
+            return subprocess.CompletedProcess(command, self.missing_code, "", "Fatal: repository does not exist\n")
         if verb == "init":
             self.repository_exists = True
         if verb == "backup":
@@ -51,7 +54,8 @@ class FakeRestic:
             self.store.mkdir(exist_ok=True)
             for file in source.iterdir():
                 (self.store / file.name).write_bytes(file.read_bytes())
-            return subprocess.CompletedProcess(command, 0, json.dumps({"message_type": "summary", "snapshot_id": "abc123"}) + "\n", "")
+            summary = json.dumps({"message_type": "summary", "snapshot_id": "abc123"}) if self.summary else ""
+            return subprocess.CompletedProcess(command, 0, summary + "\n", "")
         if verb == "restore":
             target = Path(command[command.index("--target") + 1])
             restored = target / "staging"
@@ -65,12 +69,15 @@ def make(tmp_path: Path, fail_on: str | None = None, healthy: bool = False) -> t
     (tmp_path / "data").mkdir()
     make_database(tmp_path / "data" / "franca.db")
     restic = FakeRestic(tmp_path, fail_on)
+    (tmp_path / "backups").mkdir()
+    (tmp_path / "backups" / fb.DISK_MARKER).write_text("Franca backups\n", encoding="utf-8")
     backup = fb.Backup(
         data=tmp_path / "data",
         work=tmp_path / "cache",
         status=fb.StatusFiles(tmp_path / "status"),
         restic=fb.Restic(run=restic),
         app_answers=lambda: healthy,
+        backups=tmp_path / "backups",
     )
     return backup, restic
 
@@ -179,7 +186,7 @@ def test_the_restore_test_does_not_touch_the_live_database(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize(
-    ("last", "now", "due"),
+    ("last_passed", "now", "due"),
     [
         (None, NOW, True),
         ("2026-11-30T03:30:00+00:00", NOW, False),
@@ -188,11 +195,21 @@ def test_the_restore_test_does_not_touch_the_live_database(tmp_path: Path) -> No
         ("2026-11-07T03:31:00+00:00", NOW, False),
     ],
 )
-def test_the_restore_test_is_due_once_a_month(tmp_path: Path, last: str | None, now: datetime, due: bool) -> None:
+def test_the_restore_test_is_due_once_a_month(tmp_path: Path, last_passed: str | None, now: datetime, due: bool) -> None:
     backup, _restic = make(tmp_path)
-    if last:
-        backup.status.write("restore-test.json", result="restore-test-passed", testedAt=last)
+    if last_passed:
+        backup.status.write("restore-test.json", result="restore-test-passed", testedAt=last_passed, lastPassedAt=last_passed)
     assert backup.restore_test_due(now) is due
+
+
+def test_after_a_failed_restore_test_it_is_tried_again_the_next_night(tmp_path: Path) -> None:
+    backup, restic = make(tmp_path)
+    backup.back_up(NOW)
+    backup.restore_test(NOW)
+    (restic.store / "franca.db").write_bytes(b"not a database")
+    later = NOW.replace(year=2027, month=1, day=8)
+    assert backup.restore_test(later) == "restore-test-failed"
+    assert backup.restore_test_due(later.replace(day=9)) is True
 
 
 # --- restoring for real
@@ -201,7 +218,7 @@ def test_the_restore_test_is_due_once_a_month(tmp_path: Path, last: str | None, 
 def test_restoring_the_latest_backup_puts_it_in_place_and_keeps_the_current_database(tmp_path: Path) -> None:
     backup, _restic = make(tmp_path)
     backup.back_up(NOW)
-    with sqlite3.connect(tmp_path / "data" / "franca.db") as live:
+    with closing(sqlite3.connect(tmp_path / "data" / "franca.db")) as live, live:
         live.execute("DELETE FROM notes")
 
     assert backup.restore_latest(NOW) == "restored"
@@ -224,10 +241,11 @@ def test_a_damaged_backup_is_not_put_in_place(tmp_path: Path) -> None:
     backup, restic = make(tmp_path)
     backup.back_up(NOW)
     (restic.store / "franca.db").write_bytes(b"not a database")
-    before = (tmp_path / "data" / "franca.db").read_bytes()
 
     assert backup.restore_latest(NOW) == "restore-failed"
-    assert (tmp_path / "data" / "franca.db").read_bytes() == before
+    with closing(sqlite3.connect(tmp_path / "data" / "franca.db")) as live:
+        assert live.execute("SELECT text FROM notes").fetchall() == [("note 0",)]
+        assert live.execute("PRAGMA journal_mode").fetchone() == ("wal",)
 
 
 # --- the schedule
@@ -236,3 +254,94 @@ def test_a_damaged_backup_is_not_put_in_place(tmp_path: Path) -> None:
 def test_the_next_run_is_at_the_time_of_day_given() -> None:
     assert fb.next_run(datetime(2026, 12, 7, 3, 0, tzinfo=UTC), "03:30") == datetime(2026, 12, 7, 3, 30, tzinfo=UTC)
     assert fb.next_run(datetime(2026, 12, 7, 3, 30, tzinfo=UTC), "03:30") == datetime(2026, 12, 8, 3, 30, tzinfo=UTC)
+
+
+# --- after the security review
+
+
+def test_without_the_marker_file_the_backup_disk_counts_as_missing(tmp_path: Path) -> None:
+    # On a PC or server where disk J: is not there, the folder can be empty: no repository is made in it.
+    backup, restic = make(tmp_path)
+    (tmp_path / "backups" / fb.DISK_MARKER).unlink()
+
+    assert backup.back_up(NOW) == "backup-failed"
+
+    assert "init" not in verbs(restic)
+    assert "backup disk" in status(tmp_path, "backup.json")["message"]
+
+
+def test_a_repository_that_cannot_be_opened_is_not_replaced_by_a_new_one(tmp_path: Path) -> None:
+    # For example a wrong password: restic exits with 12, not 10.
+    backup, restic = make(tmp_path)
+    restic.missing_code = 12
+
+    assert backup.back_up(NOW) == "backup-failed"
+    assert "init" not in verbs(restic)
+
+
+def test_a_backup_without_a_snapshot_id_is_a_failure(tmp_path: Path) -> None:
+    backup, restic = make(tmp_path)
+    restic.summary = False
+    assert backup.back_up(NOW) == "backup-failed"
+
+
+def test_the_last_successful_backup_is_kept_after_a_failure(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path, fail_on=None)
+    backup.back_up(NOW)
+    backup.restic = fb.Restic(run=FakeRestic(tmp_path, fail_on="backup"))
+    backup.back_up(NOW.replace(day=8))
+    assert status(tmp_path, "backup.json")["lastSucceededAt"] == "2026-12-07T03:30:00+00:00"
+
+
+@pytest.mark.parametrize(
+    ("last", "now", "due"),
+    [
+        (None, datetime(2026, 12, 7, 10, 0, tzinfo=UTC), True),  # never backed up: at once
+        ("2026-12-07T03:30:00+00:00", datetime(2026, 12, 7, 10, 0, tzinfo=UTC), False),
+        ("2026-12-06T03:30:00+00:00", datetime(2026, 12, 7, 3, 0, tzinfo=UTC), False),  # not yet 03:30
+        ("2026-12-06T03:30:00+00:00", datetime(2026, 12, 7, 3, 31, tzinfo=UTC), True),
+        ("2026-12-04T03:30:00+00:00", datetime(2026, 12, 7, 1, 0, tzinfo=UTC), True),  # the PC was off: catch up
+    ],
+)
+def test_a_missed_backup_is_made_up_when_the_pc_is_on_again(tmp_path: Path, last: str | None, now: datetime, due: bool) -> None:
+    backup, _restic = make(tmp_path)
+    if last:
+        backup.status.write("backup.json", result="backed-up", at=last, lastSucceededAt=last)
+    assert backup.backup_due(now, "03:30") is due
+
+
+def test_restoring_is_refused_while_another_program_has_the_database_open(tmp_path: Path) -> None:
+    backup, restic = make(tmp_path)
+    backup.back_up(NOW)
+    holder = sqlite3.connect(tmp_path / "data" / "franca.db")
+    holder.execute("BEGIN")
+    holder.execute("SELECT count(*) FROM notes").fetchone()
+
+    assert backup.restore_latest(NOW) == "refused"
+
+    holder.rollback()
+    holder.close()
+    assert "restore" not in verbs(restic)
+
+
+def test_a_restore_that_fails_leaves_no_half_copied_file(tmp_path: Path) -> None:
+    backup, restic = make(tmp_path)
+    backup.back_up(NOW)
+    restic.store.joinpath("franca.db").write_bytes(b"not a database")
+    backup.restore_latest(NOW)
+    assert not (tmp_path / "data" / "franca.db.restore").exists()
+
+
+def test_the_monthly_check_reads_all_of_the_repositorys_data(tmp_path: Path) -> None:
+    backup, restic = make(tmp_path)
+    backup.back_up(NOW)
+    backup.restore_test(NOW)
+    assert restic.commands[-1] == ["restic", "check", "--read-data"]
+
+
+def test_the_health_check_follows_the_last_successful_backup(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    assert backup.healthy(NOW) is True  # no backup tried yet
+    backup.back_up(NOW)
+    assert backup.healthy(NOW.replace(day=8)) is True
+    assert backup.healthy(NOW.replace(day=10)) is False

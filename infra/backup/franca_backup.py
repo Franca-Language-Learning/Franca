@@ -1,7 +1,7 @@
 """Franca's backup (story E01-008): a nightly encrypted copy of the database, and a monthly test that the copy can be
 restored.
 
-Each night:
+Each night (or as soon as the PC is on again after a night it was off):
 1. A copy of the database is taken with SQLite's backup function, which includes changes still in the write-ahead
    log, and the copy is checked with PRAGMA integrity_check.
 2. The copy is added to a restic repository. restic encrypts it with the password in the backup_password secret.
@@ -9,7 +9,8 @@ Each night:
 3. Old copies are thinned out: one a day for 14 days, one a week for 8 weeks and one a month for 12 months are kept.
 
 Once a month, after the backup, the latest copy is restored into a scratch folder, its database is checked, and
-restic checks part of the repository's data. The live database is not touched by this test.
+restic reads back all of the repository's data. The live database is not touched by this test. (The test runs in the
+backup container, which has the data volume mounted for the nightly copy; the scratch folder is in its cache volume.)
 
 The results are written to backup.json and restore-test.json in the status folder, for the owner and for the health
 monitoring (story E01-010).
@@ -30,6 +31,7 @@ import sys
 import time
 import urllib.request
 from collections.abc import Callable, Sequence
+from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -39,6 +41,12 @@ KEEP = {"--keep-daily": "14", "--keep-weekly": "8", "--keep-monthly": "12"}
 RESTORE_TEST_EVERY = timedelta(days=30)
 HOST = "franca"
 DEFAULT_BACKUP_TIME = "03:30"
+# The installer puts this file on the backup disk. Without it the disk counts as missing, so a backup is never made
+# into an empty folder on another disk (as happens on a server when the disk is not mounted).
+DISK_MARKER = ".franca-backup-disk"
+# restic's exit code when there is no repository at the given place.
+NO_REPOSITORY = 10
+HEALTHY_FOR = timedelta(hours=48)
 
 
 class BackupError(Exception):
@@ -68,8 +76,13 @@ class Restic:
         return result.stdout
 
     def ensure_repository(self) -> None:
-        if self._restic("cat", "config").returncode != 0:
+        """Makes the repository if there is none. A repository that is there but cannot be opened (a wrong password,
+        a damaged file) is reported and left alone."""
+        found = self._restic("cat", "config")
+        if found.returncode == NO_REPOSITORY:
             self._check(self._restic("init"), "init")
+        elif found.returncode != 0:
+            self._check(found, "opening the repository")
 
     def back_up(self, folder: Path) -> str:
         """Backs up the files in folder and returns the new snapshot's id."""
@@ -79,9 +92,9 @@ class Restic:
                 message = json.loads(line)
             except ValueError:
                 continue
-            if message.get("message_type") == "summary":
-                return str(message.get("snapshot_id", ""))
-        return ""
+            if message.get("message_type") == "summary" and message.get("snapshot_id"):
+                return str(message["snapshot_id"])
+        raise BackupError("restic backup did not report a snapshot")
 
     def thin_out(self) -> None:
         arguments = ["forget", "--host", HOST, "--prune"]
@@ -92,8 +105,9 @@ class Restic:
     def restore_latest(self, target: Path) -> None:
         self._check(self._restic("restore", "latest", "--host", HOST, "--target", str(target)), "restore")
 
-    def check_some_data(self) -> None:
-        self._check(self._restic("check", "--read-data-subset", "5%"), "check")
+    def check_data(self) -> None:
+        """Reads back all of the repository's data. With one small database this takes seconds."""
+        self._check(self._restic("check", "--read-data"), "check")
 
 
 def copy_database(source: Path, target: Path) -> None:
@@ -103,7 +117,7 @@ def copy_database(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.unlink(missing_ok=True)
     # Opened for writing, because a database in WAL mode needs its shared-memory file, also to be read.
-    with sqlite3.connect(source) as live, sqlite3.connect(target) as copy:
+    with closing(sqlite3.connect(source)) as live, closing(sqlite3.connect(target)) as copy:
         live.backup(copy)
     check_database(target)
 
@@ -112,7 +126,7 @@ def keep_current(live: Path, kept: Path) -> None:
     """Keeps the database that is being replaced, with the changes still in its write-ahead log. A database that is too
     damaged to copy is kept as it is: the main file and its log files, under the new name."""
     try:
-        with sqlite3.connect(live) as current, sqlite3.connect(kept) as copy:
+        with closing(sqlite3.connect(live)) as current, closing(sqlite3.connect(kept)) as copy:
             current.backup(copy)
     except sqlite3.Error:
         kept.unlink(missing_ok=True)
@@ -125,7 +139,7 @@ def keep_current(live: Path, kept: Path) -> None:
 def check_database(path: Path) -> str:
     """Checks a database file and returns its schema version (the Alembic revision)."""
     try:
-        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as connection:
+        with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as connection:
             result = connection.execute("PRAGMA integrity_check").fetchone()
             if not result or result[0] != "ok":
                 raise BackupError(f"The database copy is damaged: {result}")
@@ -155,6 +169,23 @@ class StatusFiles:
             return {}
 
 
+def database_in_use(path: Path) -> bool:
+    """True when another program has the database open. Changing the journal mode succeeds only for the one
+    connection to a database, so it is tried, and the mode is put back."""
+    if not path.exists():
+        return False
+    try:
+        with closing(sqlite3.connect(path, timeout=1, isolation_level=None)) as connection:
+            mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+            changed = connection.execute("PRAGMA journal_mode = DELETE").fetchone()[0]
+            if changed != "delete":
+                return True
+            connection.execute(f"PRAGMA journal_mode = {mode}")
+    except sqlite3.OperationalError:
+        return True
+    return False
+
+
 def health_check(url: str) -> Callable[[], bool]:
     def answers() -> bool:
         try:
@@ -173,23 +204,54 @@ class Backup:
     status: StatusFiles
     restic: Restic
     app_answers: Callable[[], bool] = field(default=lambda: False)
+    backups: Path = Path("/backups")
 
     def back_up(self, now: datetime) -> str:
         staging = self.work / "staging"
+        last_success = self.status.read("backup.json").get("lastSucceededAt", "")
         try:
+            if not (self.backups / DISK_MARKER).is_file():
+                raise BackupError(
+                    f"The backup disk is not there: {self.backups} has no {DISK_MARKER} file. Check that disk J: is connected."
+                )
             copy_database(self.data / DATABASE, staging / DATABASE)
             self.restic.ensure_repository()
             snapshot = self.restic.back_up(staging)
             self.restic.thin_out()
         except (BackupError, OSError, sqlite3.Error, subprocess.SubprocessError) as error:
-            return self._report("backup.json", "backup-failed", now, message=str(error))
+            return self._report("backup.json", "backup-failed", now, lastSucceededAt=last_success, message=str(error))
         finally:
             shutil.rmtree(staging, ignore_errors=True)
             staging.mkdir(parents=True, exist_ok=True)
-        return self._report("backup.json", "backed-up", now, snapshot=snapshot, message="The database was backed up")
+        stamp = now.astimezone(UTC).isoformat(timespec="seconds")
+        return self._report("backup.json", "backed-up", now, snapshot=snapshot, lastSucceededAt=stamp, message="The database was backed up")
+
+    def backup_due(self, now: datetime, at: str) -> bool:
+        """Due when there has been no backup since the last daily time, so a night when the PC was off is made up
+        when it is on again."""
+        last = self.status.read("backup.json").get("lastSucceededAt")
+        if not last:
+            return True
+        try:
+            last_time = datetime.fromisoformat(last)
+        except ValueError:
+            return True
+        return last_time < next_run(now, at) - timedelta(days=1)
+
+    def healthy(self, now: datetime) -> bool:
+        """For the container's health check: healthy until the first backup is tried, then while the last successful
+        backup is less than two days old."""
+        status = self.status.read("backup.json")
+        if not status:
+            return True
+        try:
+            return now - datetime.fromisoformat(status.get("lastSucceededAt", "")) < HEALTHY_FOR
+        except ValueError:
+            return False
 
     def restore_test_due(self, now: datetime) -> bool:
-        last = self.status.read("restore-test.json").get("testedAt")
+        """Due a month after the last test that passed; after a failed test, the next night."""
+        last = self.status.read("restore-test.json").get("lastPassedAt")
         if not last:
             return True
         try:
@@ -206,43 +268,57 @@ class Backup:
             if restored is None:
                 raise BackupError("The latest backup has no database in it")
             schema = check_database(restored)
-            self.restic.check_some_data()
+            self.restic.check_data()
         except (BackupError, OSError, sqlite3.Error, subprocess.SubprocessError) as error:
-            return self._report("restore-test.json", "restore-test-failed", now, key="testedAt", message=str(error))
+            last_passed = self.status.read("restore-test.json").get("lastPassedAt", "")
+            return self._report(
+                "restore-test.json", "restore-test-failed", now, key="testedAt", lastPassedAt=last_passed, message=str(error)
+            )
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
+        stamp = now.astimezone(UTC).isoformat(timespec="seconds")
         return self._report(
             "restore-test.json",
             "restore-test-passed",
             now,
             key="testedAt",
+            lastPassedAt=stamp,
             schema=schema,
             message="The latest backup was restored and checked",
         )
 
     def restore_latest(self, now: datetime) -> str:
         """Puts the latest backup in place of the live database. The app has to be stopped first."""
-        if self.app_answers():
-            return self._report("restore.json", "refused", now, message="The app is running. Stop it first, then restore.")
+        live = self.data / DATABASE
+        if self.app_answers() or database_in_use(live):
+            return self._report(
+                "restore.json", "refused", now, message="The app is running or has the database open. Stop it first, then restore."
+            )
         incoming_folder = self.work / "restore"
         shutil.rmtree(incoming_folder, ignore_errors=True)
-        live = self.data / DATABASE
+        incoming = live.with_name(DATABASE + ".restore")
         try:
             self.restic.restore_latest(incoming_folder)
             restored = next(incoming_folder.rglob(DATABASE), None)
             if restored is None:
                 raise BackupError("The latest backup has no database in it")
             check_database(restored)
-            incoming = live.with_name(DATABASE + ".restore")
             shutil.copyfile(restored, incoming)
             with open(incoming, "rb") as copied:
                 os.fsync(copied.fileno())
             if live.exists():
                 keep_current(live, self.data / f"franca-before-restore-{now.astimezone(UTC):%Y%m%dT%H%M%SZ}.db")
-            os.replace(incoming, live)
+            # The old log files go first: SQLite would otherwise apply them to the restored database.
             for extra in (live.with_name(DATABASE + "-wal"), live.with_name(DATABASE + "-shm")):
                 extra.unlink(missing_ok=True)
+            os.replace(incoming, live)
+            folder = os.open(self.data, os.O_RDONLY)
+            try:
+                os.fsync(folder)
+            finally:
+                os.close(folder)
         except (BackupError, OSError, sqlite3.Error, subprocess.SubprocessError) as error:
+            incoming.unlink(missing_ok=True)
             return self._report("restore.json", "restore-failed", now, message=str(error))
         finally:
             shutil.rmtree(incoming_folder, ignore_errors=True)
@@ -284,6 +360,7 @@ def from_environment(environ: dict[str, str] | os._Environ[str]) -> Backup:
         status=StatusFiles(Path(environ.get("FRANCA_BACKUP_STATUS_DIR", "/status"))),
         restic=Restic(),
         app_answers=health_check(environ.get("FRANCA_HEALTH_URL", "http://app:8000/api/v1/health")),
+        backups=Path(environ.get("FRANCA_BACKUP_DIR_IN_CONTAINER", "/backups")),
     )
 
 
@@ -297,19 +374,27 @@ def main(argv: Sequence[str] = sys.argv[1:]) -> int:
         return 0 if backup.restore_test(now) == "restore-test-passed" else 1
     if command == "restore-latest":
         return 0 if backup.restore_latest(now) == "restored" else 1
+    if command == "health":
+        return 0 if backup.healthy(now) else 1
     if command != "serve":
-        print("Use: franca_backup.py [serve | backup | restore-test | restore-latest]", file=sys.stderr)
+        print("Use: franca_backup.py [serve | backup | restore-test | restore-latest | health]", file=sys.stderr)
         return 2
     at = backup_time(os.environ.get("FRANCA_BACKUP_AT_UTC", DEFAULT_BACKUP_TIME))
+    # The service looks every ten minutes whether a backup is due, so a night when the PC was off or asleep is made
+    # up when it is on again. After a failed backup, the next try is an hour later.
+    retry_after = datetime.min.replace(tzinfo=UTC)
     while True:
-        wake = next_run(datetime.now(UTC), at)
-        time.sleep(max(0.0, (wake - datetime.now(UTC)).total_seconds()))
         try:
             now = datetime.now(UTC)
-            if backup.back_up(now) == "backed-up" and backup.restore_test_due(now):
-                backup.restore_test(now)
-        except Exception as error:  # noqa: BLE001 - the service keeps running and tries again the next night
+            if now >= retry_after and backup.backup_due(now, at):
+                if backup.back_up(now) == "backed-up":
+                    if backup.restore_test_due(now):
+                        backup.restore_test(now)
+                else:
+                    retry_after = now + timedelta(hours=1)
+        except Exception as error:  # noqa: BLE001 - the service keeps running and tries again
             print(json.dumps({"result": "error", "message": repr(error)}), flush=True)
+        time.sleep(600)
 
 
 if __name__ == "__main__":
