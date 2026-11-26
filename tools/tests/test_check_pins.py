@@ -137,7 +137,7 @@ def test_a_remote_add_needs_a_checksum(tmp_path: Path) -> None:
 
 
 def test_scratch_lowercase_and_split_from_lines_are_read(tmp_path: Path) -> None:
-    text = f"FROM scratch AS empty\nfrom --platform linux/amd64 \\\n    alpine:3.23 AS Base\nFROM base\nCOPY --from=0 /a /b\n"
+    text = "FROM scratch AS empty\nfrom --platform linux/amd64 \\\n    alpine:3.23 AS Base\nFROM base\nCOPY --from=0 /a /b\n"
     assert problems_in(tmp_path, "x.Dockerfile", text) == ["alpine:3.23 has no digest"]
 
 
@@ -259,7 +259,6 @@ def test_every_image_and_source_in_this_repository_is_pinned() -> None:
 def test_the_repository_check_reads_the_files_that_name_images() -> None:
     names = {path.relative_to(ROOT).as_posix() for path in check_pins.files_to_check(ROOT)}
     assert {"infra/compose.yaml", "infra/images/app.Dockerfile", ".github/workflows/ci.yml", "infra/tests/rehearse_tailnet.py"} <= names
-
 
 
 def renovate_matches(manager_description_start: str) -> set[tuple[str, str]]:
