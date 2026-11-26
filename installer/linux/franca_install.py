@@ -8,7 +8,7 @@ The steps:
    does each night (franca_updater.py, which is installed beside this file).
 4. The secrets are written: the answers from the owner, and a backup password, an ntfy topic, a push token and a
    session secret, which are made here. The backup password and the topic are shown once.
-5. The bundle folder gets compose.yaml and .env, and the backup folder on disk J: gets the disk marker.
+5. compose.yaml and .env are written to the bundle folder, and the disk marker to the backup folder.
 6. The tailscale container is started first. When it has joined the tailnet, the PC's Tailscale name is read and
    written to .env, the auth key file is emptied, and the rest of the bundle is started.
 7. A test alert is sent to the ntfy topic.
@@ -102,7 +102,7 @@ class Answers:
 
     def check(self) -> None:
         if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", self.owner_email):
-            raise InstallError("The owner's e-mail address is not an e-mail address.")
+            raise InstallError("The e-mail address is not valid. Check it for typing errors.")
         if not re.fullmatch(r"[0-9]+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com", self.google_client_id):
             raise InstallError("The Google client ID has to end in .apps.googleusercontent.com.")
         if not re.fullmatch(r"[A-Za-z0-9_-]{8,200}", self.google_client_secret):
@@ -125,7 +125,7 @@ def _random_text(length: int) -> str:
 
 
 def _write_private(path: Path, value: str) -> None:
-    """Writes a secret file. The folder is root's alone; the file is readable, because Docker gives it to containers
+    """Writes a secret file. Only root can open the folder. The file is readable by all users, because Docker gives it to containers
     with the file's own permissions and each container reads it as its own user."""
     temporary = path.with_name(path.name + ".new")
     temporary.write_text(value, encoding="utf-8")
@@ -179,9 +179,9 @@ def write_env(bundle: Path, release: fu.Release, answers: Answers, tailscale_nam
 
 def prepare_backup_folder(folder: Path, chown: Callable[[Path, int, int], None] = os.chown) -> None:
     """Makes the backup folder on the backup disk, owned by the backup container's user, with the disk marker that
-    the backup looks for before each backup."""
+    is checked before each backup."""
     if not folder.parent.is_dir():
-        raise InstallError(f"The backup disk is not there: {folder.parent} does not exist. Check that disk J: is connected.")
+        raise InstallError(f"The backup disk was not found ({folder.parent} does not exist). Check that the disk is connected.")
     folder.mkdir(exist_ok=True)
     marker = folder / DISK_MARKER
     if not marker.exists():

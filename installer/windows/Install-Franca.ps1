@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     The steps:
-    1. WSL 2 is switched on, if it is not on yet. Windows may need a restart after this; run the installer again then.
+    1. WSL 2 is switched on, if it is not on yet. Windows may need a restart after this, and then the installer has to be run again.
     2. A Debian system called Franca is added to WSL, with systemd, so that Docker runs as a service in it.
     3. The Linux part of the installer (franca_install.py) is copied into it and given the owner's answers. It installs
        Docker Engine, writes the secrets and starts Franca.
@@ -29,8 +29,9 @@ $LinuxInstallerFolder = '/opt/franca-installer'
 $LinuxFiles = @('franca_install.py', 'franca_updater.py', 'compose.yaml')
 $TaskName = 'Franca'
 
-# The contents of /etc/wsl.conf in the Franca system. systemd starts Docker; the metadata option lets the installer give
-# the backup folder on disk J: to the backup container's user; Windows programs are left out of the Linux path.
+# The contents of /etc/wsl.conf in the Franca system. With systemd on, Docker runs as a service. The metadata option is
+# needed so that the backup folder on disk J: can be given to the backup container's user. Windows programs are left out
+# of the Linux path.
 $WslConf = @'
 [boot]
 systemd = true
@@ -117,7 +118,7 @@ function Read-InstallSetting {
     $clientSecret = ConvertFrom-SecureText (Read-Host 'The Google client secret (it is not shown as you type)' -AsSecureString)
     $authKey = ConvertFrom-SecureText (Read-Host 'The Tailscale auth key (it is not shown as you type)' -AsSecureString)
     do {
-        $drive = Read-Host 'The letter of the backup disk [J]'
+        $drive = Read-Host 'The letter of the backup disk (press Enter for J)'
         if (-not $drive) { $drive = 'J' }
         $drive = $drive.TrimEnd(':')
         $ok = ($drive -match '^[A-Za-z]$') -and (Test-Path "$($drive):\")
@@ -130,7 +131,7 @@ function Read-InstallSetting {
 function Install-FrancaDistro {
     <# Adds the Debian system called Franca to WSL, unless it is there already. #>
     if ((Get-WslDistroName) -contains $DistroName) { return }
-    Write-Host "Adding the $DistroName system to WSL. This downloads Debian and takes a few minutes."
+    Write-Host "Adding the $DistroName system to WSL. Debian is downloaded, which takes a few minutes."
     New-Item -ItemType Directory -Force -Path (Join-Path $InstallRoot 'wsl') | Out-Null
     Invoke-Wsl -Arguments @('--install', 'Debian', '--name', $DistroName, '--location', (Join-Path $InstallRoot 'wsl'), '--no-launch', '--web-download') | Out-Null
     Invoke-Wsl -Arguments @('--set-version', $DistroName, '2') | Out-Null
@@ -155,7 +156,7 @@ function Copy-LinuxInstaller {
 function Register-FrancaStartup {
     <#
     Adds the scheduled task that starts the Franca system when the PC starts, before anyone signs in. The task keeps
-    the system running; systemd in it starts Docker, and Docker starts Franca's containers. The task runs as the owner,
+    the system running. systemd in it starts Docker, and Docker starts Franca's containers. The task runs as the owner,
     because WSL systems belong to a Windows user, and with S4U, so that no password is stored.
     #>
     $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -194,13 +195,13 @@ function Show-Result {
         Write-Host 'In the ntfy app on your phone, subscribe to this topic. A test alert has been sent to it.'
     }
     Write-Host ''
-    Write-Host 'Next: add the address to your Google sign-in client, as described in docs/installing-franca.md.'
+    Write-Host 'Next: add the address to your Google sign-in client, as described in step 13 of docs/installing-franca.md.'
 }
 
 function Install-Franca {
-    if (-not (Test-Administrator)) { throw 'Run the installer with Install-Franca.cmd, which asks for administrator rights.' }
+    if (-not (Test-Administrator)) { throw 'Start the installer with Install-Franca.cmd, so that it has administrator rights.' }
     if (-not (Test-WslReady)) {
-        Write-Host 'Switching on WSL. When this is done, restart the PC and run the installer again.'
+        Write-Host 'Switching on WSL. When the installer has finished, restart the PC and run it again.'
         Invoke-Wsl -Arguments @('--install', '--no-distribution') | Out-Null
         return
     }

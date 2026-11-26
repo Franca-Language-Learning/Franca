@@ -16,12 +16,12 @@ The installer for the owner's Windows PC (stories E01-011 and E01-012). The owne
 - Franca runs in a WSL 2 system called Franca, with Debian and systemd. Docker Engine runs there as a service, so Docker Desktop is not needed.
 - The bundle is in `/opt/franca` inside that system: `compose.yaml`, `.env` and the `secrets` folder. The data is in Docker volumes inside the system, not on the Windows disk.
 - The backups go to `/mnt/j/franca-backups`, which is a folder on disk J:. `/etc/wsl.conf` mounts Windows disks with the `metadata` option, so that the folder can belong to the backup container's user (10001).
-- A scheduled task called Franca runs `wsl.exe -d Franca -u root -- sleep infinity` when the PC starts, as the owner, with S4U, so no password is stored. The task keeps the Franca system running; systemd starts Docker in it, and Docker starts the containers.
+- A scheduled task called Franca runs `wsl.exe -d Franca -u root -- sleep infinity` when the PC starts, as the owner, with S4U, so no password is stored. The task keeps the Franca system running. systemd starts Docker in it, and Docker starts the containers.
 - Sleep and hibernation on mains power are switched off.
 
 ## The Linux part
 
-The answers are given as JSON on standard input, so that no secret appears in a command line. The steps are in the module's docstring. The Linux part can be run again: the generated secrets are kept, and the backup password and the topic are shown only when they are made.
+The answers are given as JSON on standard input, so that no secret appears in a command line. The steps are in the module's docstring. The Linux part can be run more than once. Generated secrets are kept, and the backup password and the topic are shown only in the run that makes them.
 
 Before the first release exists, or in the rehearsal, `--release-file` names local images, and `--skip-docker` and `--ntfy-url` leave out the steps that need the internet. `infra/tests/rehearse_install.py` runs the Linux part this way in the pipeline, with Headscale in place of Tailscale.
 
