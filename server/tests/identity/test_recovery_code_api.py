@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from conftest import FrancaTestClient
 from franca import identity
 from franca.api import create_app
 from franca.platform import db, load_settings, utc_now
@@ -17,7 +18,7 @@ EMAIL = "owner@example.org"
 @pytest.fixture
 def client(database_path: Path) -> TestClient:
     settings = load_settings({"FRANCA_DATABASE_PATH": str(database_path), "FRANCA_PUBLIC_URL": ORIGIN, "FRANCA_SESSION_SECRET": "x" * 32})
-    return TestClient(create_app(settings), base_url=ORIGIN)
+    return FrancaTestClient(create_app(settings), base_url=ORIGIN)
 
 
 def signed_in(client: TestClient, database_path: Path, minutes_ago: int = 0) -> None:

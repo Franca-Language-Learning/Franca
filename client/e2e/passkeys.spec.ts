@@ -48,8 +48,9 @@ test("the owner adds a passkey and then signs in with it", async ({ page, contex
   const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]).analyze();
   expect(results.violations).toEqual([]);
 
-  await page.request.post("/api/v1/auth/sign-out");
-  await context.clearCookies();
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("link", { name: "Sign in" })).toBeVisible();
   await page.goto("/sign-in");
   await page.getByRole("button", { name: "Sign in with a passkey" }).click();
   await expect(page).toHaveURL("/");

@@ -2,8 +2,10 @@
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import Connection, Engine
 
 from franca.platform import db
@@ -27,3 +29,17 @@ def engine(database_path: Path) -> Iterator[Engine]:
 def connection(engine: Engine) -> Iterator[Connection]:
     with engine.begin() as connection:
         yield connection
+
+
+class FrancaTestClient(TestClient):
+    """A test client that acts as Franca's own pages do: before a request that changes something, it makes sure the
+    browser has the anti-forgery cookie and sends its token in the X-CSRF-Token header (story E02-003)."""
+
+    def request(self, method: str, url: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        if method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+            if "franca_csrf" not in self.cookies:
+                super().request("GET", "/api/v1/health")
+            headers = dict(kwargs.pop("headers", None) or {})
+            headers.setdefault("X-CSRF-Token", self.cookies.get("franca_csrf", ""))
+            kwargs["headers"] = headers
+        return super().request(method, url, **kwargs)

@@ -5,10 +5,35 @@ import type { components, paths } from "./schema";
 
 export type Health = components["schemas"]["Health"];
 
+const BASE_URL = globalThis.location?.origin ?? "http://localhost";
+const ANTI_FORGERY_COOKIE = "franca_csrf";
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+function readCookie(name: string): string | undefined {
+  const cookies = typeof document === "undefined" ? "" : document.cookie;
+  return cookies
+    .split(";")
+    .map((part) => part.trim().split("="))
+    .find(([key]) => key === name)?.[1];
+}
+
+/** A request that changes something carries the anti-forgery token from the franca_csrf cookie in the X-CSRF-Token
+ * header (story E02-003). The server gives the cookie with any answer, so if the browser has none yet, the health
+ * check is asked for first. */
+async function withAntiForgeryToken(request: Request): Promise<Request> {
+  if (SAFE_METHODS.has(request.method)) return request;
+  if (!readCookie(ANTI_FORGERY_COOKIE)) await globalThis.fetch(new Request(new URL("/api/v1/health", BASE_URL)));
+  const token = readCookie(ANTI_FORGERY_COOKIE);
+  if (!token) return request;
+  const headers = new Headers(request.headers);
+  headers.set("X-CSRF-Token", token);
+  return new Request(request, { headers });
+}
+
 const api = createClient<paths>({
-  baseUrl: globalThis.location?.origin ?? "http://localhost",
+  baseUrl: BASE_URL,
   // fetch is looked up on each call, so the mock API in the tests (which replaces fetch) is used.
-  fetch: (request) => globalThis.fetch(request),
+  fetch: async (request) => globalThis.fetch(await withAntiForgeryToken(request)),
 });
 
 export async function getHealth(signal?: AbortSignal): Promise<Health> {
@@ -103,4 +128,30 @@ export async function signInWithRecoveryCode(email: string, code: string): Promi
   const { data, error, response } = await api.POST("/api/v1/auth/recovery-code", { body: { email, code } });
   if (!data) throw failure(response, error);
   return data;
+}
+
+export type Session = components["schemas"]["SessionOut"];
+
+export async function listSessions(signal?: AbortSignal): Promise<Session[]> {
+  const { data, error, response } = await api.GET("/api/v1/sessions", { signal });
+  if (!data) throw failure(response, error);
+  return data.sessions;
+}
+
+export async function signOutDevice(sessionId: number): Promise<void> {
+  const { error, response } = await api.DELETE("/api/v1/sessions/{sessionId}", { params: { path: { sessionId } } });
+  if (!response.ok) throw failure(response, error);
+}
+
+/** Signs out every device except this one, and returns how many were signed out. */
+export async function signOutOtherDevices(): Promise<number> {
+  const { data, error, response } = await api.POST("/api/v1/sessions/sign-out-others");
+  if (!data) throw failure(response, error);
+  return data.signedOut;
+}
+
+/** Signs out on this device. */
+export async function signOut(): Promise<void> {
+  const { error, response } = await api.POST("/api/v1/auth/sign-out");
+  if (!response.ok) throw failure(response, error);
 }

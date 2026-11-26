@@ -10,11 +10,15 @@ from franca.identity.accounts import (
     Learner,
     NotAllowed,
     SessionCheck,
+    SessionInfo,
     SignInRefused,
+    end_learner_session,
+    end_other_sessions,
     end_session,
     invite,
     learner_for_session,
     list_invitations,
+    list_sessions,
     normalise_email,
     sign_in_with_google,
     start_session,
@@ -50,6 +54,10 @@ from franca.identity.recovery import (
 )
 
 __all__ = [
+    "list_sessions",
+    "end_other_sessions",
+    "end_learner_session",
+    "SessionInfo",
     "MAX_FAILURES",
     "normalise_email",
     "match_recovery_code",

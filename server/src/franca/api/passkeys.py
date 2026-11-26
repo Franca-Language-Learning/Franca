@@ -251,7 +251,7 @@ def passkey_router(settings: Settings) -> APIRouter:
             learner = identity.sign_in_with_passkey(db, body.credential, challenge=challenge, rp=rp, now=now)
             if franca_session:
                 identity.end_session(db, franca_session, now)  # an earlier session in this browser is closed
-            token = identity.start_session(db, learner, request.headers.get("user-agent"), now)
+            token = identity.start_session(db, learner, request.headers.get("user-agent"), now, passkey_id=str(body.credential["rawId"]))
         except identity.PasskeyUnknown:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, UNKNOWN) from None
         except identity.PasskeyNotAccepted:

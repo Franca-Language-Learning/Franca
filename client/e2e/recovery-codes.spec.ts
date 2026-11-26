@@ -31,8 +31,9 @@ test("the owner makes recovery codes and signs in with one", async ({ page, cont
   const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]).analyze();
   expect(results.violations).toEqual([]);
 
-  await page.request.post("/api/v1/auth/sign-out");
-  await context.clearCookies();
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("link", { name: "Sign in" })).toBeVisible();
   await page.goto("/sign-in");
   await page.getByRole("link", { name: "sign in with a recovery code" }).click();
   await page.getByLabel("E-mail address").fill("owner@example.org");

@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from joserfc import jwt
 from joserfc.jwk import RSAKey
 
+from conftest import FrancaTestClient
 from franca.api import create_app
 from franca.platform import load_settings
 
@@ -88,7 +89,7 @@ def client(database_path: Path, google: FakeGoogle) -> TestClient:
         }
     )
     app = create_app(settings, google_transport=httpx2.MockTransport(google.handler))
-    return TestClient(app, base_url="https://franca.example.ts.net")
+    return FrancaTestClient(app, base_url="https://franca.example.ts.net")
 
 
 def sign_in(client: TestClient, google: FakeGoogle, **claims: Any) -> Any:
@@ -115,7 +116,7 @@ def test_the_owner_signs_in_and_gets_a_session_cookie(client: TestClient, google
     assert finish.status_code == 303
     assert finish.headers["location"] == "/"
     cookie = finish.headers["set-cookie"]
-    assert "franca_session=" in cookie and "HttpOnly" in cookie and "Secure" in cookie and "SameSite=lax" in cookie
+    assert "franca_session=" in cookie and "HttpOnly" in cookie and "Secure" in cookie and "SameSite=strict" in cookie
     assert google.token_requests[0]["code_verifier"]
     me = client.get("/api/v1/me")
     assert me.json() == {"displayName": "Owner", "role": "owner"}
@@ -181,7 +182,7 @@ def test_the_owner_invites_a_learner_who_can_then_sign_in(client: TestClient, go
     assert created.json()["status"] == "open"
     assert [i["email"] for i in client.get("/api/v1/invitations").json()["invitations"]] == ["partner@example.org"]
 
-    partner = TestClient(client.app, base_url="https://franca.example.ts.net")
+    partner = FrancaTestClient(client.app, base_url="https://franca.example.ts.net")
     finish = sign_in(partner, google, sub="partner-sub", email="partner@example.org", name="Partner")
     assert finish.headers["location"] == "/"
     assert partner.get("/api/v1/me").json() == {"displayName": "Partner", "role": "learner"}

@@ -107,7 +107,8 @@ def set_session_cookie(response: Response, settings: Settings, token: str) -> No
         max_age=identity.SESSION_DAYS * 24 * 3600,
         httponly=True,
         secure=settings.cookies_secure,
-        samesite="lax",
+        # Strict: the browser does not send the cookie with a request that another site starts.
+        samesite="strict",
         path="/",
     )
 
@@ -231,7 +232,7 @@ def auth_router(settings: Settings, oauth: OAuth | None) -> APIRouter:
         if franca_session:
             identity.end_session(db, franca_session, utc_now())
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
-        response.delete_cookie(SESSION_COOKIE, path="/", secure=settings.cookies_secure, httponly=True, samesite="lax")
+        response.delete_cookie(SESSION_COOKIE, path="/", secure=settings.cookies_secure, httponly=True, samesite="strict")
         return response
 
     @router.post(

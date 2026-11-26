@@ -11,6 +11,7 @@ from passkey_device import PasskeyDevice
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
+from conftest import FrancaTestClient
 from franca import identity
 from franca.api import create_app
 from franca.platform import db, load_settings, utc_now
@@ -23,7 +24,7 @@ def client(database_path: Path) -> TestClient:
     settings = load_settings(
         {"FRANCA_DATABASE_PATH": str(database_path), "FRANCA_PUBLIC_URL": ORIGIN, "FRANCA_SESSION_SECRET": "test-session-secret"}
     )
-    return TestClient(create_app(settings), base_url=ORIGIN)
+    return FrancaTestClient(create_app(settings), base_url=ORIGIN)
 
 
 def signed_in(

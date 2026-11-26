@@ -249,6 +249,63 @@ components:
       - code
       title: RecoverySignIn
       type: object
+    SessionList:
+      examples:
+      - sessions:
+        - browser: Chrome on Windows
+          current: true
+          deviceKind: desktop
+          id: 12
+          lastUsedAt: '2026-12-03T18:20:00.000Z'
+          signedInAt: '2026-12-01T09:00:00.000Z'
+        - browser: Safari on iPhone
+          current: false
+          deviceKind: phone
+          id: 9
+          lastUsedAt: '2026-12-02T07:50:00.000Z'
+          signedInAt: '2026-11-28T07:45:00.000Z'
+      properties:
+        sessions:
+          items:
+            $ref: '#/components/schemas/SessionOut'
+          title: Sessions
+          type: array
+      required:
+      - sessions
+      title: SessionList
+      type: object
+    SessionOut:
+      properties:
+        browser:
+          description: The browser and system, such as Chrome on Windows
+          title: Browser
+          type: string
+        current:
+          description: True for the device that sent this request
+          title: Current
+          type: boolean
+        deviceKind:
+          description: desktop, tablet or phone
+          title: Devicekind
+          type: string
+        id:
+          title: Id
+          type: integer
+        lastUsedAt:
+          title: Lastusedat
+          type: string
+        signedInAt:
+          title: Signedinat
+          type: string
+      required:
+      - id
+      - deviceKind
+      - browser
+      - signedInAt
+      - lastUsedAt
+      - current
+      title: SessionOut
+      type: object
     SignInRequest:
       properties:
         credential:
@@ -260,6 +317,18 @@ components:
       required:
       - credential
       title: SignInRequest
+      type: object
+    SignedOut:
+      examples:
+      - signedOut: 2
+      properties:
+        signedOut:
+          description: How many devices were signed out
+          title: Signedout
+          type: integer
+      required:
+      - signedOut
+      title: SignedOut
       type: object
     ValidationError:
       properties:
@@ -753,5 +822,99 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
       summary: Makes ten new recovery codes; the old ones stop working
+      tags:
+      - identity
+  /api/v1/sessions:
+    get:
+      operationId: listSessions
+      parameters:
+      - in: cookie
+        name: franca_session
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Franca Session
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionList'
+          description: Successful Response
+        '401':
+          description: Not signed in
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: The devices the learner is signed in on
+      tags:
+      - identity
+  /api/v1/sessions/sign-out-others:
+    post:
+      operationId: signOutOtherDevices
+      parameters:
+      - in: cookie
+        name: franca_session
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Franca Session
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignedOut'
+          description: Successful Response
+        '401':
+          description: Not signed in
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Signs out every device of the learner except this one
+      tags:
+      - identity
+  /api/v1/sessions/{sessionId}:
+    delete:
+      operationId: signOutDevice
+      parameters:
+      - in: path
+        name: sessionId
+        required: true
+        schema:
+          title: Sessionid
+          type: integer
+      - in: cookie
+        name: franca_session
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Franca Session
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          description: Not signed in
+        '404':
+          description: The learner has no open session with this id
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Signs out one of the learner's devices
       tags:
       - identity
