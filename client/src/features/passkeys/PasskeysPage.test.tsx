@@ -81,8 +81,8 @@ describe("passkeys page", () => {
     render(<AppRoot initialPath="/passkeys" />);
     await userEvent.click(await screen.findByRole("button", { name: "Add a passkey" }));
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("signed in within the last 15 minutes");
-    expect(within(alert).getByRole("link", { name: "Sign in with Google again" })).toHaveAttribute("href", "/api/v1/auth/google/start");
+    expect(alert).toHaveTextContent("You signed in more than 15 minutes ago");
+    expect(within(alert).getByRole("link", { name: "Sign in again" })).toHaveAttribute("href", "/sign-in");
   });
 
   it("explains a passkey window that was closed", async () => {

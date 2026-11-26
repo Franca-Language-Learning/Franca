@@ -34,7 +34,7 @@ test("the owner makes recovery codes and signs in with one", async ({ page, cont
   await page.request.post("/api/v1/auth/sign-out");
   await context.clearCookies();
   await page.goto("/sign-in");
-  await page.getByRole("link", { name: "Sign in with a recovery code" }).click();
+  await page.getByRole("link", { name: "sign in with a recovery code" }).click();
   await page.getByLabel("E-mail address").fill("owner@example.org");
   await page.getByLabel("Recovery code").fill(codes[0]?.toLowerCase() ?? "");
   await page.getByRole("button", { name: "Sign in" }).click();

@@ -20,8 +20,8 @@ function NewCodes({ codes }: { codes: string[] }) {
     <section aria-labelledby="new-codes">
       <h2 id="new-codes">Your new recovery codes</h2>
       <p>
-        Write these codes down or keep them in your password manager now. They are shown this once. Each code can be used
-        once.
+        Write these codes down or keep them in your password manager now. You will not see them again after you leave
+        this page. A code can be used one time.
       </p>
       <ol className="recovery-codes">
         {codes.map((code) => (
@@ -55,7 +55,7 @@ export function RecoveryCodesPage() {
       <main>
         <h1>Recovery codes</h1>
         <p>
-          You are not signed in. <Link to="/sign-in">Sign in</Link> first, then come back to this page.
+          You are not signed in. <Link to="/sign-in">Sign in</Link> first, then open Your recovery codes on the home page.
         </p>
       </main>
     );
@@ -67,14 +67,16 @@ export function RecoveryCodesPage() {
       <h1>Recovery codes</h1>
       <p>
         If you lose the phone with your passkey or cannot use your Google account, you can sign in with your e-mail address
-        and one of these codes. Each code works once.
+        and a recovery code. A code can be used one time.
       </p>
       {codeStatus.isPending && <p role="status">Loading…</p>}
       {codeStatus.isError && <p role="alert">Your recovery codes could not be loaded. Reload this page to try again.</p>}
       {codeStatus.data &&
-        (codeStatus.data.createdAt ? (
+        (codeStatus.data.createdAt && codeStatus.data.unused === 0 ? (
+          <p>You have used all your recovery codes. You can make new ones below.</p>
+        ) : codeStatus.data.createdAt ? (
           <p>
-            You have {codeStatus.data.unused} unused {codeStatus.data.unused === 1 ? "code" : "codes"}. They were made on{" "}
+            You have {codeStatus.data.unused} unused {codeStatus.data.unused === 1 ? "code" : "codes"}, made on{" "}
             {DATE.format(new Date(codeStatus.data.createdAt))}.
           </p>
         ) : (
@@ -85,7 +87,7 @@ export function RecoveryCodesPage() {
         <NewCodes codes={make.data} />
       ) : confirming ? (
         <p>
-          If you make new codes, the codes you have now stop working.{" "}
+          If you make new codes, the codes you have now will stop working.{" "}
           <Button onPress={() => make.mutate()} isDisabled={make.isPending}>
             Make new codes
           </Button>{" "}
@@ -99,9 +101,8 @@ export function RecoveryCodesPage() {
       {make.isError &&
         (make.error instanceof ApiError && make.error.detail === "sign-in-again" ? (
           <p role="alert">
-            To make new codes, you need to have signed in within the last 15 minutes.{" "}
-            {/* A full page load, because the browser goes on to Google and back. */}
-            <a href="/api/v1/auth/google/start">Sign in with Google again</a>, then open Your recovery codes on the home page.
+            You signed in more than 15 minutes ago, so you need to sign in again before you can make new codes.{" "}
+            <Link to="/sign-in">Sign in again</Link>, then open Your recovery codes on the home page.
           </p>
         ) : (
           <p role="alert">New codes could not be made. Please try again.</p>

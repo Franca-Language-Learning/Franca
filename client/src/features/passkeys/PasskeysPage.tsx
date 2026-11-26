@@ -80,7 +80,7 @@ export function PasskeysPage() {
       <main>
         <h1>Passkeys</h1>
         <p>
-          You are not signed in. <Link to="/sign-in">Sign in</Link> first, then come back to this page.
+          You are not signed in. <Link to="/sign-in">Sign in</Link> first, then open Your passkeys on the home page.
         </p>
       </main>
     );
@@ -127,9 +127,8 @@ export function PasskeysPage() {
           {add.isError &&
             (add.error instanceof ApiError && add.error.detail === "sign-in-again" ? (
               <p role="alert">
-                To add a passkey, you need to have signed in within the last 15 minutes.{" "}
-                {/* A full page load, because the browser goes on to Google and back. */}
-                <a href="/api/v1/auth/google/start">Sign in with Google again</a>, then open Your passkeys on the home page.
+                You signed in more than 15 minutes ago, so you need to sign in again before you can add a passkey.{" "}
+                <Link to="/sign-in">Sign in again</Link>, then open Your passkeys on the home page.
               </p>
             ) : (
               <p role="alert">{addFailure(add.error)}</p>

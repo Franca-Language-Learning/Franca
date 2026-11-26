@@ -24,7 +24,8 @@ export function SignInPage({ error }: { error?: string }) {
       </p>
       <PasskeySignIn />
       <p>
-        Lost your phone or cannot use your Google account? <Link to="/sign-in/recovery-code">Sign in with a recovery code</Link>.
+        If you lose your phone or cannot use your Google account, you can{" "}
+        <Link to="/sign-in/recovery-code">sign in with a recovery code</Link>.
       </p>
     </main>
   );

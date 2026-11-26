@@ -12,7 +12,7 @@ describe("recovery codes page", () => {
   it("says how many codes are left", async () => {
     server.use(http.get("*/api/v1/recovery-codes", () => HttpResponse.json({ unused: 9, createdAt: "2026-12-01T09:00:00.000Z" })));
     render(<AppRoot initialPath="/recovery-codes" />);
-    expect(await screen.findByText("You have 9 unused codes. They were made on 1 Dec 2026.")).toBeInTheDocument();
+    expect(await screen.findByText("You have 9 unused codes, made on 1 Dec 2026.")).toBeInTheDocument();
   });
 
   it("makes codes at once for a learner who has none, and shows them", async () => {
@@ -33,6 +33,12 @@ describe("recovery codes page", () => {
     expect(await screen.findByText(/You have 10 unused codes/)).toBeInTheDocument();
   });
 
+  it("says so when all codes are used", async () => {
+    server.use(http.get("*/api/v1/recovery-codes", () => HttpResponse.json({ unused: 0, createdAt: "2026-12-01T09:00:00.000Z" })));
+    render(<AppRoot initialPath="/recovery-codes" />);
+    expect(await screen.findByText("You have used all your recovery codes. You can make new ones below.")).toBeInTheDocument();
+  });
+
   it("asks before replacing codes the learner has", async () => {
     let made = false;
     server.use(
@@ -44,7 +50,7 @@ describe("recovery codes page", () => {
     );
     render(<AppRoot initialPath="/recovery-codes" />);
     await userEvent.click(await screen.findByRole("button", { name: "Make new recovery codes" }));
-    expect(screen.getByText(/the codes you have now stop working/)).toBeInTheDocument();
+    expect(screen.getByText(/the codes you have now will stop working/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Keep my codes" }));
     expect(made).toBe(false);
 
@@ -62,7 +68,7 @@ describe("recovery codes page", () => {
     render(<AppRoot initialPath="/recovery-codes" />);
     await userEvent.click(await screen.findByRole("button", { name: "Make new recovery codes" }));
     const alert = await screen.findByRole("alert");
-    expect(within(alert).getByRole("link", { name: "Sign in with Google again" })).toHaveAttribute("href", "/api/v1/auth/google/start");
+    expect(within(alert).getByRole("link", { name: "Sign in again" })).toHaveAttribute("href", "/sign-in");
   });
 
   it("has no accessibility violations that axe can detect", async () => {
@@ -81,7 +87,7 @@ describe("recovery codes page", () => {
 describe("signing in with a recovery code", () => {
   it("is linked from the sign-in page", async () => {
     render(<AppRoot initialPath="/sign-in" />);
-    expect(await screen.findByRole("link", { name: "Sign in with a recovery code" })).toHaveAttribute("href", "/sign-in/recovery-code");
+    expect(await screen.findByRole("link", { name: "sign in with a recovery code" })).toHaveAttribute("href", "/sign-in/recovery-code");
   });
 
   it("signs in and goes to the home page", async () => {
