@@ -129,7 +129,7 @@ export function PasskeysPage() {
               <p role="alert">
                 To add a passkey, you need to have signed in within the last 15 minutes.{" "}
                 {/* A full page load, because the browser goes on to Google and back. */}
-                <a href="/api/v1/auth/google/start">Sign in with Google again</a>, then come back to this page.
+                <a href="/api/v1/auth/google/start">Sign in with Google again</a>, then open Your passkeys on the home page.
               </p>
             ) : (
               <p role="alert">{addFailure(add.error)}</p>

@@ -187,7 +187,7 @@ describe("signing in with a passkey", () => {
 
   it.each([
     [{ detail: "passkey-unknown" }, 401, "This passkey is not linked to a Franca account."],
-    [{ detail: "passkey-not-accepted" }, 401, "The passkey could not be checked."],
+    [{ detail: "passkey-not-accepted" }, 401, "This passkey was not accepted."],
     [{ detail: "disabled" }, 401, "Your account is switched off."],
     [{ detail: "no-passkey-options" }, 400, "Signing in with a passkey did not work."],
   ])("explains a refusal (%j)", async (body, status, message) => {

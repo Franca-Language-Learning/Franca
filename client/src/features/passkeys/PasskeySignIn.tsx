@@ -10,7 +10,7 @@ function signInFailure(error: unknown): string {
   if (error instanceof ApiError && error.detail === "passkey-unknown")
     return "This passkey is not linked to a Franca account. Sign in with Google, then add a new passkey on the Passkeys page.";
   if (error instanceof ApiError && error.status === 401)
-    return "The passkey could not be checked. Try again, or sign in with Google.";
+    return "This passkey was not accepted. Try again, or sign in with Google.";
   return "Signing in with a passkey did not work. Please try again.";
 }
 
