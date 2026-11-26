@@ -37,10 +37,14 @@ CADDY = "franca/caddy:rehearsal-status"
 STATUS = "franca/status:rehearsal"
 TOPIC = "franca-rehearsal-alerts"
 
-# A web server that prints each request it gets as a line of JSON, in place of ntfy.sh.
+# A web server that prints each POST it gets as a line of JSON, in place of ntfy.sh. It answers GET requests, so that
+# the app image's health check, which the stand-in inherits, passes.
 RECORDER = """
 import http.server, json, sys
 class Recorder(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode()
         print(json.dumps({"path": self.path, "body": body}), flush=True)
@@ -54,9 +58,6 @@ services:
   ntfy:
     image: {APP}
     entrypoint: ["python", "-c", {json.dumps(RECORDER)}]
-    # The app image's health check asks for the app's health page, which the stand-in does not have.
-    healthcheck:
-      disable: true
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
