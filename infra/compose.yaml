@@ -109,7 +109,7 @@ services:
       FRANCA_HEALTH_URL: http://app:8000/api/v1/health
       FRANCA_UPDATE_AT_UTC: ${FRANCA_UPDATE_AT_UTC:-02:30}
     volumes:
-      - ${FRANCA_BUNDLE_DIR:-/franca-bundle-not-set}:${FRANCA_BUNDLE_DIR}
+      - ${FRANCA_BUNDLE_DIR:-/franca-bundle-not-set}:${FRANCA_BUNDLE_DIR:-/franca-bundle-not-set}
       - updater-status:/status
     networks: [internal, docker-api]
 
