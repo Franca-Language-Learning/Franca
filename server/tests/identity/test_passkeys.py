@@ -41,6 +41,11 @@ def test_the_relying_party_is_the_public_address() -> None:
     assert identity.relying_party("http://localhost:8080/").rp_id == "localhost"
 
 
+def test_the_relying_party_is_written_as_the_browser_writes_the_origin() -> None:
+    assert identity.relying_party("https://Franca.Example.ts.net:443/") == RP
+    assert identity.relying_party("http://LOCALHOST:80") == identity.RelyingParty(rp_id="localhost", origin="http://localhost")
+
+
 def test_registration_options_ask_for_a_passkey_on_the_device(connection: Connection) -> None:
     learner = owner(connection)
     options = identity.passkey_registration_options(connection, learner, RP).options
@@ -49,6 +54,7 @@ def test_registration_options_ask_for_a_passkey_on_the_device(connection: Connec
     assert options["user"]["name"] == "Nik"
     assert options["authenticatorSelection"]["residentKey"] == "required"
     assert options["attestation"] == "none"
+    assert options["authenticatorSelection"]["userVerification"] == "required"
     assert options["excludeCredentials"] == []
 
 
@@ -97,6 +103,22 @@ def test_a_registration_that_fails_the_checks_adds_nothing(connection: Connectio
     assert identity.list_passkeys(connection, learner) == []
 
 
+def test_a_passkey_made_without_checking_the_person_is_refused(connection: Connection) -> None:
+    # A passkey is a whole sign-in on its own, so the device has to check the person (fingerprint, face or PIN).
+    learner = owner(connection)
+    with pytest.raises(identity.PasskeyNotAccepted):
+        add(connection, learner, PasskeyDevice(ORIGIN, user_verified=False))
+
+
+def test_a_sign_in_without_checking_the_person_is_refused(connection: Connection) -> None:
+    learner = owner(connection)
+    device = PasskeyDevice(ORIGIN)
+    add(connection, learner, device)
+    device.flags &= ~0x04
+    with pytest.raises(identity.PasskeyNotAccepted):
+        sign_in(connection, device)
+
+
 def test_the_same_passkey_cannot_be_added_twice(connection: Connection) -> None:
     learner = owner(connection)
     device = PasskeyDevice(ORIGIN)
@@ -125,7 +147,7 @@ def test_sign_in_options_let_the_device_offer_its_passkeys(connection: Connectio
     options = identity.passkey_sign_in_options(RP).options
     assert options["rpId"] == "franca.example.ts.net"
     assert options["allowCredentials"] == []
-    assert options["userVerification"] == "preferred"
+    assert options["userVerification"] == "required"
 
 
 def test_a_learner_signs_in_with_a_passkey(connection: Connection) -> None:
@@ -142,9 +164,9 @@ def test_a_learner_signs_in_with_a_passkey(connection: Connection) -> None:
     assert audit_events(connection) == [("sign_in", "google"), ("passkey_added", None), ("sign_in", "passkey")]
 
 
-def test_a_passkey_that_was_not_added_is_refused(connection: Connection) -> None:
+def test_a_passkey_that_was_not_added_is_refused_as_unknown(connection: Connection) -> None:
     owner(connection)
-    with pytest.raises(identity.PasskeyNotAccepted):
+    with pytest.raises(identity.PasskeyUnknown):
         sign_in(connection, PasskeyDevice(ORIGIN))
 
 

@@ -7,6 +7,7 @@ stored.
 """
 
 from collections.abc import Iterator
+from datetime import timedelta
 from typing import Annotated, Any
 
 import httpx2
@@ -20,9 +21,10 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from starlette.concurrency import run_in_threadpool
 
 from franca import identity
-from franca.platform import Settings, utc_now
+from franca.platform import Settings, iso, utc_now
 
 SESSION_COOKIE = "franca_session"
+RECENT_SIGN_IN = timedelta(minutes=15)
 GOOGLE_ISSUER = "https://accounts.google.com"
 GOOGLE_DISCOVERY = f"{GOOGLE_ISSUER}/.well-known/openid-configuration"
 # Errors from Google, the network, or the checks of the ID token. Each one ends the sign-in with error=failed.
@@ -110,19 +112,32 @@ def set_session_cookie(response: Response, settings: Settings, token: str) -> No
     )
 
 
-def current_learner(
+def current_session(
     request: Request, response: Response, db: Db, franca_session: Annotated[str | None, Cookie()] = None
-) -> identity.Learner:
+) -> identity.SessionCheck:
     check = identity.learner_for_session(db, franca_session, utc_now()) if franca_session else None
     if check is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not signed in")
     if check.extended and franca_session:
         # The session was extended in the database, so the cookie in the browser is extended to match.
         set_session_cookie(response, request.app.state.settings, franca_session)
+    return check
+
+
+def current_learner(check: Annotated[identity.SessionCheck, Depends(current_session)]) -> identity.Learner:
+    return check.learner
+
+
+def recently_signed_in(check: Annotated[identity.SessionCheck, Depends(current_session)]) -> identity.Learner:
+    """The learner, if they signed in within the last RECENT_SIGN_IN. Steps that add a way in need this, so that
+    someone with a stolen session cookie cannot add one."""
+    if check.signed_in_at < iso(utc_now() - RECENT_SIGN_IN):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "sign-in-again")
     return check.learner
 
 
 SignedIn = Annotated[identity.Learner, Depends(current_learner)]
+RecentlySignedIn = Annotated[identity.Learner, Depends(recently_signed_in)]
 
 
 def auth_router(settings: Settings, oauth: OAuth | None) -> APIRouter:

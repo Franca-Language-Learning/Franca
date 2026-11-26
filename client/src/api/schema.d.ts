@@ -466,7 +466,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description The passkey was not accepted, or the account is disabled */
+            /** @description Franca does not have the passkey (passkey-unknown), the answer failed a check, or the account is disabled */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -761,6 +761,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description The learner signed in more than 15 minutes ago (sign-in-again) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -799,7 +806,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description The learner has the most passkeys allowed */
+            /** @description The learner signed in more than 15 minutes ago (sign-in-again), or has the most passkeys allowed */
             403: {
                 headers: {
                     [name: string]: unknown;

@@ -124,7 +124,16 @@ export function PasskeysPage() {
           </Button>
           {add.isPending && <p role="status">Follow the steps in the passkey window.</p>}
           {add.isSuccess && <p role="status">The passkey was added.</p>}
-          {add.isError && <p role="alert">{addFailure(add.error)}</p>}
+          {add.isError &&
+            (add.error instanceof ApiError && add.error.detail === "sign-in-again" ? (
+              <p role="alert">
+                To add a passkey, you need to have signed in within the last 15 minutes.{" "}
+                {/* A full page load, because the browser goes on to Google and back. */}
+                <a href="/api/v1/auth/google/start">Sign in with Google again</a>, then come back to this page.
+              </p>
+            ) : (
+              <p role="alert">{addFailure(add.error)}</p>
+            ))}
         </Form>
       ) : (
         <p>This browser does not support passkeys. Open this page in a recent version of Chrome, Edge, Firefox or Safari.</p>

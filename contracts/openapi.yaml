@@ -296,7 +296,8 @@ paths:
         '400':
           description: No options were asked for
         '401':
-          description: The passkey was not accepted, or the account is disabled
+          description: Franca does not have the passkey (passkey-unknown), the answer
+            failed a check, or the account is disabled
         '422':
           content:
             application/json:
@@ -513,6 +514,8 @@ paths:
           description: No options were asked for, or the answer failed a check
         '401':
           description: Not signed in
+        '403':
+          description: The learner signed in more than 15 minutes ago (sign-in-again)
         '422':
           content:
             application/json:
@@ -544,7 +547,8 @@ paths:
         '401':
           description: Not signed in
         '403':
-          description: The learner has the most passkeys allowed
+          description: The learner signed in more than 15 minutes ago (sign-in-again),
+            or has the most passkeys allowed
         '422':
           content:
             application/json:

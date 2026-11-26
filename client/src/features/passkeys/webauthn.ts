@@ -52,6 +52,16 @@ function common(credential: PublicKeyCredential) {
   };
 }
 
+/** Tells the device that Franca does not have this passkey, so that it stops offering it. Browsers without this
+ * call (PublicKeyCredential.signalUnknownCredential) are left as they are. */
+export function forgetPasskeyOnDevice(options: PublicKeyOptionsJson, answer: CredentialJson): void {
+  const signal = (globalThis.PublicKeyCredential as unknown as { signalUnknownCredential?: (o: object) => Promise<void> } | undefined)
+    ?.signalUnknownCredential;
+  if (typeof signal !== "function") return;
+  const rpId = (options as { rpId?: string }).rpId;
+  signal.call(globalThis.PublicKeyCredential, { rpId, credentialId: answer.id }).catch(() => undefined);
+}
+
 /** Makes a passkey on this device (navigator.credentials.create) and returns the answer for the server. */
 export async function createPasskey(options: PublicKeyOptionsJson): Promise<CredentialJson> {
   const json = options as Record<string, unknown> & { challenge: string; user: { id: string; name: string; displayName: string } };

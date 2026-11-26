@@ -191,6 +191,8 @@ class SessionCheck:
     learner: Learner
     # True when the session was extended, so the browser's cookie is to be extended too.
     extended: bool
+    # When the learner signed in, for steps that need a recent sign-in, such as adding a passkey.
+    signed_in_at: str
 
 
 def learner_for_session(connection: Connection, token: str, now: datetime) -> SessionCheck | None:
@@ -198,7 +200,7 @@ def learner_for_session(connection: Connection, token: str, now: datetime) -> Se
     30 days from now."""
     row = connection.execute(
         text(
-            "SELECT s.auth_session_id, s.last_seen_at, l.learner_id, l.uuid, l.display_name, l.role FROM identity_auth_session s "
+            "SELECT s.auth_session_id, s.last_seen_at, s.created_at, l.learner_id, l.uuid, l.display_name, l.role FROM identity_auth_session s "
             "JOIN identity_learner l USING (learner_id) WHERE s.token_hash = :hash AND s.revoked_at IS NULL "
             "AND s.expires_at > :now AND l.status = 'active'"
         ),
@@ -206,14 +208,14 @@ def learner_for_session(connection: Connection, token: str, now: datetime) -> Se
     ).one_or_none()
     if row is None:
         return None
-    learner = _learner(row[2:])
+    learner = _learner(row[3:])
     if row.last_seen_at > iso(now - SESSION_REFRESH):
-        return SessionCheck(learner, extended=False)
+        return SessionCheck(learner, extended=False, signed_in_at=row.created_at)
     connection.execute(
         text("UPDATE identity_auth_session SET last_seen_at = :now, expires_at = :expires WHERE auth_session_id = :id"),
         {"now": iso(now), "expires": iso(now + timedelta(days=SESSION_DAYS)), "id": row.auth_session_id},
     )
-    return SessionCheck(learner, extended=True)
+    return SessionCheck(learner, extended=True, signed_in_at=row.created_at)
 
 
 def end_session(connection: Connection, token: str, now: datetime) -> None:

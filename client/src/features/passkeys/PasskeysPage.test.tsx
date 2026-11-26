@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { http, HttpResponse } from "msw";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppRoot } from "../../AppRoot";
 import { server } from "../../mocks/server";
 import { installFakeWebAuthn, removeFakeWebAuthn } from "../../mocks/webauthn";
@@ -71,6 +71,18 @@ describe("passkeys page", () => {
       type: "public-key",
       response: { clientDataJSON: toBase64url(new TextEncoder().encode("client-data").buffer), transports: ["internal"] },
     });
+  });
+
+  it("asks for a new sign-in when the last one was more than 15 minutes ago", async () => {
+    server.use(
+      http.get("*/api/v1/passkeys", () => HttpResponse.json({ passkeys: [] })),
+      http.post("*/api/v1/passkeys/options", () => HttpResponse.json({ detail: "sign-in-again" }, { status: 403 })),
+    );
+    render(<AppRoot initialPath="/passkeys" />);
+    await userEvent.click(await screen.findByRole("button", { name: "Add a passkey" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("signed in within the last 15 minutes");
+    expect(within(alert).getByRole("link", { name: "Sign in with Google again" })).toHaveAttribute("href", "/api/v1/auth/google/start");
   });
 
   it("explains a passkey window that was closed", async () => {
@@ -174,7 +186,8 @@ describe("signing in with a passkey", () => {
   });
 
   it.each([
-    [{ detail: "passkey-not-accepted" }, 401, "This passkey is not linked to a Franca account."],
+    [{ detail: "passkey-unknown" }, 401, "This passkey is not linked to a Franca account."],
+    [{ detail: "passkey-not-accepted" }, 401, "The passkey could not be checked."],
     [{ detail: "disabled" }, 401, "Your account is switched off."],
     [{ detail: "no-passkey-options" }, 400, "Signing in with a passkey did not work."],
   ])("explains a refusal (%j)", async (body, status, message) => {
@@ -185,6 +198,19 @@ describe("signing in with a passkey", () => {
     render(<AppRoot initialPath="/sign-in" />);
     await userEvent.click(await screen.findByRole("button", { name: "Sign in with a passkey" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  });
+
+  it("asks the device to stop offering a passkey that Franca does not have", async () => {
+    const signalUnknownCredential = vi.fn(async () => undefined);
+    vi.stubGlobal("PublicKeyCredential", Object.assign(function PublicKeyCredential() {}, { signalUnknownCredential }));
+    server.use(
+      http.post("*/api/v1/auth/passkey/options", () => HttpResponse.json(signInOptions)),
+      http.post("*/api/v1/auth/passkey", () => HttpResponse.json({ detail: "passkey-unknown" }, { status: 401 })),
+    );
+    render(<AppRoot initialPath="/sign-in" />);
+    await userEvent.click(await screen.findByRole("button", { name: "Sign in with a passkey" }));
+    await screen.findByRole("alert");
+    expect(signalUnknownCredential).toHaveBeenCalledWith({ rpId: "localhost", credentialId: "cred-1" });
   });
 
   it("explains a passkey window that was closed", async () => {

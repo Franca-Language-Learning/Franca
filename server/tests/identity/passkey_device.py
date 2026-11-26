@@ -28,13 +28,13 @@ def unb64url(text: str) -> bytes:
 
 
 class PasskeyDevice:
-    def __init__(self, origin: str, *, backed_up: bool = True) -> None:
+    def __init__(self, origin: str, *, backed_up: bool = True, user_verified: bool = True) -> None:
         self.origin = origin
         self.key = ec.generate_private_key(ec.SECP256R1())
         self.credential_id = secrets.token_bytes(32)
         self.sign_count = 0
         self.user_handle = b""
-        self.flags = UP | UV | ((BE | BS) if backed_up else 0)
+        self.flags = UP | (UV if user_verified else 0) | ((BE | BS) if backed_up else 0)
 
     def _cose_key(self) -> bytes:
         numbers = self.key.public_key().public_numbers()

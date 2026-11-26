@@ -6,7 +6,8 @@ browser's answers; this module stores the passkeys and decides who is signed in.
 
 The passkeys are discoverable (the device keeps the account with the key), so a learner signs in without typing an
 e-mail address first. The browser's answer names the passkey and the learner it was made for, and both are checked.
-No attestation is asked for, because Franca does not limit which devices may be used.
+No attestation is asked for, because Franca does not limit which devices may be used. The device has to check the
+person (fingerprint, face, PIN or screen lock), because a passkey is a whole sign-in on its own.
 """
 
 import binascii
@@ -79,9 +80,20 @@ class PasskeyNotAccepted(Exception):
     """The browser's answer failed a check, or names a passkey that Franca does not have."""
 
 
+class PasskeyUnknown(PasskeyNotAccepted):
+    """The answer names a passkey that Franca does not have, for example one the learner removed."""
+
+
+DEFAULT_PORTS = {"https": 443, "http": 80}
+
+
 def relying_party(public_url: str) -> RelyingParty:
-    parts = urlsplit(public_url.rstrip("/"))
-    return RelyingParty(rp_id=parts.hostname or "", origin=f"{parts.scheme}://{parts.netloc}")
+    """The origin is written as the browser writes it: scheme and host in lower case, and no default port."""
+    parts = urlsplit(public_url.strip().rstrip("/"))
+    scheme = parts.scheme.lower()
+    host = (parts.hostname or "").lower()
+    port = f":{parts.port}" if parts.port and parts.port != DEFAULT_PORTS.get(scheme) else ""
+    return RelyingParty(rp_id=host, origin=f"{scheme}://{host}{port}")
 
 
 def _user_handle(learner_uuid: str) -> bytes:
@@ -125,7 +137,7 @@ def passkey_registration_options(connection: Connection, learner: Learner, rp: R
         user_display_name=learner.display_name,
         attestation=AttestationConveyancePreference.NONE,
         authenticator_selection=AuthenticatorSelectionCriteria(
-            resident_key=ResidentKeyRequirement.REQUIRED, user_verification=UserVerificationRequirement.PREFERRED
+            resident_key=ResidentKeyRequirement.REQUIRED, user_verification=UserVerificationRequirement.REQUIRED
         ),
         # The browser does not make a second passkey on a device that already has one for this learner.
         exclude_credentials=[PublicKeyCredentialDescriptor(id=bytes(credential_id)) for credential_id in existing],
@@ -151,6 +163,7 @@ def add_passkey(
             expected_rp_id=rp.rp_id,
             expected_origin=rp.origin,
             supported_pub_key_algs=ALGORITHMS,
+            require_user_verification=True,
         )
         transports = answer.get("response", {}).get("transports") or []
         transports_text = ",".join(str(t) for t in transports)[:200] or None
@@ -193,7 +206,7 @@ def add_passkey(
 def passkey_sign_in_options(rp: RelyingParty) -> PasskeyChallenge:
     # No list of passkeys: the device offers the passkeys it has for this site, so the learner picks an account
     # on the device and does not type anything here.
-    options = generate_authentication_options(rp_id=rp.rp_id, user_verification=UserVerificationRequirement.PREFERRED)
+    options = generate_authentication_options(rp_id=rp.rp_id, user_verification=UserVerificationRequirement.REQUIRED)
     return PasskeyChallenge(json.loads(options_to_json(options)), options.challenge)
 
 
@@ -212,7 +225,7 @@ def sign_in_with_passkey(connection: Connection, answer: dict[str, Any], *, chal
         {"id": credential_id},
     ).one_or_none()
     if row is None:
-        raise PasskeyNotAccepted("Franca does not have this passkey")
+        raise PasskeyUnknown("Franca does not have this passkey")
     if user_handle != _user_handle(row.uuid):
         raise PasskeyNotAccepted("The passkey was made for another account")
     try:
@@ -224,16 +237,29 @@ def sign_in_with_passkey(connection: Connection, answer: dict[str, Any], *, chal
             credential_public_key=row.public_key,
             # A counter that does not go up can mean that the key was copied, and the sign-in is refused.
             credential_current_sign_count=row.sign_count,
+            require_user_verification=True,
         )
     except ANSWER_ERRORS as error:
         raise PasskeyNotAccepted(str(error)) from error
     if row.status != "active":
         raise SignInRefused("disabled")
 
-    connection.execute(
-        text("UPDATE identity_passkey SET sign_count = :count, backed_up = :backed_up, last_used_at = :now WHERE credential_id = :id"),
-        {"count": verified.new_sign_count, "backed_up": int(verified.credential_backed_up), "now": iso(now), "id": credential_id},
-    )
+    updated = connection.execute(
+        text(
+            "UPDATE identity_passkey SET sign_count = :count, backed_up = :backed_up, last_used_at = :now "
+            "WHERE credential_id = :id AND sign_count = :old"
+        ),
+        {
+            "count": verified.new_sign_count,
+            "backed_up": int(verified.credential_backed_up),
+            "now": iso(now),
+            "id": credential_id,
+            "old": row.sign_count,
+        },
+    ).rowcount
+    if not updated:
+        # Another sign-in with this passkey changed the counter in the meantime.
+        raise PasskeyNotAccepted("The passkey was used at the same moment by another sign-in")
     record_event(connection, row.learner_id, "sign_in", now, {"method": "passkey"})
     return Learner(row.learner_id, row.uuid, row.display_name, row.role)
 
