@@ -15,11 +15,11 @@ tools/check-startup-files.sh .venv
 
 cd "$root/server"
 step "Lint and format"
-uv run ruff check . ../contracts ../tools ../infra/updater ../infra/backup ../infra/tests
-uv run ruff format --check . ../contracts ../tools ../infra/updater ../infra/backup ../infra/tests
+uv run ruff check . ../contracts ../tools ../infra/updater ../infra/backup ../infra/tests ../installer/linux
+uv run ruff format --check . ../contracts ../tools ../infra/updater ../infra/backup ../infra/tests ../installer/linux
 step "Type check"
 uv run mypy
-uv run mypy --strict ../tools/content_guard.py ../infra/updater/franca_updater.py ../infra/backup/franca_backup.py ../infra/tests/rehearse_update.py ../infra/tests/rehearse_backup.py ../infra/tests/rehearse_tailnet.py ../infra/tests/rehearse_status.py
+uv run mypy --strict ../tools/content_guard.py ../infra/updater/franca_updater.py ../infra/backup/franca_backup.py ../infra/tests/rehearse_update.py ../infra/tests/rehearse_backup.py ../infra/tests/rehearse_tailnet.py ../infra/tests/rehearse_status.py ../installer/linux/franca_install.py ../infra/tests/rehearse_install.py
 step "Module boundaries"
 PYTHONPATH=src uv run lint-imports
 step "Server, contract and tool tests"
@@ -28,6 +28,12 @@ step "Shell scripts"
 uv run shellcheck ../tools/*.sh ../.githooks/* ../scripts/* ../client/scripts/*.sh ../infra/tests/*.sh
 step "Workflow security"
 uv run zizmor --offline ../.github/workflows
+step "Windows installer"
+if command -v pwsh >/dev/null 2>&1; then
+    pwsh -NoProfile -Command "Invoke-ScriptAnalyzer -Path ../installer/windows -Recurse -Settings ../installer/windows/PSScriptAnalyzerSettings.psd1 -EnableExit; Invoke-Pester -Path ../installer/windows/tests -CI"
+else
+    echo "PowerShell (pwsh) is not installed here, so the Windows installer is checked in the pipeline only."
+fi
 
 cd "$root"
 step "Client"

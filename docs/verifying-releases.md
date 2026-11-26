@@ -28,6 +28,16 @@ gh attestation verify oci://ghcr.io/franca-language-learning/franca-app@sha256:<
 
 For the web server image, use `franca-caddy` in place of `franca-app`.
 
+## Checking the installer package
+
+The installer package (`franca-installer.zip`) has build provenance, made by the release workflow. With the GitHub CLI, in the folder where the file was downloaded:
+
+```sh
+gh attestation verify franca-installer.zip \
+  --repo Franca-Language-Learning/Franca \
+  --signer-workflow Franca-Language-Learning/Franca/.github/workflows/release.yml
+```
+
 ## What else is checked in the release workflow
 
 - The image is scanned with Grype, and it is not signed if there is a known vulnerability of high or critical severity that has a fix.

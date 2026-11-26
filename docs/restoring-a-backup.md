@@ -8,7 +8,13 @@ Once a month a backup is restored as a test, in a scratch folder, and checked. W
 
 Do this only if Franca's data is lost or damaged. Everything learned since the last backup (at most a day) is lost. The current database is kept beside the restored one, as `franca-before-restore-<date and time>.db`, in case it is needed.
 
-1. In File Explorer, open the Franca folder (the one with `compose.yaml` and `.env` in it). Right-click an empty part of the folder and choose **Open in Terminal**.
+1. Right-click the Start button and choose **Terminal (Admin)**. In that window, type these two commands, each followed by Enter, to open the Franca system and go to Franca's folder in it.
+
+   ```
+   wsl -d Franca -u root
+   cd /opt/franca
+   ```
+
 2. Stop the app:
 
    ```
