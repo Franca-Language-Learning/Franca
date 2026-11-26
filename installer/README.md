@@ -16,7 +16,7 @@ The installer for the owner's Windows PC (stories E01-011 and E01-012). The owne
 - Franca runs in a WSL 2 system called Franca, with Debian and systemd. Docker Engine runs there as a service, so Docker Desktop is not needed.
 - The bundle is in `/opt/franca` inside that system: `compose.yaml`, `.env` and the `secrets` folder. The data is in Docker volumes inside the system, not on the Windows disk.
 - The backups go to `/mnt/j/franca-backups`, which is a folder on disk J:. `/etc/wsl.conf` mounts Windows disks with the `metadata` option, so that the folder can belong to the backup container's user (10001).
-- A scheduled task called Franca runs `wsl.exe -d Franca -u root -- sleep infinity` when the PC starts, as the owner, with S4U, so no password is stored. The task keeps the Franca system running. systemd starts Docker in it, and Docker starts the containers.
+- A scheduled task called Franca runs `wsl.exe -d Franca -u root -e sleep infinity` when the PC starts, as the owner, with S4U, so no password is stored. The task keeps the Franca system running. systemd starts Docker in it, and Docker starts the containers.
 - Sleep and hibernation on mains power are switched off.
 
 ## The Linux part
@@ -30,4 +30,6 @@ Before the first release exists, or in the rehearsal, `--release-file` names loc
 - The Windows part cannot be tested in the pipeline, because GitHub's Windows machines cannot run WSL 2. Its functions that do not need Windows have Pester tests, and the rest is tried on the owner's PC at the M0 rehearsal.
 - `wsl.exe --install` with `--name` and `--location` needs a recent WSL. The installer runs `wsl.exe --update` first.
 - A scheduled task with S4U is the way to start WSL before anyone signs in without storing a password. If it does not start WSL on the owner's PC, the task can be changed to store the owner's password, which the owner types in Task Scheduler.
+- The backup disk has to be NTFS. On exFAT or FAT32, Linux owners are not kept, and the installer stops with a message.
+- The owner is asked five questions. The story's acceptance criteria name three; the Google client ID and the backup disk letter are the two more.
 - The updater changes image references in `.env` and not `compose.yaml`. A release that changes `compose.yaml` needs the installer to be run again.

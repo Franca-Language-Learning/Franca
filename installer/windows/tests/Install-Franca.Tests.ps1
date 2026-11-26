@@ -45,3 +45,16 @@ Describe 'The files copied into the Franca system' {
         $LinuxFiles | Should -Be @('franca_install.py', 'franca_updater.py', 'compose.yaml')
     }
 }
+
+Describe 'Commands in the Franca system' {
+    BeforeAll {
+        $script:Text = Get-Content -Raw (Join-Path $PSScriptRoot '..' 'Install-Franca.ps1')
+    }
+    It 'are started with -e, so that no shell changes the backslashes in Windows paths' {
+        $script:Text | Should -Not -Match "'-u', 'root', '--'"
+        $script:Text | Should -Match "-u root -e sleep infinity"
+    }
+    It 'write wsl.conf without the carriage returns that PowerShell adds' {
+        $script:Text | Should -Match "tr -d '\\r' > /etc/wsl.conf"
+    }
+}

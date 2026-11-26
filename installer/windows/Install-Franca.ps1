@@ -55,7 +55,10 @@ function Test-Administrator {
 }
 
 function Invoke-Wsl {
-    <# Runs wsl.exe with the arguments given, and stops with a message when it fails. #>
+    <#
+    Runs wsl.exe with the arguments given, and stops with a message when it fails. Commands in the Franca system are
+    run with -e, so that they are started directly and not through a shell, which would change backslashes and quotes.
+    #>
     param([Parameter(Mandatory)] [string[]] $Arguments, [string] $InputText)
     if ($PSBoundParameters.ContainsKey('InputText')) {
         $output = $InputText | & wsl.exe @Arguments
@@ -70,12 +73,15 @@ function Invoke-Wsl {
 
 function Get-WslDistroName {
     <# The names of the WSL systems on this PC. wsl.exe writes UTF-16, which PowerShell reads with null characters. #>
+    # With no systems yet, wsl.exe writes a message on the error output. Windows PowerShell 5.1 would stop on it.
+    $ErrorActionPreference = 'Continue'
     $names = & wsl.exe --list --quiet 2>$null
     if ($LASTEXITCODE -ne 0) { return @() }
     return @($names | ForEach-Object { ($_ -replace "`0", '').Trim() } | Where-Object { $_ })
 }
 
 function Test-WslReady {
+    $ErrorActionPreference = 'Continue'
     & wsl.exe --status *> $null
     return ($LASTEXITCODE -eq 0)
 }
@@ -136,23 +142,24 @@ function Install-FrancaDistro {
     if ((Get-WslDistroName) -contains $FrancaDistro) { return }
     Write-Host "Adding the $FrancaDistro system to WSL. Debian is downloaded, which takes a few minutes."
     New-Item -ItemType Directory -Force -Path (Join-Path $FrancaRoot 'wsl') | Out-Null
+    Invoke-Wsl -Arguments @('--set-default-version', '2') | Out-Null
     Invoke-Wsl -Arguments @('--install', 'Debian', '--name', $FrancaDistro, '--location', (Join-Path $FrancaRoot 'wsl'), '--no-launch', '--web-download') | Out-Null
-    Invoke-Wsl -Arguments @('--set-version', $FrancaDistro, '2') | Out-Null
 }
 
 function Initialize-FrancaDistro {
     <# Writes /etc/wsl.conf, restarts the system so systemd runs, and installs Python, which the Linux part needs. #>
-    Invoke-Wsl -Arguments @('-d', $FrancaDistro, '-u', 'root', '--', 'sh', '-c', 'cat > /etc/wsl.conf') -InputText $WslConf | Out-Null
+    # PowerShell ends each line it pipes to a program with a carriage return, which tr removes.
+    Invoke-Wsl -Arguments @('-d', $FrancaDistro, '-u', 'root', '-e', 'sh', '-c', "tr -d '\r' > /etc/wsl.conf") -InputText $WslConf | Out-Null
     Invoke-Wsl -Arguments @('--terminate', $FrancaDistro) | Out-Null
-    Invoke-Wsl -Arguments @('-d', $FrancaDistro, '-u', 'root', '--', 'sh', '-c', 'apt-get update && apt-get install -y python3 ca-certificates curl') | Out-Null
+    Invoke-Wsl -Arguments @('-d', $FrancaDistro, '-u', 'root', '-e', 'sh', '-c', 'apt-get update && apt-get install -y python3 ca-certificates curl') | Out-Null
 }
 
 function Copy-LinuxInstaller {
     <# Copies the Linux part of the installer, the updater and compose.yaml into the Franca system. #>
-    $here = (Invoke-Wsl -Arguments @('-d', $FrancaDistro, '-u', 'root', '--', 'wslpath', '-a', $PSScriptRoot)) | Select-Object -First 1
-    Invoke-Wsl -Arguments @('-d', $FrancaDistro, '-u', 'root', '--', 'install', '-d', '-m', '0700', $LinuxInstallerFolder) | Out-Null
+    $here = (Invoke-Wsl -Arguments @('-d', $FrancaDistro, '-u', 'root', '-e', 'wslpath', '-a', $PSScriptRoot)) | Select-Object -First 1
+    Invoke-Wsl -Arguments @('-d', $FrancaDistro, '-u', 'root', '-e', 'install', '-d', '-m', '0700', $LinuxInstallerFolder) | Out-Null
     foreach ($file in $LinuxFiles) {
-        Invoke-Wsl -Arguments @('-d', $FrancaDistro, '-u', 'root', '--', 'install', '-m', '0600', "$here/$file", "$LinuxInstallerFolder/$file") | Out-Null
+        Invoke-Wsl -Arguments @('-d', $FrancaDistro, '-u', 'root', '-e', 'install', '-m', '0600', "$here/$file", "$LinuxInstallerFolder/$file") | Out-Null
     }
 }
 
@@ -163,7 +170,7 @@ function Register-FrancaStartup {
     because WSL systems belong to a Windows user, and with S4U, so that no password is stored.
     #>
     $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $action = New-ScheduledTaskAction -Execute 'wsl.exe' -Argument "-d $FrancaDistro -u root -- sleep infinity"
+    $action = New-ScheduledTaskAction -Execute 'wsl.exe' -Argument "-d $FrancaDistro -u root -e sleep infinity"
     $trigger = New-ScheduledTaskTrigger -AtStartup
     $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType S4U -RunLevel Highest
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
@@ -218,7 +225,7 @@ function Install-Franca {
     $previousEncoding = $OutputEncoding
     $OutputEncoding = [Text.UTF8Encoding]::new($false)
     try {
-        $output = Invoke-Wsl -Arguments @('-d', $FrancaDistro, '-u', 'root', '--', 'python3', "$LinuxInstallerFolder/franca_install.py") -InputText $answers
+        $output = Invoke-Wsl -Arguments @('-d', $FrancaDistro, '-u', 'root', '-e', 'python3', "$LinuxInstallerFolder/franca_install.py") -InputText $answers
     } finally {
         $OutputEncoding = $previousEncoding
         $answers = $null

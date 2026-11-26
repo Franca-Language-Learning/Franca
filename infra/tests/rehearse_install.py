@@ -24,7 +24,7 @@ import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-PROJECT = "franca"
+PROJECT = f"franca-install-rehearsal-{os.getpid()}"
 NETWORK = f"franca-install-rehearsal-{os.getpid()}"
 HEADSCALE_NAME = f"franca-install-headscale-{os.getpid()}"
 HEADSCALE = "headscale/headscale:0.29.7@sha256:11f81665e842809db9fe3006a38c56a66e968baa5abd4bac498e86445572b970"  # renovate: image
@@ -163,7 +163,7 @@ def main() -> int:
                 "backup_dir": str(disk / "franca-backups"),
             }
             command = [python, "installer/linux/franca_install.py", "--bundle-dir", str(bundle), "--compose-file", "infra/compose.yaml"]
-            command += ["--release-file", str(release), "--skip-docker", "--ntfy-url", ntfy_url]
+            command += ["--release-file", str(release), "--skip-docker", "--ntfy-url", ntfy_url, "--project-name", PROJECT]
             # The installer's own folder has the updater's code beside it in the package; here it is found through PYTHONPATH.
             return sh("sudo", f"PYTHONPATH={ROOT / 'infra' / 'updater'}", *command, check=False, input_text=json.dumps(answers))
 
@@ -202,11 +202,14 @@ def main() -> int:
             check(f"{disk / 'franca-backups'} 755 10001" in modes, "the backup folder belongs to the backup's user", failures)
             check((disk / "franca-backups" / ".franca-backup-disk").exists(), "the backup folder has the disk marker", failures)
 
-            states = [
-                line.split() for line in sh("sudo", *compose, "ps", "--format", "{{.Service}} {{.State}} {{.Health}}").stdout.splitlines()
-            ]
+            services = sh("sudo", *compose, "config", "--services").stdout.split()
+            listed = sh("sudo", *compose, "ps", "--format", "{{.Service}} {{.State}} {{.Health}}").stdout.splitlines()
+            states = [line.split() for line in listed]
             unhealthy = [state for state in states if state[1:2] != ["running"] or state[2:] not in ([], ["healthy"])]
-            check(not unhealthy and len(states) >= 8, f"the {len(states)} containers are running and healthy", failures)
+            running = {state[0] for state in states}
+            check(
+                not unhealthy and running == set(services), f"all {len(services)} services of the bundle are running and healthy", failures
+            )
             if unhealthy:
                 print(f"info: {unhealthy}", flush=True)
             topic = shown.get("ntfy_topic", "")

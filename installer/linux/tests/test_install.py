@@ -76,7 +76,7 @@ def test_the_answers_are_not_shown_in_their_text_form(tmp_path: Path) -> None:
 # --- the secrets
 
 
-def test_the_secrets_are_written_and_the_generated_ones_are_returned_once(tmp_path: Path) -> None:
+def test_the_secrets_are_written_and_the_generated_ones_are_returned(tmp_path: Path) -> None:
     folder = tmp_path / "secrets"
 
     shown = fi.write_secrets(folder, answers(tmp_path))
@@ -95,12 +95,23 @@ def test_a_second_run_keeps_the_generated_secrets(tmp_path: Path) -> None:
     folder = tmp_path / "secrets"
     fi.write_secrets(folder, answers(tmp_path))
     password = (folder / "backup_password").read_text()
+    fi.mark_shown(folder)
 
     shown = fi.write_secrets(folder, answers(tmp_path, tailscale_authkey="tskey-auth-next"))
 
     assert shown == {}
     assert (folder / "backup_password").read_text() == password
     assert (folder / "tailscale_authkey").read_text() == "tskey-auth-next"
+
+
+def test_the_password_is_shown_again_after_a_run_that_stopped_before_the_end(tmp_path: Path) -> None:
+    folder = tmp_path / "secrets"
+    first = fi.write_secrets(folder, answers(tmp_path))
+    # The first run stopped before the owner was shown the password, so mark_shown was not called.
+
+    again = fi.write_secrets(folder, answers(tmp_path))
+
+    assert again == first
 
 
 def test_the_topic_fits_the_status_containers_pattern(tmp_path: Path) -> None:
@@ -154,15 +165,44 @@ def test_the_backup_folder_gets_the_disk_marker_and_belongs_to_the_backup_user(t
     folder = tmp_path / "disk-j" / "franca-backups"
     owners: list[tuple[Path, int, int]] = []
 
-    fi.prepare_backup_folder(folder, chown=lambda path, uid, gid: owners.append((path, uid, gid)))
+    fi.prepare_backup_folder(folder, chown=lambda path, uid, gid: owners.append((path, uid, gid)), owner_of=lambda _path: 10001)
 
     assert (folder / ".franca-backup-disk").is_file()
     assert (folder, 10001, 10001) in owners
 
 
+def test_a_disk_that_does_not_keep_linux_owners_is_refused(tmp_path: Path) -> None:
+    (tmp_path / "disk-j").mkdir()
+
+    with pytest.raises(fi.InstallError, match="NTFS"):
+        fi.prepare_backup_folder(tmp_path / "disk-j" / "franca-backups", chown=lambda *_: None, owner_of=lambda _path: 0)
+
+
+def test_a_symlink_in_the_bundle_folder_is_refused(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / ".env").symlink_to(tmp_path / "elsewhere")
+
+    with pytest.raises(fi.InstallError, match="link"):
+        fi.check_no_links(bundle)
+
+
+def test_a_release_without_all_its_images_is_refused() -> None:
+    class Releases(fu.GitHubReleases):
+        def latest(self) -> fu.Release:
+            return fu.Release(fu.Version(1, 0, 0), {"app": IMAGES["app"], "caddy": IMAGES["caddy"]})
+
+    class Verifier:
+        def verify(self, image: str, version: fu.Version) -> None:
+            pass
+
+    with pytest.raises(fi.InstallError, match="status"):
+        fi.verified_release(Releases(), Verifier())
+
+
 def test_a_backup_folder_on_a_disk_that_is_not_there_is_refused(tmp_path: Path) -> None:
     with pytest.raises(fi.InstallError, match="disk"):
-        fi.prepare_backup_folder(tmp_path / "no-disk" / "franca-backups", chown=lambda *_: None)
+        fi.prepare_backup_folder(tmp_path / "no-disk" / "franca-backups", chown=lambda *_: None, owner_of=lambda _path: 10001)
 
 
 # --- cosign
@@ -214,6 +254,18 @@ def test_the_bundle_is_started_with_tailscale_first_and_its_name_is_written(tmp_
     assert "--wait" in ups[-1]
     assert fu.EnvFile(bundle / ".env").read()["FRANCA_PUBLIC_URL"] == "https://franca.tail1234.ts.net"
     # The key has been used to join, so it is not kept.
+    assert (bundle / "secrets" / "tailscale_authkey").read_text() == ""
+
+
+def test_the_key_is_emptied_even_when_the_start_fails(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    fi.write_secrets(bundle / "secrets", answers(tmp_path))
+    fi.write_env(bundle, RELEASE, answers(tmp_path), tailscale_name=None)
+
+    with pytest.raises(fi.InstallError):
+        fi.start_bundle(bundle, RELEASE, answers(tmp_path), run=FakeDocker(dns_name=""))
+
     assert (bundle / "secrets" / "tailscale_authkey").read_text() == ""
 
 

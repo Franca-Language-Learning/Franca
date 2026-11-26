@@ -7,7 +7,7 @@ These steps install Franca on your Windows PC (stories E01-011 and E01-012). Fra
 1. In the Tailscale admin console, follow the steps under "Before the installer runs" in `docs/private-network.md`. Keep the auth key at hand.
 2. Install the ntfy app on your phone, as described in step 1 of `docs/health-alerts.md`.
 3. Have the client ID and the client secret of your Google sign-in client at hand. They are in the Google Cloud console, under **APIs & Services**, then **Credentials**, then the client called Franca. If the secret is no longer shown there, click **Add secret** and copy the new one.
-4. Check that disk J: is connected. The nightly backups are written to it.
+4. Check that disk J: is connected and formatted as NTFS, as internal disks are. The nightly backups are written to it.
 
 ## Installing
 

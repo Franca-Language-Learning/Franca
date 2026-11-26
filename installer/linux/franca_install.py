@@ -133,9 +133,14 @@ def _write_private(path: Path, value: str) -> None:
     os.replace(temporary, path)
 
 
+NOT_YET_SHOWN = ".not-yet-shown"
+SHOWN_ONCE = ("backup_password", "ntfy_topic")
+
+
 def write_secrets(folder: Path, answers: Answers) -> dict[str, str]:
     """Writes the secret files. The generated ones are kept when they exist. Returns the generated values that the
-    owner has to keep (the backup password and the ntfy topic), when they were made in this run."""
+    owner has to keep (the backup password and the ntfy topic) until the owner has been shown them: a marker file is
+    kept until mark_shown, so a run that stops before the end shows them in the next run."""
     folder.mkdir(parents=True, exist_ok=True)
     folder.chmod(0o700)
     _write_private(folder / "google_client_secret", answers.google_client_secret)
@@ -146,24 +151,43 @@ def write_secrets(folder: Path, answers: Answers) -> dict[str, str]:
         "ntfy_topic": lambda: "franca-" + _random_text(20),
         "status_push_token": lambda: secrets.token_urlsafe(48),
     }
-    shown: dict[str, str] = {}
+    marker = folder / NOT_YET_SHOWN
     for name, make in generated.items():
         path = folder / name
         if path.is_file() and path.read_text(encoding="utf-8").strip():
             continue
-        value = make()
-        _write_private(path, value)
-        if name in {"backup_password", "ntfy_topic"}:
-            shown[name] = value
-    return shown
+        _write_private(path, make())
+        if name in SHOWN_ONCE:
+            marker.touch()
+    if not marker.exists():
+        return {}
+    return {name: (folder / name).read_text(encoding="utf-8") for name in SHOWN_ONCE}
+
+
+def mark_shown(folder: Path) -> None:
+    """Notes that the owner has been shown the backup password and the topic, so later runs do not show them."""
+    (folder / NOT_YET_SHOWN).unlink(missing_ok=True)
+
+
+def check_no_links(bundle: Path) -> None:
+    """The bundle folder belongs to the updater's user, and root writes in it. A symbolic link there could make root
+    write elsewhere, so the installer stops when it finds one."""
+    for path in (bundle, *bundle.iterdir()) if bundle.exists() else ():
+        if path.is_symlink():
+            raise InstallError(f"{path} is a symbolic link. Remove it and run the installer again.")
+    for path in (bundle / "secrets").iterdir() if (bundle / "secrets").is_dir() else ():
+        if path.is_symlink():
+            raise InstallError(f"{path} is a symbolic link. Remove it and run the installer again.")
 
 
 # --- the bundle's files
 
 
-def write_env(bundle: Path, release: fu.Release, answers: Answers, tailscale_name: str | None) -> None:
+def write_env(bundle: Path, release: fu.Release, answers: Answers, tailscale_name: str | None, project: str | None = None) -> None:
+    """Writes .env. The Compose project is named franca, unless the rehearsal names another one."""
+    env = fu.EnvFile(bundle / ".env")
     values = {
-        "COMPOSE_PROJECT_NAME": "franca",
+        "COMPOSE_PROJECT_NAME": project or env.read().get("COMPOSE_PROJECT_NAME") or "franca",
         "COMPOSE_PROFILES": PROFILES,
         fu.VERSION_KEY: str(release.version),
         "FRANCA_BUNDLE_DIR": str(bundle),
@@ -174,10 +198,16 @@ def write_env(bundle: Path, release: fu.Release, answers: Answers, tailscale_nam
     } | {fu.IMAGE_KEYS[service]: image for service, image in release.images.items()}
     if tailscale_name:
         values |= {"FRANCA_TAILSCALE_NAME": tailscale_name, "FRANCA_PUBLIC_URL": f"https://{tailscale_name}"}
-    fu.EnvFile(bundle / ".env").write(values)
+    env.write(values)
 
 
-def prepare_backup_folder(folder: Path, chown: Callable[[Path, int, int], None] = os.chown) -> None:
+def _owner(path: Path) -> int:
+    return path.stat().st_uid
+
+
+def prepare_backup_folder(
+    folder: Path, chown: Callable[[Path, int, int], None] = os.chown, owner_of: Callable[[Path], int] = _owner
+) -> None:
     """Makes the backup folder on the backup disk, owned by the backup container's user, with the disk marker that
     is checked before each backup."""
     if not folder.parent.is_dir():
@@ -188,6 +218,10 @@ def prepare_backup_folder(folder: Path, chown: Callable[[Path, int, int], None] 
         marker.write_text("Franca backups. Leave this file here: without it, no backup is made on this disk.\n", encoding="utf-8")
     chown(folder, BACKUP_UID, BACKUP_UID)
     chown(marker, BACKUP_UID, BACKUP_UID)
+    if owner_of(folder) != BACKUP_UID:
+        raise InstallError(
+            f"The backup disk does not keep Linux owners, so the backup cannot write to {folder}. Use a disk formatted as NTFS."
+        )
 
 
 # --- programs
@@ -219,7 +253,8 @@ def ensure_docker(run: Run = run_command) -> None:
         Path(keyring).unlink(missing_ok=True)
         raise InstallError("Docker's signing key does not have the expected fingerprint, so Docker was not installed.")
     codename = _check(run(["sh", "-c", ". /etc/os-release && echo $VERSION_CODENAME"]), "Reading the Debian version").strip()
-    source = f"deb [arch=amd64 signed-by={keyring}] https://download.docker.com/linux/debian {codename} stable\n"
+    architecture = _check(run(["dpkg", "--print-architecture"]), "Reading the processor type").strip()
+    source = f"deb [arch={architecture} signed-by={keyring}] https://download.docker.com/linux/debian {codename} stable\n"
     Path("/etc/apt/sources.list.d/docker.list").write_text(source, encoding="utf-8")
     _check(run(["apt-get", "update"]), "Reading Docker's package list")
     _check(
@@ -231,6 +266,9 @@ def ensure_docker(run: Run = run_command) -> None:
 
 def verified_release(releases: fu.GitHubReleases, verifier: fu.Verifier) -> fu.Release:
     release = releases.latest()
+    missing = sorted(set(fu.IMAGE_KEYS) - set(release.images))
+    if missing:
+        raise InstallError(f"The latest release has no image for {', '.join(missing)}, so it cannot be installed.")
     for image in release.images.values():
         verifier.verify(image, release.version)
     return release
@@ -262,10 +300,13 @@ def start_bundle(bundle: Path, release: fu.Release, answers: Answers, run: Run =
     for image in release.images.values():
         if "@sha256:" in image:
             _check(run(["docker", "pull", "--quiet", image]), f"Downloading {image.split('/')[-1][:40]}")
-    _check(run(_compose(bundle, "up", "--detach", "--no-build", "--wait", "--wait-timeout", "180", "tailscale")), "Joining the tailnet")
-    name = tailscale_name(bundle, run)
+    try:
+        _check(run(_compose(bundle, "up", "--detach", "--no-build", "--wait", "--wait-timeout", "180", "tailscale")), "Joining the tailnet")
+        name = tailscale_name(bundle, run)
+    finally:
+        # A key can be used once. After this try it is not kept, whether the PC joined or not.
+        _write_private(bundle / "secrets" / "tailscale_authkey", "")
     write_env(bundle, release, answers, tailscale_name=name)
-    _write_private(bundle / "secrets" / "tailscale_authkey", "")
     _check(run(_compose(bundle, "up", "--detach", "--no-build", "--wait", "--wait-timeout", "300")), "Starting Franca")
     return name
 
@@ -291,19 +332,26 @@ def install(
     run: Run = run_command,
     post: Callable[[str, bytes], None] = _post,
     ntfy_url: str = NTFY_URL,
+    project: str | None = None,
 ) -> dict[str, str]:
     """Writes the bundle and starts it. Returns what the owner is shown at the end."""
     bundle.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(compose_file, bundle / "compose.yaml")
+    check_no_links(bundle)
+    for leftover in (bundle / "compose.yaml.new", bundle / ".env.new"):
+        leftover.unlink(missing_ok=True)
+    shutil.copyfile(compose_file, bundle / "compose.yaml.new")
+    os.replace(bundle / "compose.yaml.new", bundle / "compose.yaml")
     shown = write_secrets(bundle / "secrets", answers)
     prepare_backup_folder(answers.backup_dir)
-    write_env(bundle, release, answers, tailscale_name=None)
+    write_env(bundle, release, answers, tailscale_name=None, project=project)
     # The updater (user 10003) writes .env when it installs a release.
-    os.chown(bundle, 10003, 10003)
-    os.chown(bundle / ".env", 10003, 10003)
+    os.lchown(bundle, 10003, 10003)
+    os.lchown(bundle / ".env", 10003, 10003)
     name = start_bundle(bundle, release, answers, run)
     topic = (bundle / "secrets" / "ntfy_topic").read_text(encoding="utf-8")
     send_test_alert(topic, post, ntfy_url)
+    # The values are printed for the Windows part straight after this, so later runs do not show them again.
+    mark_shown(bundle / "secrets")
     return {"address": f"https://{name}", **shown}
 
 
@@ -323,6 +371,7 @@ def main(argv: Sequence[str] = sys.argv[1:]) -> int:
     parser.add_argument("--release-file", type=Path, help="for the rehearsal: local images, with no download and no signature check")
     parser.add_argument("--skip-docker", action="store_true", help="for the rehearsal: Docker is there already")
     parser.add_argument("--ntfy-url", default=NTFY_URL, help="for the rehearsal: a stand-in for ntfy.sh")
+    parser.add_argument("--project-name", help="for the rehearsal: a Compose project name other than franca")
     options = parser.parse_args(argv)
     try:
         answers = Answers.from_json(sys.stdin.read())
@@ -333,7 +382,7 @@ def main(argv: Sequence[str] = sys.argv[1:]) -> int:
         else:
             install_cosign(COSIGN)
             release = verified_release(fu.GitHubReleases(), fu.CosignVerifier())
-        shown = install(answers, options.bundle_dir, release, options.compose_file, ntfy_url=options.ntfy_url)
+        shown = install(answers, options.bundle_dir, release, options.compose_file, ntfy_url=options.ntfy_url, project=options.project_name)
     except (InstallError, fu.UpdateError, OSError) as error:
         print(f"The installation stopped: {error}", file=sys.stderr)
         return 1

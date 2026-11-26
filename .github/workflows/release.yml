@@ -110,6 +110,9 @@ jobs:
     environment: release
     permissions:
       contents: write
+      # For the build provenance of the installer package.
+      id-token: write
+      attestations: write
     steps:
       - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
@@ -130,6 +133,10 @@ jobs:
             infra/updater/franca_updater.py infra/compose.yaml docs/installing-franca.md franca-installer/
           (cd franca-installer && zip -q -r "../assets/franca-installer.zip" .)
           sha256sum assets/franca-installer.zip > assets/franca-installer.zip.sha256
+      - name: Attach the build provenance of the installer package
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: assets/franca-installer.zip
       - name: Publish the release with the image digests and SBOMs
         env:
           GH_TOKEN: ${{ github.token }}
