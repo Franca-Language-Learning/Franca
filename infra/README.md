@@ -12,8 +12,12 @@ Franca runs as a set of containers, which are small separate programs that Docke
 | `caddy/Caddyfile` | The web server's configuration: the client, the `/api` forwarding and the security headers |
 | `tests/test-bundle.sh` | Starts the bundle and checks it. The pipeline runs it on every pull request |
 | `images/backup.Dockerfile` | The image for the backup, with restic |
+| `images/tailscale.Dockerfile` | The image for the private network: Tailscale's image with a user other than root and the forwarding to Caddy |
+| `tailscale/serve.json` | The forwarding of port 443 on the tailnet to Caddy's HTTPS port |
 | `backup/franca_backup.py` | The nightly backup and the monthly restore test (story E01-008) |
 | `tests/rehearse_backup.py` | A rehearsal of a backup, a restore test and a restore with real containers. The pipeline runs it after the update rehearsal |
+| `tests/rehearse_tailnet.py` | A rehearsal of the private network with real containers, with Headscale in place of Tailscale's control server. The pipeline runs it after the backup rehearsal |
+| `tests/test_tailnet_config.py` | Checks of the private-network settings in these files. They run with the server's tests |
 | `tests/rehearse_update.py` | A rehearsal of an update and a rollback with real containers. The pipeline runs it after the bundle check |
 
 Secrets are files in a folder on the PC (`FRANCA_SECRETS_DIR`, by default `infra/secrets`): `google_client_secret` and `session_secret`. Docker passes them to the app container under `/run/secrets`, with the files' own permissions, so the app's user (number 10001) has to be able to read them. The installer writes them (story E01-011).
@@ -26,7 +30,7 @@ To start the bundle from the repository root:
 docker compose -f infra/compose.yaml up -d --build --wait
 ```
 
-Franca is then at http://127.0.0.1:8080, on this computer only. It becomes reachable from other devices over Tailscale in story E01-009.
+Franca is then at http://127.0.0.1:8080, on this computer only. Other devices reach it over the tailnet, as described below.
 
 ## Updates
 
@@ -52,11 +56,27 @@ At 03:30 UTC (an hour after the update check), a copy of the database is added t
 - one a week for 8 weeks
 - one a month for 12 months
 
-Once a month the latest backup is restored into a scratch folder and checked, and part of the repository's data is read back.
+Once a month the latest backup is restored into a scratch folder and checked, and all of the repository's data is read back.
 
 The backup password is the `backup_password` secret. The installer writes it and shows it to the owner once, to keep in a password manager; without it the backups cannot be read. `docs/restoring-a-backup.md` has the steps for a restore. The backup and restore-test results are in the `backup-status` volume, in `backup.json` and `restore-test.json`.
 
 The backup container runs as the app's user (10001), so the backup folder on disk J: has to be writable by that user. The installer puts a file called `.franca-backup-disk` in the backup folder. Without that file the disk counts as missing and no backup is made, so a backup never goes to an empty folder on another disk when disk J: is not connected. A night when the PC was off is made up when it is on again.
+
+## Private network
+
+Phones and laptops reach Franca over the owner's tailnet, the private network that Tailscale makes between the owner's devices. No port is opened on the PC or on the router, and Franca cannot be reached from the internet.
+
+1. The `tailscale` container joins the tailnet as a device called `franca`, with the auth key in the `tailscale_authkey` secret. The key is needed once. The node's identity is kept in the `tailscale-state` volume, so a used or expired key is no problem at later starts.
+2. Connections to port 443 on the PC's Tailscale name, such as `franca.tail1234.ts.net`, are passed to Caddy's port 8443 on the bundle's network. They stay encrypted on the way.
+3. Caddy serves HTTPS there with a certificate for the Tailscale name. tailscaled gets the certificate from Let's Encrypt and renews it, and Caddy asks tailscaled for it through the socket in the `tailscale-socket` volume. The socket gives Caddy's user (10002) the certificate and read-only access to the status, and no more.
+
+The installer writes the Tailscale name to `FRANCA_TAILSCALE_NAME` in `.env`, sets `FRANCA_PUBLIC_URL` to `https://` and that name, and switches the private network on with the `tailnet` profile. The Google sign-in client and passkeys use the same name.
+
+Tailscale runs with userspace networking, as user 10004, with a read-only file system and no capabilities. Nothing else on the PC or in the bundle can be reached over the tailnet: connections to ports other than 443 find nothing listening.
+
+The certificate's name is published in the public logs of issued certificates, as with all Let's Encrypt certificates. The name shows that a device called `franca` is in the tailnet. It gives no way in.
+
+`docs/private-network.md` has the owner's steps in the Tailscale admin console.
 
 ## Containers in later stories
 
@@ -68,6 +88,5 @@ The other containers will be added in later stories:
 | `speech` | E09-011 and the later speech stories |
 | `languagetool` | The answer-checking stories (WP4) |
 | `status` | E01-010 |
-| `tailscale` | E01-009 |
 
 The installer for Windows (story E01-011) will use this bundle.

@@ -30,12 +30,15 @@ COPY --from=caddy /usr/bin/caddy /usr/bin/caddy
 # Security fixes from Alpine that came out after the base image was built are installed here.
 RUN apk upgrade --no-cache
 RUN addgroup -g 10002 -S caddyuser && adduser -u 10002 -S -G caddyuser -H caddyuser \
-    && install -d -o caddyuser -g caddyuser /data /config
+    && install -d -o caddyuser -g caddyuser /data /config \
+    # The tailscale container's socket folder is shared with Caddy (story E01-009). Whichever container starts first
+    # makes the volume from its own folder, so the folder here belongs to the tailscale container's user too.
+    && install -d -o 10004 -g 10004 /var/run/tailscale
 COPY infra/caddy/Caddyfile /etc/caddy/Caddyfile
 COPY --from=client /src/client/dist /srv/client
 ENV XDG_DATA_HOME=/data XDG_CONFIG_HOME=/config
 USER 10002:10002
-EXPOSE 8080
+EXPOSE 8080 8443
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
 CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

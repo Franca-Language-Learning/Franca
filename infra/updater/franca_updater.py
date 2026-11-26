@@ -40,11 +40,20 @@ from typing import Protocol
 REPOSITORY = "Franca-Language-Learning/Franca"
 RELEASE_WORKFLOW_IDENTITY = f"https://github.com/{REPOSITORY}/.github/workflows/release.yml@refs/tags/{{tag}}"
 OIDC_ISSUER = "https://token.actions.githubusercontent.com"
-IMAGE_PATTERN = re.compile(r"^ghcr\.io/franca-language-learning/franca-(?P<service>app|caddy|updater|backup)@sha256:[0-9a-f]{64}$")
+IMAGE_PATTERN = re.compile(
+    r"^ghcr\.io/franca-language-learning/franca-(?P<service>app|caddy|updater|backup|tailscale)@sha256:[0-9a-f]{64}$"
+)
 VERSION_PATTERN = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 # The .env keys that name each image. A release has to have the app and caddy images; they are started at once. New
-# updater and backup images are checked and written to .env too, and are used from the next start of the bundle.
-IMAGE_KEYS = {"app": "FRANCA_APP_IMAGE", "caddy": "FRANCA_CADDY_IMAGE", "updater": "FRANCA_UPDATER_IMAGE", "backup": "FRANCA_BACKUP_IMAGE"}
+# updater, backup and tailscale images are checked and written to .env too, and are used from the next start of the
+# bundle.
+IMAGE_KEYS = {
+    "app": "FRANCA_APP_IMAGE",
+    "caddy": "FRANCA_CADDY_IMAGE",
+    "updater": "FRANCA_UPDATER_IMAGE",
+    "backup": "FRANCA_BACKUP_IMAGE",
+    "tailscale": "FRANCA_TAILSCALE_IMAGE",
+}
 REQUIRED_IMAGES = frozenset({"app", "caddy"})
 VERSION_KEY = "FRANCA_VERSION"
 SNAPSHOTS_KEPT = 5

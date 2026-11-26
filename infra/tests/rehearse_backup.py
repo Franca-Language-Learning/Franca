@@ -59,8 +59,9 @@ def main() -> int:
         (bundle / "compose.yaml").write_text((ROOT / "infra" / "compose.yaml").read_text(encoding="utf-8"), encoding="utf-8")
         secrets = bundle / "secrets"
         secrets.mkdir()
-        for name in ("google_client_secret", "session_secret", "backup_password"):
-            (secrets / name).write_text("" if name == "google_client_secret" else os.urandom(32).hex(), encoding="utf-8")
+        for name in ("google_client_secret", "session_secret", "backup_password", "tailscale_authkey"):
+            empty = name in {"google_client_secret", "tailscale_authkey"}
+            (secrets / name).write_text("" if empty else os.urandom(32).hex(), encoding="utf-8")
             (secrets / name).chmod(0o644)
         backups = bundle / "disk-j"
         backups.mkdir()

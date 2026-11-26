@@ -137,6 +137,8 @@ def test_the_image_list_names_the_images_by_digest() -> None:
     assert fu.parse_images([APP, "", CADDY]) == {"app": APP, "caddy": CADDY}
     updater = f"ghcr.io/franca-language-learning/franca-updater@{DIGEST}"
     assert fu.parse_images([APP, CADDY, updater])["updater"] == updater
+    tailscale = f"ghcr.io/franca-language-learning/franca-tailscale@{DIGEST}"
+    assert fu.parse_images([APP, CADDY, tailscale])["tailscale"] == tailscale
 
 
 @pytest.mark.parametrize(
