@@ -55,6 +55,7 @@ IMAGE_KEYS = {
     "tailscale": "FRANCA_TAILSCALE_IMAGE",
 }
 REQUIRED_IMAGES = frozenset({"app", "caddy"})
+TAILNET_PROFILE = "tailnet"  # the Compose profile of the private network (story E01-009)
 VERSION_KEY = "FRANCA_VERSION"
 SNAPSHOTS_KEPT = 5
 PLACEHOLDER_BUNDLE_DIR = "/franca-bundle-not-set"
@@ -463,9 +464,28 @@ class Updater:
             return self._roll_back(checked, old_version, release.version, old_text, snapshot, str(error))
         if self.high_water is not None:
             self.high_water.raise_to(release.version)
-        return self._report(
-            "installed", checked, str(release.version), release.version, f"Installed {release.version}; snapshot {snapshot}"
-        )
+        message = f"Installed {release.version}; snapshot {snapshot}" + self._start_new_tailscale(old, new)
+        return self._report("installed", checked, str(release.version), release.version, message)
+
+    def _start_new_tailscale(self, old: dict[str, str], new: dict[str, str]) -> str:
+        """The tailscale container is the one that faces the network, so a new image of it is started straight after
+        the app is healthy, when the private network is switched on. If it does not start, the old image is put back.
+        Returns a note for the status message, or an empty string."""
+        key = IMAGE_KEYS["tailscale"]
+        profiles = {profile.strip() for profile in old.get("COMPOSE_PROFILES", "").split(",")}
+        if TAILNET_PROFILE not in profiles or old.get(key) == new.get(key):
+            return ""
+        try:
+            self.compose.up("tailscale")
+        except Exception as error:  # noqa: BLE001 - the app update is kept; only the tailscale image is put back
+            put_back = {name: value for name, value in new.items() if name != key} | ({key: old[key]} if key in old else {})
+            try:
+                self.env.write(put_back)
+                self.compose.up("tailscale")
+            except Exception as again:  # noqa: BLE001 - reported for the owner
+                return f". The new tailscale image did not start ({error}), and starting the old one failed too: {again}"
+            return f". The new tailscale image did not start ({error}), so the old one was started again"
+        return ""
 
     def _restart_unchanged(self, checked: str, old_version: str, failed: Version, reason: str) -> str:
         """Nothing was changed yet; the installed version is started again."""

@@ -78,8 +78,12 @@ services:
       TS_AUTH_ONCE: "true"
       TS_HOSTNAME: ${FRANCA_TAILSCALE_HOSTNAME:-franca}
       TS_STATE_DIR: /var/lib/tailscale
+      # The socket itself has to be in the shared volume. Without this, containerboot puts it in /tmp and leaves only a
+      # symlink in the volume, which Caddy cannot follow.
+      TS_SOCKET: /var/run/tailscale/tailscaled.sock
       TS_USERSPACE: "true"
-      # Caddy's user may fetch the certificate. Other users of the socket can only read the status.
+      # Caddy's user may fetch the certificate. Other users of the socket can read the status and open connections to
+      # other devices in the tailnet; the tailnet policy in docs/private-network.md allows franca no such connections.
       TS_PERMIT_CERT_UID: "10002"
     secrets: [tailscale_authkey]
     volumes:

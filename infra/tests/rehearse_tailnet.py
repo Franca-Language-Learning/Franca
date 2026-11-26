@@ -10,8 +10,10 @@ The rehearsal:
 3. from the phone, connects to port 443 on the PC's tailnet address and checks that the connection reaches Caddy's
    HTTPS port, still encrypted;
 4. checks that Caddy's plain HTTP port and the other ports cannot be reached over the tailnet;
-5. checks that no container publishes a port beyond the PC's loopback;
-6. checks that the tailscale container runs as a user, with a read-only file system and no capabilities.
+5. checks that Caddy's user can reach tailscaled through the shared socket and may ask for a certificate, and that
+   another user may not;
+6. checks that no container publishes a port beyond the PC's loopback;
+7. checks that the tailscale container runs as a user, with a read-only file system and no capabilities.
 
 Headscale cannot issue certificates, so the certificate itself is tried at the installer rehearsal on the PC.
 """
@@ -30,8 +32,9 @@ PROJECT = f"franca-tailnet-rehearsal-{os.getpid()}"
 APP = "franca/app:rehearsal-tailnet"
 CADDY = "franca/caddy:rehearsal-tailnet"
 TAILSCALE = "franca/tailscale:rehearsal"
-HEADSCALE = "headscale/headscale:0.29.7"
-PHONE = "tailscale/tailscale:v1.104.7"
+# Renovate adds the digests of these two images (see .github/renovate.json).
+HEADSCALE = "headscale/headscale:0.29.7"  # renovate: image
+PHONE = "tailscale/tailscale:v1.104.7"  # renovate: image
 LOGIN_SERVER = "http://headscale:8080"
 
 HEADSCALE_CONFIG = """\
@@ -76,6 +79,8 @@ services:
     image: {HEADSCALE}
     command: serve
     read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     tmpfs: [/var/run/headscale, /var/lib/headscale]
     volumes:
       - ./headscale:/etc/headscale:ro
@@ -87,6 +92,8 @@ services:
   phone:
     image: {PHONE}
     profiles: [tailnet]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     depends_on:
       headscale:
         condition: service_healthy
@@ -163,11 +170,15 @@ def main() -> int:
             return sh(*compose, "exec", "-T", "headscale", "headscale", *arguments).stdout
 
         def from_phone(port: int) -> subprocess.CompletedProcess[str]:
-            script = f"printf '{PLAIN_REQUEST}' | timeout 15 tailscale nc {franca_ip} {port}"
+            # The pause keeps the input open, so that nc does not close the connection before the answer arrives.
+            script = f"(printf '{PLAIN_REQUEST}'; sleep 5) | timeout 15 tailscale nc {franca_ip} {port}"
             return sh(*compose, "exec", "-T", "phone", "sh", "-c", script, check=False)
 
         try:
             sh(*compose, "up", "--detach", "--no-build", "--wait", "--wait-timeout", "120", "headscale")
+            for image in (HEADSCALE, PHONE):
+                digest = sh("docker", "image", "inspect", "--format", "{{index .RepoDigests 0}}", image, check=False).stdout.strip()
+                print(f"info: {image} is {digest}", flush=True)
             headscale("users", "create", "rehearsal")
             users = json.loads(headscale("users", "list", "--output", "json"))
             user_id = str(next(user["id"] for user in users if user["name"] == "rehearsal"))
@@ -200,9 +211,40 @@ def main() -> int:
                 "port 443 on the tailnet reaches Caddy's HTTPS port, still encrypted",
                 failures,
             )
-            for port in (8080, 8000, 8443):
+            if "HTTP/1." not in reply.stdout:
+                print(f"info: the answer on port 443 was {reply.stdout[:300]!r}, errors {reply.stderr[:300]!r}", flush=True)
+            # 9002 is containerboot's port for metrics and health, which are switched off.
+            for port in (8080, 8000, 8443, 9002):
                 closed = from_phone(port)
-                check("HTTP/1." not in closed.stdout, f"port {port} cannot be reached over the tailnet", failures)
+                check(
+                    closed.returncode != 0 and "HTTP/1." not in closed.stdout,
+                    f"port {port} cannot be reached over the tailnet",
+                    failures,
+                )
+
+            # Caddy reaches tailscaled through the socket in the shared volume, as user 10002.
+            def through_socket(user: str, *arguments: str) -> subprocess.CompletedProcess[str]:
+                volume = f"{PROJECT}_tailscale-socket:/var/run/tailscale:ro"
+                return sh(
+                    "docker", "run", "--rm", "--user", user, "-v", volume, "--entrypoint", "tailscale", TAILSCALE, *arguments, check=False
+                )
+
+            status = through_socket("10002:10002", "status", "--json")
+            check(
+                status.returncode == 0 and '"BackendState": "Running"' in status.stdout,
+                "Caddy's user reaches tailscaled through the socket",
+                failures,
+            )
+            cert = ["cert", "--cert-file", "-", "--key-file", "-", "franca.rehearsal.ts.net"]
+            allowed = through_socket("10002:10002", *cert)
+            # Headscale issues no certificates, so the request fails, but for a reason other than access.
+            check(
+                "access denied" not in (allowed.stdout + allowed.stderr).lower(),
+                "Caddy's user may ask tailscaled for a certificate",
+                failures,
+            )
+            refused = through_socket("10005:10005", *cert)
+            check("access denied" in (refused.stdout + refused.stderr).lower(), "another user may not ask for a certificate", failures)
 
             for service in ("app", "caddy", "tailscale"):
                 container = sh(*compose, "ps", "--quiet", service).stdout.strip()

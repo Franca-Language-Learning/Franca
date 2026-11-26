@@ -83,7 +83,13 @@ def test_only_caddy_may_fetch_certificates(tailscale: dict[str, Any]) -> None:
 
 def test_tailnet_connections_on_443_go_to_caddy_with_tls_intact() -> None:
     serve = json.loads((INFRA / "tailscale" / "serve.json").read_text())
-    assert serve == {"TCP": {"443": {"TCPForward": f"caddy:{CADDY_HTTPS_PORT}"}}}
+    # A PROXY protocol header (version 2) in front tells Caddy the device's tailnet address.
+    assert serve == {"TCP": {"443": {"TCPForward": f"caddy:{CADDY_HTTPS_PORT}", "ProxyProtocol": 2}}}
+
+
+def test_the_socket_is_in_the_shared_volume_itself(tailscale: dict[str, Any]) -> None:
+    # Without TS_SOCKET, containerboot puts the socket in /tmp and leaves a symlink in the volume, which Caddy cannot follow.
+    assert tailscale["environment"]["TS_SOCKET"] == "/var/run/tailscale/tailscaled.sock"
 
 
 def test_caddy_reads_the_tailscale_socket_read_only(tailscale: dict[str, Any], compose: dict[str, Any]) -> None:
@@ -96,6 +102,16 @@ def test_caddy_serves_https_on_the_tailscale_name() -> None:
     assert re.search(r"^https://\{\$FRANCA_TAILSCALE_NAME\}:" + str(CADDY_HTTPS_PORT) + r" \{", caddyfile, re.MULTILINE)
     assert "auto_https off" not in caddyfile
     assert "Strict-Transport-Security" in caddyfile
+
+
+def test_caddy_reads_the_proxy_header_before_tls_and_offers_no_http3() -> None:
+    caddyfile = re.sub(r"^\s*#.*\n", "", (INFRA / "caddy" / "Caddyfile").read_text(), flags=re.MULTILINE)
+    server = re.search(r"servers :" + str(CADDY_HTTPS_PORT) + r" \{(.*?)\n\t\}", caddyfile, re.DOTALL)
+    assert server, "no server options for the HTTPS port"
+    options = server.group(1)
+    assert re.search(r"listener_wrappers \{\s*proxy_protocol \{.*?\}\s*tls\s*\}", options, re.DOTALL)
+    # HTTP/3 would be offered on UDP 8443, which is not passed on over the tailnet.
+    assert re.search(r"^\s*protocols h1 h2$", options, re.MULTILINE)
 
 
 def test_caddy_has_a_tailscale_name_even_before_the_installer_sets_one(compose: dict[str, Any]) -> None:
