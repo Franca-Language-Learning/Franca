@@ -5,3 +5,4 @@
 - `tests/spec/` has the acceptance tests from the specification. Change them only when the specification changes.
 - After changing a route, run `scripts/update-contract` from the repository root and commit `contracts/openapi.yaml`.
 - No course content in tests. Use the made-up pack in `packs/fixture/`.
+- The database is SQLite through `franca.platform.db`. A change to `contracts/db/tables.sql` needs a new migration in `src/franca/platform/migrations/versions/`. `tests/test_database.py` fails until the migrations build the same schema as `contracts/db/schema.sql`. Do not edit `0001_baseline.sql`.

@@ -23,6 +23,12 @@ if curl -fsS "$base/" | grep -q '<div id="root">'; then pass "the client is serv
 if curl -fsS "$base/some/client/route" | grep -q '<div id="root">'; then pass "client routes fall back to index.html"; else fail "client routes do not fall back to index.html"; fi
 if curl -fsSI "$base/" | grep -qi '^x-content-type-options: nosniff'; then pass "the nosniff security header is sent"; else fail "the nosniff security header is missing"; fi
 
+if "${compose[@]}" exec -T app python -c "import sqlite3; c = sqlite3.connect('/data/franca.db'); c.execute('SELECT count(*) FROM identity_learner')" ; then
+    pass "the database in the app's volume has the schema"
+else
+    fail "the database in the app's volume has no schema"
+fi
+
 for service in app caddy; do
     id="$("${compose[@]}" ps --quiet "$service")"
     user="$(docker inspect --format '{{.Config.User}}' "$id")"

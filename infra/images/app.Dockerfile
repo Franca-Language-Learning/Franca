@@ -24,10 +24,13 @@ ENV PATH=/app/.venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     FRANCA_VERSION=$FRANCA_VERSION \
-    FRANCA_ENVIRONMENT=production
+    FRANCA_ENVIRONMENT=production \
+    FRANCA_DATABASE_PATH=/data/franca.db
 USER 10001:10001
 WORKDIR /app
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=4)"]
-CMD ["uvicorn", "franca.api:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# The database is brought up to date before the service starts. From story E01-007 the updater does this after
+# taking a snapshot, and this step then finds nothing to do.
+CMD ["sh", "-c", "python -m franca.platform.migrate && exec uvicorn franca.api:create_app --factory --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips '*'"]
