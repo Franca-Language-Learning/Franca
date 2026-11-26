@@ -32,6 +32,8 @@ uv run zizmor --offline ../.github/workflows
 cd "$root"
 step "Client"
 pnpm install --frozen-lockfile --silent
+pnpm --filter @franca/client generate:api >/dev/null
+git diff --exit-code -- client/src/api/schema.d.ts
 pnpm --filter @franca/client typecheck
 pnpm --filter @franca/client boundaries
 pnpm --filter @franca/client test

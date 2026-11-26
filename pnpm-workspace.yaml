@@ -11,4 +11,7 @@ trustPolicy: no-downgrade
 blockExoticSubdeps: true
 # Install scripts of dependencies do not run unless they are listed here, and an unlisted one stops the install.
 strictDepBuilds: true
-allowBuilds: {}
+allowBuilds:
+  # msw's install script copies its service worker file into the client; it is not needed, because the mock
+  # API is used in tests (Node) only.
+  msw: false
