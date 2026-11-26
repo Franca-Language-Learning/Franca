@@ -2,7 +2,7 @@
 #   docker build -f infra/images/backup.Dockerfile .
 # Base images are named by tag here; Renovate adds and updates their digests.
 
-# restic is built from its 0.19.1 release with Go 1.27.4 and newer versions of five of its libraries (compress, x/net,
+# restic is built from its 0.19.1 release with Go 1.27.4 and newer versions of five of its libraries (compress, x/net
 # x/text, grpc and go-jose), because the published binary has versions with known vulnerabilities. Remove this stage
 # when a restic release has these versions or newer.
 FROM golang:1.27.4-trixie AS restic
@@ -11,7 +11,7 @@ ENV CGO_ENABLED=0 GOFLAGS=-trimpath
 RUN git clone --quiet --depth 1 --branch v0.19.1 https://github.com/restic/restic /src/restic \
     && cd /src/restic \
     && test "$(git rev-parse HEAD)" = 6aa3a516ce654808a1f28f9fa21e9b7c8e6e90bf \
-    && go get github.com/klauspost/compress@v1.20.2 golang.org/x/net@v0.62.0 golang.org/x/text@v0.39.0 \
+    && go get github.com/klauspost/compress@v1.20.2 golang.org/x/net@v0.62.0 \
         google.golang.org/grpc@v1.83.1 github.com/go-jose/go-jose/v4@v4.1.6 \
     && go build -ldflags "-s -w -X main.version=0.19.1" -o /out/restic ./cmd/restic
 
