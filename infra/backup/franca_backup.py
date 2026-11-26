@@ -29,6 +29,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Sequence
 from contextlib import closing
@@ -197,6 +198,53 @@ def health_check(url: str) -> Callable[[], bool]:
     return answers
 
 
+# --- reports to health monitoring (story E01-010)
+
+# The status files whose results are reported, with the key of their external endpoint in Gatus, the result that
+# counts as a success, the field with the time of the last success and a name for messages. A restore by the owner
+# (restore.json) is not reported.
+MONITORED = {
+    "backup.json": ("nightly_backup", "backed-up", "lastSucceededAt", "backup"),
+    "restore-test.json": ("nightly_restore-test", "restore-test-passed", "lastPassedAt", "restore test"),
+}
+# How old the last success may be before the state is a failure: a day and two hours for the nightly backup, and two
+# days more than the month between restore tests.
+STALE_AFTER = {"backup.json": timedelta(hours=26), "restore-test.json": RESTORE_TEST_EVERY + timedelta(days=2)}
+
+
+def _post(request: urllib.request.Request) -> None:
+    with urllib.request.urlopen(request, timeout=10):  # noqa: S310 - a fixed address inside the bundle
+        pass
+
+
+@dataclass(slots=True)
+class Monitor:
+    """Reports the result of each run to an external endpoint in Gatus (the status container). An alert is sent when a
+    run fails or no report arrives within its heartbeat interval. This is a copy of the updater's Monitor, because the
+    two images share no code."""
+
+    url: str
+    token_file: Path
+    send: Callable[[urllib.request.Request], object] = field(default=_post)
+
+    def report(self, key: str, success: bool, message: str) -> None:
+        """Sends one result. Nothing is sent while there is no push token, which means monitoring is switched off. A
+        report that cannot be sent is printed instead, and the run's result is not changed."""
+        try:
+            token = self.token_file.read_text(encoding="utf-8").strip() if self.token_file.is_file() else ""
+            if not token:
+                return
+            fields = {"success": "true"} if success else {"success": "false", "error": message[:500]}
+            request = urllib.request.Request(  # noqa: S310 - a fixed address inside the bundle
+                f"{self.url.rstrip('/')}/api/v1/endpoints/{key}/external?{urllib.parse.urlencode(fields)}",
+                method="POST",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            self.send(request)
+        except Exception as error:  # noqa: BLE001 - the backup goes on when a report cannot be sent
+            print(json.dumps({"result": "report-not-sent", "message": str(error)}), flush=True)
+
+
 @dataclass(slots=True)
 class Backup:
     data: Path  # the app's data volume
@@ -205,6 +253,7 @@ class Backup:
     restic: Restic
     app_answers: Callable[[], bool] = field(default=lambda: False)
     backups: Path = Path("/backups")
+    monitor: Monitor | None = None
 
     def back_up(self, now: datetime) -> str:
         staging = self.work / "staging"
@@ -333,6 +382,28 @@ class Backup:
             print(json.dumps({"result": "status-not-written", "message": str(error)}), flush=True)
         return result
 
+    def report_state(self, now: datetime) -> None:
+        """Reports the state of the backup and of the restore test to health monitoring. A state is good while the last
+        run succeeded and the last success is recent enough (STALE_AFTER). The state is reported after each run and every
+        hour. Gatus forgets the time of the last report when the status container restarts, so without these reports a
+        missed run would not be noticed."""
+        if self.monitor is None:
+            return
+        for name, (key, success, stamp, what) in MONITORED.items():
+            state = self.status.read(name)
+            if not state:
+                self.monitor.report(key, True, f"No {what} has run yet")
+                continue
+            if state.get("result") != success:
+                self.monitor.report(key, False, state.get("message", f"The last {what} failed"))
+                continue
+            last = state.get(stamp, "")
+            try:
+                stale = now - datetime.fromisoformat(last) > STALE_AFTER[name]
+            except ValueError:
+                stale = True
+            self.monitor.report(key, not stale, f"No successful {what} since {last or 'the start'}" if stale else state.get("message", ""))
+
 
 # --- the service
 
@@ -361,6 +432,7 @@ def from_environment(environ: dict[str, str] | os._Environ[str]) -> Backup:
         restic=Restic(),
         app_answers=health_check(environ.get("FRANCA_HEALTH_URL", "http://app:8000/api/v1/health")),
         backups=Path(environ.get("FRANCA_BACKUP_DIR_IN_CONTAINER", "/backups")),
+        monitor=Monitor(environ["FRANCA_STATUS_URL"], Path("/run/secrets/status_push_token")) if environ.get("FRANCA_STATUS_URL") else None,
     )
 
 
@@ -369,9 +441,13 @@ def main(argv: Sequence[str] = sys.argv[1:]) -> int:
     command = argv[0] if argv else "serve"
     now = datetime.now(UTC)
     if command == "backup":
-        return 0 if backup.back_up(now) == "backed-up" else 1
+        result = backup.back_up(now)
+        backup.report_state(now)
+        return 0 if result == "backed-up" else 1
     if command == "restore-test":
-        return 0 if backup.restore_test(now) == "restore-test-passed" else 1
+        result = backup.restore_test(now)
+        backup.report_state(now)
+        return 0 if result == "restore-test-passed" else 1
     if command == "restore-latest":
         return 0 if backup.restore_latest(now) == "restored" else 1
     if command == "health":
@@ -382,16 +458,23 @@ def main(argv: Sequence[str] = sys.argv[1:]) -> int:
     at = backup_time(os.environ.get("FRANCA_BACKUP_AT_UTC", DEFAULT_BACKUP_TIME))
     # The service looks every ten minutes whether a backup is due, so a night when the PC was off or asleep is made
     # up when it is on again. After a failed backup, the next try is an hour later.
+    # The state is reported to health monitoring after each run and every hour (see Backup.report_state).
     retry_after = datetime.min.replace(tzinfo=UTC)
+    report_after = datetime.min.replace(tzinfo=UTC)
     while True:
         try:
             now = datetime.now(UTC)
+            ran = False
             if now >= retry_after and backup.backup_due(now, at):
+                ran = True
                 if backup.back_up(now) == "backed-up":
                     if backup.restore_test_due(now):
                         backup.restore_test(now)
                 else:
                     retry_after = now + timedelta(hours=1)
+            if ran or now >= report_after:
+                backup.report_state(now)
+                report_after = now + timedelta(hours=1)
         except Exception as error:  # noqa: BLE001 - the service keeps running and tries again
             print(json.dumps({"result": "error", "message": repr(error)}), flush=True)
         time.sleep(600)

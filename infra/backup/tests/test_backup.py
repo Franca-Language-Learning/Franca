@@ -5,9 +5,10 @@ import json
 import sqlite3
 import subprocess
 import sys
+import urllib.request
 from collections.abc import Sequence
 from contextlib import closing
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -345,3 +346,95 @@ def test_the_health_check_follows_the_last_successful_backup(tmp_path: Path) -> 
     backup.back_up(NOW)
     assert backup.healthy(NOW.replace(day=8)) is True
     assert backup.healthy(NOW.replace(day=10)) is False
+
+
+# --- reports to health monitoring (story E01-010)
+
+
+class FakeMonitor(fb.Monitor):
+    def __init__(self) -> None:
+        self.reports: list[tuple[str, bool, str]] = []
+
+    def report(self, key: str, success: bool, message: str) -> None:
+        self.reports.append((key, success, message))
+
+
+def states(monitor: FakeMonitor) -> list[tuple[str, bool]]:
+    return [(key, success) for key, success, _message in monitor.reports]
+
+
+def test_before_the_first_backup_both_states_are_good(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    monitor = FakeMonitor()
+    backup.monitor = monitor
+
+    backup.report_state(NOW)
+
+    assert states(monitor) == [("nightly_backup", True), ("nightly_restore-test", True)]
+
+
+def test_a_failed_backup_is_reported_until_one_succeeds(tmp_path: Path) -> None:
+    backup, restic = make(tmp_path)
+    monitor = FakeMonitor()
+    backup.monitor = monitor
+    restic.fail_on = "backup"
+    backup.back_up(NOW)
+    backup.report_state(NOW)
+    restic.fail_on = None
+    backup.back_up(NOW + timedelta(hours=1))
+    backup.report_state(NOW + timedelta(hours=1))
+
+    assert states(monitor)[0::2] == [("nightly_backup", False), ("nightly_backup", True)]
+    assert "backup failed" in monitor.reports[0][2]
+
+
+def test_no_successful_backup_for_26_hours_is_a_failure(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    monitor = FakeMonitor()
+    backup.monitor = monitor
+    backup.back_up(NOW)
+
+    backup.report_state(NOW + timedelta(hours=27))
+
+    key, success, message = monitor.reports[0]
+    assert (key, success) == ("nightly_backup", False)
+    assert "2026-12-07" in message
+
+
+def test_a_restore_test_older_than_32_days_is_a_failure(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    backup.back_up(NOW)
+    backup.restore_test(NOW)
+    monitor = FakeMonitor()
+    backup.monitor = monitor
+    later = NOW + timedelta(days=33)
+    backup.back_up(later)
+
+    backup.report_state(later)
+
+    assert states(monitor) == [("nightly_backup", True), ("nightly_restore-test", False)]
+
+
+def test_a_failed_restore_test_is_a_failure(tmp_path: Path) -> None:
+    backup, restic = make(tmp_path)
+    backup.back_up(NOW)
+    restic.fail_on = "restore"
+    backup.restore_test(NOW)
+    monitor = FakeMonitor()
+    backup.monitor = monitor
+
+    backup.report_state(NOW)
+
+    assert states(monitor) == [("nightly_backup", True), ("nightly_restore-test", False)]
+
+
+def test_a_report_is_a_post_with_the_token(tmp_path: Path) -> None:
+    token = tmp_path / "status_push_token"
+    token.write_text("t" * 40, encoding="utf-8")
+    sent: list[urllib.request.Request] = []
+
+    fb.Monitor("http://status:8080", token, send=sent.append).report("nightly_backup", True, "The database was backed up")
+
+    assert sent[0].get_method() == "POST"
+    assert sent[0].full_url == "http://status:8080/api/v1/endpoints/nightly_backup/external?success=true"
+    assert sent[0].get_header("Authorization") == "Bearer " + "t" * 40

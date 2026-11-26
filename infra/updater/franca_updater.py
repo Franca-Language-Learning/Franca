@@ -30,6 +30,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -41,21 +42,30 @@ REPOSITORY = "Franca-Language-Learning/Franca"
 RELEASE_WORKFLOW_IDENTITY = f"https://github.com/{REPOSITORY}/.github/workflows/release.yml@refs/tags/{{tag}}"
 OIDC_ISSUER = "https://token.actions.githubusercontent.com"
 IMAGE_PATTERN = re.compile(
-    r"^ghcr\.io/franca-language-learning/franca-(?P<service>app|caddy|updater|backup|tailscale)@sha256:[0-9a-f]{64}$"
+    r"^ghcr\.io/franca-language-learning/franca-(?P<service>app|caddy|updater|backup|tailscale|status)@sha256:[0-9a-f]{64}$"
 )
 VERSION_PATTERN = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 # The .env keys that name each image. A release has to have the app and caddy images; they are started at once. New
-# updater, backup and tailscale images are checked and written to .env too, and are used from the next start of the
-# bundle.
+# updater and backup images are checked and written to .env too, and are used from the next start of the bundle. New
+# tailscale and status images are started after the app is healthy (STARTED_AFTER_THE_APP).
 IMAGE_KEYS = {
     "app": "FRANCA_APP_IMAGE",
     "caddy": "FRANCA_CADDY_IMAGE",
     "updater": "FRANCA_UPDATER_IMAGE",
     "backup": "FRANCA_BACKUP_IMAGE",
     "tailscale": "FRANCA_TAILSCALE_IMAGE",
+    "status": "FRANCA_STATUS_IMAGE",
 }
 REQUIRED_IMAGES = frozenset({"app", "caddy"})
-TAILNET_PROFILE = "tailnet"  # the Compose profile of the private network (story E01-009)
+# The results that count as a successful run, and the key of the updater's external endpoint in the status container.
+SUCCESSFUL_RESULTS = frozenset({"installed", "up-to-date"})
+MONITOR_KEY = "nightly_update"
+# The services whose new images are started straight after the app is healthy, each with the Compose profile that has
+# to be on: the private network (story E01-009), which faces the tailnet, and health monitoring (story E01-010).
+STARTED_AFTER_THE_APP = {"tailscale": "tailnet", "status": "monitoring"}
+STARTED_AFTER_THE_APP_WAIT = 120  # seconds for such a service to become healthy
+# Without a successful run for this long, the state reported to health monitoring is a failure.
+STALE_AFTER = timedelta(hours=26)
 VERSION_KEY = "FRANCA_VERSION"
 SNAPSHOTS_KEPT = 5
 PLACEHOLDER_BUNDLE_DIR = "/franca-bundle-not-set"
@@ -259,8 +269,10 @@ class Compose:
     def stop(self, *services: str) -> None:
         _check(self.run(self._compose("stop", *services)), "Stopping " + ", ".join(services))
 
-    def up(self, *services: str) -> None:
-        _check(self.run(self._compose("up", "--detach", "--no-build", "--no-deps", *services)), "Starting " + ", ".join(services))
+    def up(self, *services: str, wait: int | None = None) -> None:
+        """Starts the services. With wait, Compose waits up to that many seconds until they are healthy."""
+        waiting = ["--wait", "--wait-timeout", str(wait)] if wait else []
+        _check(self.run(self._compose("up", "--detach", "--no-build", "--no-deps", *waiting, *services)), "Starting " + ", ".join(services))
 
     def run_in_app(self, script: str) -> None:
         """Runs Python in a one-off container of the app image, with the database volume, while the app is stopped."""
@@ -371,6 +383,14 @@ class StatusFile:
         temporary.write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
         os.replace(temporary, self.path)
 
+    def read(self) -> dict[str, str]:
+        """The last status written, or an empty dict when there is none or it cannot be read."""
+        try:
+            loaded = json.loads(self.path.read_text(encoding="utf-8"))
+        except OSError, ValueError:
+            return {}
+        return {str(name): str(value) for name, value in loaded.items()} if isinstance(loaded, dict) else {}
+
 
 @dataclass(slots=True)
 class HighWaterMark:
@@ -402,6 +422,42 @@ def check_bundle(folder: Path) -> None:
         raise UpdateError(f"The updater cannot write to the bundle folder {folder}")
 
 
+# --- reports to health monitoring (story E01-010)
+
+
+def _post(request: urllib.request.Request) -> None:
+    with urllib.request.urlopen(request, timeout=10):  # noqa: S310 - a fixed address inside the bundle
+        pass
+
+
+@dataclass(slots=True)
+class Monitor:
+    """Reports the result of each run to an external endpoint in Gatus (the status container). An alert is sent when a
+    run fails or no report arrives within 25 hours."""
+
+    url: str
+    token_file: Path
+    send: Callable[[urllib.request.Request], object] = field(default=_post)
+
+    def report(self, key: str, success: bool, message: str) -> None:
+        """Sends one result. Nothing is sent while there is no push token, which means monitoring is switched off. A
+        report that cannot be sent is printed instead, and the run's result is not changed."""
+        try:
+            token = self.token_file.read_text(encoding="utf-8").strip() if self.token_file.is_file() else ""
+            if not token:
+                return
+            fields = {"success": "true"} if success else {"success": "false", "error": message[:500]}
+            query = urllib.parse.urlencode(fields)
+            request = urllib.request.Request(  # noqa: S310 - a fixed address inside the bundle
+                f"{self.url.rstrip('/')}/api/v1/endpoints/{key}/external?{query}",
+                method="POST",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            self.send(request)
+        except Exception as error:  # noqa: BLE001 - the updater goes on when a report cannot be sent
+            print(json.dumps({"result": "report-not-sent", "message": str(error)}), flush=True)
+
+
 # --- one run
 
 
@@ -418,8 +474,16 @@ class Updater:
     bundle: Path | None = None
     health_timeout: float = 180
     sleep: Callable[[float], None] = field(default=time.sleep)
+    monitor: Monitor | None = None
 
     def run_once(self, now: datetime) -> str:
+        """Checks for a release and installs it, then reports the state to health monitoring. Returns the result, which
+        is also written to the status file."""
+        result = self._run(now)
+        self.report_state(now)
+        return result
+
+    def _run(self, now: datetime) -> str:
         """Checks for a release and installs it. Returns the result, which is also written to the status file.
 
         Every error after the app is stopped leads to the old version being started again, whatever kind of error it
@@ -464,28 +528,35 @@ class Updater:
             return self._roll_back(checked, old_version, release.version, old_text, snapshot, str(error))
         if self.high_water is not None:
             self.high_water.raise_to(release.version)
-        message = f"Installed {release.version}; snapshot {snapshot}" + self._start_new_tailscale(old, new)
+        message = f"Installed {release.version}; snapshot {snapshot}" + self._start_new_images(old, new)
         return self._report("installed", checked, str(release.version), release.version, message)
 
-    def _start_new_tailscale(self, old: dict[str, str], new: dict[str, str]) -> str:
-        """Start a new tailscale image once the app is healthy, if the private network is on.
+    def _start_new_images(self, old: dict[str, str], new: dict[str, str]) -> str:
+        """Start the new tailscale and status images once the app is healthy, for the profiles that are on.
 
-        The tailscale container is exposed to the tailnet, so its update is not left for later. If the new image does
-        not start, the old one is put back and started. Returns a note for the status message, or an empty string."""
-        key = IMAGE_KEYS["tailscale"]
+        The tailscale container faces the tailnet, so its update is not left for the next start of the bundle. If a
+        new image does not start, the old one is put back and started. Returns notes for the status message, or an
+        empty string."""
         profiles = {profile.strip() for profile in old.get("COMPOSE_PROFILES", "").split(",")}
-        if TAILNET_PROFILE not in profiles or old.get(key) == new.get(key):
-            return ""
+        notes = ""
+        for service, profile in STARTED_AFTER_THE_APP.items():
+            key = IMAGE_KEYS[service]
+            if profile in profiles and old.get(key) != new.get(key):
+                notes += self._start_new_image(service, key, old, new)
+        return notes
+
+    def _start_new_image(self, service: str, key: str, old: dict[str, str], new: dict[str, str]) -> str:
         try:
-            self.compose.up("tailscale")
-        except Exception as error:  # noqa: BLE001 - the app update is kept and the old tailscale image is put back
-            put_back = {name: value for name, value in new.items() if name != key} | ({key: old[key]} if key in old else {})
+            self.compose.up(service, wait=STARTED_AFTER_THE_APP_WAIT)
+        except Exception as error:  # noqa: BLE001 - the app update is kept and the old image is put back
+            current = self.env.read()
+            put_back = {name: value for name, value in current.items() if name != key} | ({key: old[key]} if key in old else {})
             try:
                 self.env.write(put_back)
-                self.compose.up("tailscale")
+                self.compose.up(service, wait=STARTED_AFTER_THE_APP_WAIT)
             except Exception as again:  # noqa: BLE001 - reported for the owner
-                return f". The new tailscale image did not start ({error}), and starting the old one failed too: {again}"
-            return f". The new tailscale image did not start ({error}), so the old one was started again"
+                return f". The new {service} image did not start ({error}), and starting the old one failed too: {again}"
+            return f". The new {service} image did not start ({error}), so the old one was started again"
         return ""
 
     def _restart_unchanged(self, checked: str, old_version: str, failed: Version, reason: str) -> str:
@@ -513,13 +584,36 @@ class Updater:
         return self._report("rolled-back", checked, old_version, failed, f"{reason}. Version {old_version} and its database were put back")
 
     def _report(self, result: str, checked: str, installed: str, latest: Version | None, message: str) -> str:
+        last_success = checked if result in SUCCESSFUL_RESULTS else self.status.read().get("lastSucceededAt", "")
         line = {"result": result, "checkedAt": checked, "installed": installed, "latest": str(latest or ""), "message": message}
+        line["lastSucceededAt"] = last_success
         print(json.dumps(line), flush=True)
         try:
             self.status.write(**line)
         except OSError as error:
             print(json.dumps({"result": "status-not-written", "message": str(error)}), flush=True)
         return result
+
+    def report_state(self, now: datetime) -> None:
+        """Reports the updater's state to health monitoring: good while the last run succeeded and the last success is
+        less than 26 hours old. It is reported after each run and every hour. Gatus forgets the time of the last report
+        when the status container restarts, so without these reports a missed run would not be noticed."""
+        if self.monitor is None:
+            return
+        state = self.status.read()
+        if not state:
+            self.monitor.report(MONITOR_KEY, True, "No update has run yet")
+            return
+        if state.get("result") not in SUCCESSFUL_RESULTS:
+            self.monitor.report(MONITOR_KEY, False, state.get("message", "The last update failed"))
+            return
+        last_success = state.get("lastSucceededAt", "")
+        try:
+            stale = now - datetime.fromisoformat(last_success) > STALE_AFTER
+        except ValueError:
+            stale = True
+        message = f"No successful update since {last_success or 'the start'}" if stale else state.get("message", "")
+        self.monitor.report(MONITOR_KEY, not stale, message)
 
 
 # --- the service
@@ -559,6 +653,7 @@ def from_environment(environ: Mapping[str, str]) -> Updater:
         status=StatusFile(Path(environ.get("FRANCA_UPDATER_STATUS", "/status/updater.json"))),
         high_water=HighWaterMark(Path(environ.get("FRANCA_UPDATER_HIGH_WATER", "/status/newest-installed"))),
         bundle=project,
+        monitor=Monitor(environ["FRANCA_STATUS_URL"], Path("/run/secrets/status_push_token")) if environ.get("FRANCA_STATUS_URL") else None,
     )
 
 
@@ -566,15 +661,21 @@ def main(argv: Sequence[str] = sys.argv[1:], environ: Mapping[str, str] = os.env
     updater = from_environment(environ)
     if "--once" in argv:
         result = updater.run_once(datetime.now(UTC))
-        return 0 if result in {"installed", "up-to-date"} else 1
+        return 0 if result in SUCCESSFUL_RESULTS else 1
     at = update_time(environ.get("FRANCA_UPDATE_AT_UTC", DEFAULT_UPDATE_TIME))
+    wake = next_run(datetime.now(UTC), at)
     while True:
-        wake = next_run(datetime.now(UTC), at)
-        time.sleep(max(0.0, (wake - datetime.now(UTC)).total_seconds()))
+        # The state is reported every hour as well as after each run (see Updater.report_state).
         try:
-            updater.run_once(datetime.now(UTC))
+            now = datetime.now(UTC)
+            if now >= wake:
+                wake = next_run(now, at)
+                updater.run_once(now)
+            else:
+                updater.report_state(now)
         except Exception as error:  # noqa: BLE001 - the updater keeps running and tries again the next night
             print(json.dumps({"result": "error", "message": repr(error)}), flush=True)
+        time.sleep(max(1.0, min(3600.0, (wake - datetime.now(UTC)).total_seconds())))
 
 
 if __name__ == "__main__":

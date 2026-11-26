@@ -14,6 +14,8 @@ export FRANCA_SECRETS_DIR
 head -c 32 /dev/urandom | base64 > "$FRANCA_SECRETS_DIR/session_secret"
 head -c 32 /dev/urandom | base64 > "$FRANCA_SECRETS_DIR/backup_password"
 : > "$FRANCA_SECRETS_DIR/tailscale_authkey"  # the tailnet is rehearsed separately, in rehearse_tailnet.py
+: > "$FRANCA_SECRETS_DIR/ntfy_topic"  # the monitoring is rehearsed separately, in rehearse_status.py
+: > "$FRANCA_SECRETS_DIR/status_push_token"
 # Compose mounts secret files with their own permissions, so the app's user (10001) has to be able to read them.
 chmod 0644 "$FRANCA_SECRETS_DIR"/*
 compose=(docker compose -f infra/compose.yaml)
@@ -82,6 +84,13 @@ if build_log="$("${compose[@]}" --profile tailnet build tailscale 2>&1)"; then p
 tailscale_image="franca/tailscale:${FRANCA_VERSION:-0.1.0-dev}"
 if docker run --rm --entrypoint tailscale "$tailscale_image" version >/dev/null 2>&1; then pass "the tailscale image has tailscale"; else fail "the tailscale image lacks tailscale"; fi
 if [[ "$(docker inspect --format '{{.Config.User}}' "$tailscale_image")" == "10004:10004" ]]; then pass "tailscale runs as user 10004"; else fail "tailscale does not run as user 10004"; fi
+
+# The status image (story E01-010) is in the "monitoring" profile, so it is built and checked on its own here. The
+# monitoring itself is rehearsed in rehearse_status.py.
+if build_log="$("${compose[@]}" --profile monitoring build status 2>&1)"; then pass "the status image builds"; else echo "$build_log" | tail -40; fail "the status image does not build"; fi
+status_image="franca/status:${FRANCA_VERSION:-0.1.0-dev}"
+if docker run --rm --entrypoint test "$status_image" -x /usr/local/bin/gatus; then pass "the status image has Gatus"; else fail "the status image lacks Gatus"; fi
+if [[ "$(docker inspect --format '{{.Config.User}}' "$status_image")" == "10005:10005" ]]; then pass "the status container runs as user 10005"; else fail "the status container does not run as user 10005"; fi
 
 if [[ "$failures" -ne 0 ]]; then
     "${compose[@]}" logs --no-color | tail -50

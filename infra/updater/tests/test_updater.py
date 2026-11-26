@@ -6,8 +6,9 @@ The rehearsal against real containers is infra/tests/rehearse-update.sh.
 import json
 import subprocess
 import sys
+import urllib.request
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -63,7 +64,7 @@ class FakeCompose(fu.Compose):
     def stop(self, *services: str) -> None:
         self._step("stop " + " ".join(services))
 
-    def up(self, *services: str) -> None:
+    def up(self, *services: str, wait: int | None = None) -> None:
         self._step("up " + " ".join(services))
 
 
@@ -304,6 +305,20 @@ def test_a_tailscale_image_that_does_not_start_is_put_back_and_the_app_update_ke
     assert "tailscale" in status(tmp_path)["message"]
 
 
+STATUS = f"ghcr.io/franca-language-learning/franca-status@sha256:{'f' * 64}"
+
+
+def test_a_new_status_image_is_started_after_the_app_when_the_monitoring_is_on(tmp_path: Path) -> None:
+    release = fu.Release(fu.Version(1, 1, 0), {"app": APP, "caddy": CADDY, "tailscale": TAILSCALE, "status": STATUS})
+    updater, log, _verifier = make(tmp_path, release)
+    with_tailnet(tmp_path, profiles="updates,backups,tailnet,monitoring")
+
+    assert updater.run_once(NOW) == "installed"
+
+    assert log[-3:] == ["up app caddy", "up tailscale", "up status"]
+    assert fu.EnvFile(tmp_path / ".env").read()["FRANCA_STATUS_IMAGE"] == STATUS
+
+
 def test_the_same_release_is_not_installed_again(tmp_path: Path) -> None:
     updater, log, verifier = make(tmp_path, fu.Release(fu.Version(1, 0, 0), {"app": APP, "caddy": CADDY}))
     assert updater.run_once(NOW) == "up-to-date"
@@ -385,6 +400,23 @@ def test_a_failed_rollback_is_reported_as_such(tmp_path: Path) -> None:
 
 
 # --- the database steps and the schedule
+
+
+def test_tailscale_and_status_are_started_with_a_wait_for_their_health_check(tmp_path: Path) -> None:
+    commands: list[Sequence[str]] = []
+
+    def run(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        commands.append(list(command))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    updater, _log, _verifier = make(tmp_path, fu.Release(fu.Version(1, 1, 0), {"app": APP, "caddy": CADDY, "status": STATUS}))
+    with_tailnet(tmp_path, profiles="monitoring")
+    real = fu.Compose(tmp_path, run=run)
+    updater.compose = real
+
+    updater._start_new_images(fu.EnvFile(tmp_path / ".env").read(), {"FRANCA_STATUS_IMAGE": STATUS})
+
+    assert commands[-1][-4:] == ["--wait", "--wait-timeout", "120", "status"]
 
 
 def test_the_database_steps_run_in_a_one_off_app_container(tmp_path: Path) -> None:
@@ -534,3 +566,124 @@ def test_a_failed_restore_copy_leaves_the_database_as_it_was(tmp_path: Path) -> 
         exec(fu._with_arguments(fu.RESTORE_SCRIPT, str(missing_snapshot), str(live)), {})  # noqa: S102
     with sqlite3.connect(live) as connection:
         assert connection.execute("SELECT name FROM sqlite_master").fetchall() == [("t",)]
+
+
+# --- reports to health monitoring (story E01-010)
+
+
+class FakeMonitor(fu.Monitor):
+    def __init__(self) -> None:
+        self.reports: list[tuple[str, bool, str]] = []
+
+    def report(self, key: str, success: bool, message: str) -> None:
+        self.reports.append((key, success, message))
+
+
+@pytest.mark.parametrize(
+    ("release", "fail_on", "expected"),
+    [
+        (NEW, None, True),  # installed
+        (fu.Release(fu.Version(1, 0, 0), {"app": APP, "caddy": CADDY}), None, True),  # up to date
+        (NEW, {"up app caddy"}, False),  # rolled back
+    ],
+)
+def test_each_run_is_reported_to_the_health_monitoring(
+    tmp_path: Path, release: fu.Release, fail_on: set[str] | None, expected: bool
+) -> None:
+    updater, _log, _verifier = make(tmp_path, release, fail_on=fail_on)
+    monitor = FakeMonitor()
+    updater.monitor = monitor
+
+    updater.run_once(NOW)
+
+    assert len(monitor.reports) == 1
+    key, success, message = monitor.reports[0]
+    assert (key, success) == ("nightly_update", expected)
+    assert message == status(tmp_path)["message"]
+
+
+def test_the_state_is_reported_again_later_so_a_restart_of_the_monitoring_loses_nothing(tmp_path: Path) -> None:
+    updater, _log, _verifier = make(tmp_path, NEW)
+    monitor = FakeMonitor()
+    updater.monitor = monitor
+    updater.run_once(NOW)
+
+    updater.report_state(NOW + timedelta(hours=5))
+
+    assert [(key, success) for key, success, _message in monitor.reports] == [("nightly_update", True)] * 2
+
+
+def test_no_successful_run_for_26_hours_is_reported_as_a_failure(tmp_path: Path) -> None:
+    updater, _log, _verifier = make(tmp_path, NEW)
+    monitor = FakeMonitor()
+    updater.monitor = monitor
+    updater.run_once(NOW)
+
+    updater.report_state(NOW + timedelta(hours=27))
+
+    key, success, message = monitor.reports[-1]
+    assert (key, success) == ("nightly_update", False)
+    assert "2026-12-07" in message
+
+
+def test_a_failed_run_stays_a_failure_until_a_run_succeeds(tmp_path: Path) -> None:
+    updater, _log, _verifier = make(tmp_path, NEW)
+    monitor = FakeMonitor()
+    updater.monitor = monitor
+    updater.run_once(NOW)
+    updater.releases = FakeReleases(fu.UpdateError("GitHub did not answer"))
+    updater.run_once(NOW + timedelta(days=1))
+
+    updater.report_state(NOW + timedelta(days=1, hours=1))
+
+    key, success, message = monitor.reports[-1]
+    assert (key, success) == ("nightly_update", False)
+    assert "GitHub did not answer" in message
+
+
+def test_before_the_first_run_the_state_is_reported_as_good(tmp_path: Path) -> None:
+    updater, _log, _verifier = make(tmp_path, NEW)
+    monitor = FakeMonitor()
+    updater.monitor = monitor
+
+    updater.report_state(NOW)
+
+    assert monitor.reports == [("nightly_update", True, "No update has run yet")]
+
+
+def test_a_report_is_a_post_with_the_token_and_the_reason(tmp_path: Path) -> None:
+    token = tmp_path / "status_push_token"
+    token.write_text("t" * 40 + "\n", encoding="utf-8")
+    sent: list[urllib.request.Request] = []
+    monitor = fu.Monitor("http://status:8080/", token, send=sent.append)
+
+    monitor.report("nightly_update", False, "Starting app failed & more")
+
+    request = sent[0]
+    assert request.get_method() == "POST"
+    assert request.full_url == (
+        "http://status:8080/api/v1/endpoints/nightly_update/external?success=false&error=Starting+app+failed+%26+more"
+    )
+    assert request.get_header("Authorization") == "Bearer " + "t" * 40
+
+
+def test_monitoring_that_cannot_be_reached_does_not_stop_the_updater(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    token = tmp_path / "status_push_token"
+    token.write_text("t" * 40, encoding="utf-8")
+
+    def unreachable(_request: urllib.request.Request) -> None:
+        raise OSError("connection refused")
+
+    fu.Monitor("http://status:8080", token, send=unreachable).report("nightly_update", True, "Installed")
+
+    assert "connection refused" in capsys.readouterr().out
+
+
+def test_without_a_push_token_nothing_is_reported(tmp_path: Path) -> None:
+    token = tmp_path / "status_push_token"
+    token.write_text("", encoding="utf-8")
+    sent: list[urllib.request.Request] = []
+
+    fu.Monitor("http://status:8080", token, send=sent.append).report("nightly_update", True, "Installed")
+
+    assert sent == []

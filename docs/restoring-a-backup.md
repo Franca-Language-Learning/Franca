@@ -2,7 +2,7 @@
 
 Franca is backed up nightly to the backup folder on disk J:. The backups are encrypted with the backup password, which the installer showed you once and asked you to keep in your password manager. Without that password the backups cannot be read.
 
-Once a month a backup is restored as a test, in a scratch folder, and checked. From story E01-010, there is a warning in the health monitoring when a backup or a test fails; until then, Claude checks the results.
+Once a month a backup is restored as a test, in a scratch folder, and checked. When a backup or a test fails, or does not run, an alert is sent to your phone (see `docs/health-alerts.md`).
 
 ## Putting back the latest backup
 
