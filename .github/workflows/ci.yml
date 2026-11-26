@@ -59,7 +59,7 @@ jobs:
         run: uv run pytest
       - name: Shell scripts
         working-directory: server
-        run: uv run shellcheck ../tools/*.sh ../.githooks/* ../scripts/*
+        run: uv run shellcheck ../tools/*.sh ../.githooks/* ../scripts/* ../client/scripts/*.sh
       - name: Workflow security
         working-directory: server
         env:
@@ -87,10 +87,39 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Type check
         run: pnpm --filter @franca/client typecheck
+      - name: Module boundaries
+        run: pnpm --filter @franca/client boundaries
       - name: Tests
         run: pnpm --filter @franca/client test
       - name: Build
         run: pnpm --filter @franca/client build
+
+  api-contract:
+    name: API contract changes
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Get the contract as it is on the base branch
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: git show "$BASE:contracts/openapi.yaml" > base-openapi.yaml
+      # A breaking change to the API fails the build (story E01-002). A deliberate break needs a new API version.
+      - uses: oasdiff/oasdiff-action/breaking@14ca7009a63c417dfe27b7c44359c4bcccaf8eee # v0.2.1
+        with:
+          base: base-openapi.yaml
+          revision: contracts/openapi.yaml
+          fail-on: ERR
+          review: "false"
 
   dependency-review:
     name: Dependency review

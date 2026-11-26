@@ -25,7 +25,7 @@ PYTHONPATH=src uv run lint-imports
 step "Server, contract and tool tests"
 uv run pytest
 step "Shell scripts"
-uv run shellcheck ../tools/*.sh ../.githooks/* ../scripts/*
+uv run shellcheck ../tools/*.sh ../.githooks/* ../scripts/* ../client/scripts/*.sh
 step "Workflow security"
 uv run zizmor --offline ../.github/workflows
 
@@ -33,6 +33,7 @@ cd "$root"
 step "Client"
 pnpm install --frozen-lockfile --silent
 pnpm --filter @franca/client typecheck
+pnpm --filter @franca/client boundaries
 pnpm --filter @franca/client test
 pnpm --filter @franca/client build
 

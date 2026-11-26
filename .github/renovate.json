@@ -63,6 +63,13 @@
         "astral-sh/uv"
       ],
       "automerge": false
+    },
+    {
+      "description": "dependency-cruiser cannot read TypeScript 7.0, so the client stays on TypeScript 6 until 7.1.",
+      "matchPackageNames": [
+        "typescript"
+      ],
+      "allowedVersions": "<7.0.0 || >=7.1.0"
     }
   ],
   "customManagers": [
