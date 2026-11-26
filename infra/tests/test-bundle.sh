@@ -12,6 +12,8 @@ FRANCA_SECRETS_DIR="$(mktemp -d)"
 export FRANCA_SECRETS_DIR
 : > "$FRANCA_SECRETS_DIR/google_client_secret"
 head -c 32 /dev/urandom | base64 > "$FRANCA_SECRETS_DIR/session_secret"
+# Compose mounts secret files with their own permissions, so the app's user (10001) has to be able to read them.
+chmod 0644 "$FRANCA_SECRETS_DIR"/*
 compose=(docker compose -f infra/compose.yaml)
 failures=0
 
@@ -23,7 +25,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"${compose[@]}" up --detach --build --wait --wait-timeout 120
+if ! "${compose[@]}" up --detach --build --wait --wait-timeout 120; then
+    "${compose[@]}" logs --no-color | tail -80
+    echo "The bundle did not start."
+    exit 1
+fi
 
 base="http://127.0.0.1:$FRANCA_PORT"
 if curl -fsS "$base/api/v1/health" | grep -q '"status":"ok"'; then pass "the API answers through Caddy"; else fail "the API does not answer through Caddy"; fi
