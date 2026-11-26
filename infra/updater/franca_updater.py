@@ -468,16 +468,17 @@ class Updater:
         return self._report("installed", checked, str(release.version), release.version, message)
 
     def _start_new_tailscale(self, old: dict[str, str], new: dict[str, str]) -> str:
-        """The tailscale container is the one that faces the network, so a new image of it is started straight after
-        the app is healthy, when the private network is switched on. If it does not start, the old image is put back.
-        Returns a note for the status message, or an empty string."""
+        """Start a new tailscale image once the app is healthy, if the private network is on.
+
+        The tailscale container is exposed to the tailnet, so its update is not left for later. If the new image does
+        not start, the old one is put back and started. Returns a note for the status message, or an empty string."""
         key = IMAGE_KEYS["tailscale"]
         profiles = {profile.strip() for profile in old.get("COMPOSE_PROFILES", "").split(",")}
         if TAILNET_PROFILE not in profiles or old.get(key) == new.get(key):
             return ""
         try:
             self.compose.up("tailscale")
-        except Exception as error:  # noqa: BLE001 - the app update is kept; only the tailscale image is put back
+        except Exception as error:  # noqa: BLE001 - the app update is kept and the old tailscale image is put back
             put_back = {name: value for name, value in new.items() if name != key} | ({key: old[key]} if key in old else {})
             try:
                 self.env.write(put_back)

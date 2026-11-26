@@ -82,8 +82,9 @@ services:
       # symlink in the volume, which Caddy cannot follow.
       TS_SOCKET: /var/run/tailscale/tailscaled.sock
       TS_USERSPACE: "true"
-      # Caddy's user may fetch the certificate. Other users of the socket can read the status and open connections to
-      # other devices in the tailnet; the tailnet policy in docs/private-network.md allows franca no such connections.
+      # Caddy's user may fetch the certificate. Any user of the socket can read the status and open connections to
+      # other devices in the tailnet. The tailnet policy in docs/private-network.md has no rule for connections from
+      # franca.
       TS_PERMIT_CERT_UID: "10002"
     secrets: [tailscale_authkey]
     volumes:

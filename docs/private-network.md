@@ -16,7 +16,7 @@ Franca is reached from phones and laptops over your tailnet, the private network
        "tag:franca": ["autogroup:admin"]
      },
      "grants": [
-       // Each person's own devices can reach each other.
+       // A person's own devices can reach each other.
        {"src": ["autogroup:member"], "dst": ["autogroup:self"], "ip": ["*"]},
        // Everyone in the tailnet can reach Franca's HTTPS port, and nothing else on the PC.
        {"src": ["autogroup:member"], "dst": ["tag:franca"], "ip": ["tcp:443"]}
@@ -35,12 +35,12 @@ Franca is reached from phones and laptops over your tailnet, the private network
 
 ## After the installer has run
 
-9. Open the **Machines** page. There is now a machine called `franca` with the tag `tag:franca`. A tagged machine does not expire, so it stays in the tailnet without a new key.
+9. Open the **Machines** page. There is now a machine called `franca` with the tag `tag:franca`. A tagged machine has no key expiry, so it stays in the tailnet without a new key.
 10. On your phone, with the Tailscale app connected, open `https://franca.` followed by your tailnet name. You should see Franca's start page, with a padlock in the address bar.
 
 ## Who can reach Franca, and rejoining
 
-- Franca cannot be reached from the internet. A device has to be in your tailnet, signed in with a Tailscale account in it, to open it.
-- When another learner joins your tailnet, their devices can reach Franca and each other, and not yours.
+- Franca cannot be reached from the internet. To open Franca, a device has to be in your tailnet and signed in with one of the tailnet's Tailscale accounts.
+- When another learner joins your tailnet, their devices can reach Franca and each other. They cannot reach your devices.
 - The name `franca.` plus your tailnet name is published in the public logs of HTTPS certificates. Anyone can see that a device of that name exists. Knowing the name is not enough to get in.
 - If the PC has to join again, for example after a reinstall, make a new key with steps 5 to 8, run the installer again and paste the key when it asks.
