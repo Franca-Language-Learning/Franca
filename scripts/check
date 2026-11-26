@@ -38,5 +38,7 @@ pnpm --filter @franca/client typecheck
 pnpm --filter @franca/client boundaries
 pnpm --filter @franca/client test
 pnpm --filter @franca/client build
+step "Browser tests"
+pnpm --filter @franca/client e2e
 
 printf '\nAll checks passed.\n'

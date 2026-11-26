@@ -40,3 +40,5 @@ secrets/
 .DS_Store
 Thumbs.db
 *.whl
+playwright-report/
+test-results/
