@@ -17,6 +17,7 @@ dependencies = [
     "itsdangerous>=2.2.0",
     "joserfc>=1.8.0",
     "httpx2>=2.16.2",
+    "webauthn>=3.0.1",
 ]
 
 [dependency-groups]

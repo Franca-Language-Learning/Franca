@@ -9,6 +9,7 @@ After that, the Google account is recognised by its subject id, which stays the 
 """
 
 import hashlib
+import json
 import secrets
 import unicodedata
 import uuid
@@ -60,6 +61,14 @@ def normalise_email(email: str) -> str:
     return unicodedata.normalize("NFC", email.strip()).casefold()
 
 
+def record_event(connection: Connection, learner_id: int | None, event: str, now: datetime, detail: dict[str, str] | None = None) -> None:
+    """Adds a security event to the audit log. The detail has no secrets in it."""
+    connection.execute(
+        text("INSERT INTO identity_audit_event (learner_id, event, detail, at) VALUES (:learner, :event, :detail, :now)"),
+        {"learner": learner_id, "event": event, "detail": json.dumps(detail) if detail else None, "now": iso(now)},
+    )
+
+
 def _learner(row: Sequence[Any]) -> Learner:
     return Learner(int(row[0]), str(row[1]), str(row[2]), str(row[3]))
 
@@ -107,6 +116,7 @@ def sign_in_with_google(
             ),
             {"now": iso(now), "email": email, "subject": subject},
         )
+        record_event(connection, known.learner_id, "sign_in", now, {"method": "google"})
         return _learner(known[:4])
 
     email_norm = normalise_email(email)
@@ -136,6 +146,7 @@ def sign_in_with_google(
         ),
         {"learner": learner.learner_id, "subject": subject, "email": email, "now": iso(now)},
     )
+    record_event(connection, learner.learner_id, "sign_in", now, {"method": "google"})
     return learner
 
 

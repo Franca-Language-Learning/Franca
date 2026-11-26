@@ -38,6 +38,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/passkey": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Signs in with the device's answer to the options */
+        post: operations["signInWithPasskey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/passkey/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Options for signing in with a passkey */
+        post: operations["getPasskeySignInOptions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/sign-out": {
         parameters: {
             query?: never;
@@ -102,6 +136,58 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/passkeys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The signed-in learner's passkeys */
+        get: operations["listPasskeys"];
+        put?: never;
+        /** Adds a passkey with the device's answer to the options */
+        post: operations["addPasskey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/passkeys/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Options for adding a passkey on this device */
+        post: operations["getPasskeyRegistrationOptions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/passkeys/{passkeyId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Removes one of the signed-in learner's passkeys */
+        delete: operations["removePasskey"];
         options?: never;
         head?: never;
         patch?: never;
@@ -188,6 +274,91 @@ export interface components {
             /** Role */
             role: string;
         };
+        /**
+         * PasskeyList
+         * @example {
+         *       "passkeys": [
+         *         {
+         *           "createdAt": "2026-12-01T09:00:00.000Z",
+         *           "id": "Ab3kN0pQ2rS4tU6vW8xY0zA1bC3dE5fG7hI9jK1lM3n",
+         *           "label": "Phone",
+         *           "synced": true
+         *         }
+         *       ]
+         *     }
+         */
+        PasskeyList: {
+            /** Passkeys */
+            passkeys: components["schemas"]["PasskeyOut"][];
+        };
+        /**
+         * PasskeyOut
+         * @example {
+         *       "createdAt": "2026-12-01T09:00:00.000Z",
+         *       "id": "Ab3kN0pQ2rS4tU6vW8xY0zA1bC3dE5fG7hI9jK1lM3n",
+         *       "label": "Phone",
+         *       "synced": true
+         *     }
+         */
+        PasskeyOut: {
+            /** Createdat */
+            createdAt: string;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string | null;
+            /** Lastusedat */
+            lastUsedAt: string | null;
+            /**
+             * Synced
+             * @description Kept in a password manager or cloud account, so it is on more than one device
+             */
+            synced: boolean;
+        };
+        /** PasskeyRequest */
+        PasskeyRequest: {
+            /**
+             * Credential
+             * @description The device's answer: the PublicKeyCredential in its JSON form
+             */
+            credential: {
+                [key: string]: unknown;
+            };
+            /**
+             * Label
+             * @description A name the learner chooses, such as Phone
+             */
+            label?: string | null;
+        };
+        /**
+         * PublicKeyOptions
+         * @description The options for navigator.credentials.create() or .get(), in the JSON form that the browser reads.
+         * @example {
+         *       "publicKey": {
+         *         "allowCredentials": [],
+         *         "challenge": "dGVzdC1jaGFsbGVuZ2UtMzItYnl0ZXMtbG9uZy0tLS0",
+         *         "rpId": "franca.example.ts.net",
+         *         "timeout": 60000,
+         *         "userVerification": "preferred"
+         *       }
+         *     }
+         */
+        PublicKeyOptions: {
+            /** Publickey */
+            publicKey: {
+                [key: string]: unknown;
+            };
+        };
+        /** SignInRequest */
+        SignInRequest: {
+            /**
+             * Credential
+             * @description The device's answer: the PublicKeyCredential in its JSON form
+             */
+            credential: {
+                [key: string]: unknown;
+            };
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -261,6 +432,75 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    signInWithPasskey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                franca_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignInRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            /** @description No options were asked for */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The passkey was not accepted, or the account is disabled */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getPasskeySignInOptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicKeyOptions"];
+                };
             };
         };
     };
@@ -429,6 +669,183 @@ export interface operations {
             };
             /** @description Not signed in */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listPasskeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                franca_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PasskeyList"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    addPasskey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                franca_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasskeyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PasskeyOut"];
+                };
+            };
+            /** @description No options were asked for, or the answer failed a check */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getPasskeyRegistrationOptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                franca_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicKeyOptions"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The learner has the most passkeys allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    removePasskey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                passkeyId: string;
+            };
+            cookie?: {
+                franca_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The learner has no passkey with this id */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -98,6 +98,109 @@ components:
       - role
       title: Me
       type: object
+    PasskeyList:
+      examples:
+      - passkeys:
+        - createdAt: '2026-12-01T09:00:00.000Z'
+          id: Ab3kN0pQ2rS4tU6vW8xY0zA1bC3dE5fG7hI9jK1lM3n
+          label: Phone
+          synced: true
+      properties:
+        passkeys:
+          items:
+            $ref: '#/components/schemas/PasskeyOut'
+          title: Passkeys
+          type: array
+      required:
+      - passkeys
+      title: PasskeyList
+      type: object
+    PasskeyOut:
+      examples:
+      - createdAt: '2026-12-01T09:00:00.000Z'
+        id: Ab3kN0pQ2rS4tU6vW8xY0zA1bC3dE5fG7hI9jK1lM3n
+        label: Phone
+        synced: true
+      properties:
+        createdAt:
+          title: Createdat
+          type: string
+        id:
+          title: Id
+          type: string
+        label:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Label
+        lastUsedAt:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Lastusedat
+        synced:
+          description: Kept in a password manager or cloud account, so it is on more
+            than one device
+          title: Synced
+          type: boolean
+      required:
+      - id
+      - label
+      - createdAt
+      - lastUsedAt
+      - synced
+      title: PasskeyOut
+      type: object
+    PasskeyRequest:
+      properties:
+        credential:
+          additionalProperties: true
+          description: 'The device''s answer: the PublicKeyCredential in its JSON
+            form'
+          title: Credential
+          type: object
+        label:
+          anyOf:
+          - maxLength: 60
+            type: string
+          - type: 'null'
+          description: A name the learner chooses, such as Phone
+          title: Label
+      required:
+      - credential
+      title: PasskeyRequest
+      type: object
+    PublicKeyOptions:
+      description: The options for navigator.credentials.create() or .get(), in the
+        JSON form that the browser reads.
+      examples:
+      - publicKey:
+          allowCredentials: []
+          challenge: dGVzdC1jaGFsbGVuZ2UtMzItYnl0ZXMtbG9uZy0tLS0
+          rpId: franca.example.ts.net
+          timeout: 60000
+          userVerification: preferred
+      properties:
+        publicKey:
+          additionalProperties: true
+          title: Publickey
+          type: object
+      required:
+      - publicKey
+      title: PublicKeyOptions
+      type: object
+    SignInRequest:
+      properties:
+        credential:
+          additionalProperties: true
+          description: 'The device''s answer: the PublicKeyCredential in its JSON
+            form'
+          title: Credential
+          type: object
+      required:
+      - credential
+      title: SignInRequest
+      type: object
     ValidationError:
       properties:
         ctx:
@@ -163,6 +266,57 @@ paths:
         '503':
           description: Sign-in with Google is not configured
       summary: Sends the browser to Google to sign in
+      tags:
+      - identity
+  /api/v1/auth/passkey:
+    post:
+      operationId: signInWithPasskey
+      parameters:
+      - in: cookie
+        name: franca_session
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Franca Session
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignInRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+          description: Successful Response
+        '400':
+          description: No options were asked for
+        '401':
+          description: The passkey was not accepted, or the account is disabled
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Signs in with the device's answer to the options
+      tags:
+      - identity
+  /api/v1/auth/passkey/options:
+    post:
+      operationId: getPasskeySignInOptions
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicKeyOptions'
+          description: Successful Response
+      summary: Options for signing in with a passkey
       tags:
       - identity
   /api/v1/auth/sign-out:
@@ -299,5 +453,138 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
       summary: The signed-in learner
+      tags:
+      - identity
+  /api/v1/passkeys:
+    get:
+      operationId: listPasskeys
+      parameters:
+      - in: cookie
+        name: franca_session
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Franca Session
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasskeyList'
+          description: Successful Response
+        '401':
+          description: Not signed in
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: The signed-in learner's passkeys
+      tags:
+      - identity
+    post:
+      operationId: addPasskey
+      parameters:
+      - in: cookie
+        name: franca_session
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Franca Session
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasskeyRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasskeyOut'
+          description: Successful Response
+        '400':
+          description: No options were asked for, or the answer failed a check
+        '401':
+          description: Not signed in
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Adds a passkey with the device's answer to the options
+      tags:
+      - identity
+  /api/v1/passkeys/options:
+    post:
+      operationId: getPasskeyRegistrationOptions
+      parameters:
+      - in: cookie
+        name: franca_session
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Franca Session
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicKeyOptions'
+          description: Successful Response
+        '401':
+          description: Not signed in
+        '403':
+          description: The learner has the most passkeys allowed
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Options for adding a passkey on this device
+      tags:
+      - identity
+  /api/v1/passkeys/{passkeyId}:
+    delete:
+      operationId: removePasskey
+      parameters:
+      - in: path
+        name: passkeyId
+        required: true
+        schema:
+          title: Passkeyid
+          type: string
+      - in: cookie
+        name: franca_session
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Franca Session
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          description: Not signed in
+        '404':
+          description: The learner has no passkey with this id
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Removes one of the signed-in learner's passkeys
       tags:
       - identity

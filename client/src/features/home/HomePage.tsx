@@ -15,7 +15,14 @@ export function HomePage() {
       ) : (
         <p role="status">{health.data ? `The Franca server is running (version ${health.data.version}).` : "Checking the server…"}</p>
       )}
-      {me.data && <p>You are signed in as {me.data.displayName}.</p>}
+      {me.data && (
+        <>
+          <p>You are signed in as {me.data.displayName}.</p>
+          <p>
+            <Link to="/passkeys">Passkeys</Link>
+          </p>
+        </>
+      )}
       {me.data === null && (
         <p>
           You are not signed in. <Link to="/sign-in">Sign in</Link>
