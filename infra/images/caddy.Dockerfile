@@ -16,6 +16,9 @@ RUN pnpm --filter @franca/client build
 # and GO-2026-6860 (x/net). Remove this stage and the COPY of /usr/bin/caddy below when a Caddy release
 # has these versions or newer.
 FROM caddy:2.11.9-builder-alpine AS caddy
+# No file capabilities on the binary: Caddy listens on port 8080 and the container runs with no capabilities, so a
+# binary that asks for one cannot start.
+ENV XCADDY_SETCAPS=0
 RUN xcaddy build v2.11.9 \
         --output /usr/bin/caddy \
         --replace github.com/klauspost/compress=github.com/klauspost/compress@v1.20.2 \
