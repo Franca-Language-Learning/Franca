@@ -85,6 +85,10 @@ jobs:
           node-version: 22
       - name: Install the locked packages
         run: pnpm install --frozen-lockfile
+      - name: API types match the contract
+        run: |
+          pnpm --filter @franca/client generate:api
+          git diff --exit-code -- client/src/api/schema.d.ts
       - name: Type check
         run: pnpm --filter @franca/client typecheck
       - name: Module boundaries

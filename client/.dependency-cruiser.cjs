@@ -4,7 +4,13 @@
  *
  * Features live in src/features/<name>/. Another feature may import a feature's index file only, the same rule
  * as the server's modules, which import each other's package root only.
+ *
+ * Test code is:
+ *   - *.test.ts(x) files
+ *   - src/test-setup.ts
+ *   - src/mocks/ (the mock API)
  */
+const TEST_CODE = "\\.test\\.tsx?$|^src/test-setup\\.ts$|^src/mocks/";
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {
   forbidden: [
@@ -27,16 +33,16 @@ module.exports = {
     },
     {
       name: "no-test-code-in-app",
-      comment: "App code does not import tests or test helpers.",
+      comment: "App code does not import tests, test helpers or the mock API.",
       severity: "error",
-      from: { pathNot: "\\.test\\.tsx?$|^src/test-setup\\.ts$" },
-      to: { path: "\\.test\\.tsx?$|^src/test-setup\\.ts$" },
+      from: { pathNot: TEST_CODE },
+      to: { path: TEST_CODE },
     },
     {
       name: "no-dev-dependencies-in-app",
       comment: "App code does not import packages that are only installed for development.",
       severity: "error",
-      from: { path: "^src/", pathNot: "\\.test\\.tsx?$|^src/test-setup\\.ts$" },
+      from: { path: "^src/", pathNot: TEST_CODE },
       to: { dependencyTypes: ["npm-dev"] },
     },
     {
