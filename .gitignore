@@ -1,0 +1,42 @@
+# Environments, caches and build output
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.import_linter_cache/
+node_modules/
+client/dist/
+*.tsbuildinfo
+coverage/
+htmlcov/
+.coverage
+
+# Private material is kept in franca-content or on the PC, never here (docs/repository-split.md).
+# The content guard refuses these paths too; ignoring them stops them being staged by accident.
+/packs/*
+!/packs/fixture/
+/content/
+/harvest/
+/media/
+/learner-data/
+/backups/
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+.env
+*.env
+!.env.example
+secrets/
+
+# Editors and systems
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+*.whl

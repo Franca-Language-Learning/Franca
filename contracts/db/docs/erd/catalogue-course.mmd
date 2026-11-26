@@ -1,0 +1,95 @@
+erDiagram
+    catalogue_accepted_answer_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER activity_item_id PK,FK
+        INTEGER slot PK
+        INTEGER answer_no PK
+        INTEGER variety_id FK
+    }
+    catalogue_activity_use_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER activity_item_id PK,FK
+        INTEGER item_id PK,FK
+    }
+    catalogue_activity_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER item_id PK,FK
+        INTEGER lesson_item_id FK
+        TEXT activity_type FK
+        INTEGER grammar_item_id FK
+        TEXT media_sha256 FK
+    }
+    catalogue_course_node_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER item_id PK,FK
+        INTEGER parent_item_id FK
+    }
+    catalogue_deck_item_v {
+        INTEGER pack_version_id PK,FK
+        TEXT deck_key PK,FK
+        INTEGER item_id PK,FK
+    }
+    catalogue_deck_v {
+        INTEGER pack_version_id PK,FK
+        TEXT deck_key PK
+    }
+    catalogue_lesson_item_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER lesson_item_id PK,FK
+        INTEGER item_id PK,FK
+        INTEGER taught_in_item_id FK
+    }
+    catalogue_lesson_return_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER lesson_item_id PK,FK
+        INTEGER node_item_id PK,FK
+    }
+    catalogue_lesson_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER item_id PK,FK
+        INTEGER recap_of_item_id FK
+    }
+    catalogue_prediction_option_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER lesson_item_id PK,FK
+        INTEGER option_no PK
+    }
+    catalogue_activity_type {
+        TEXT activity_type PK
+    }
+    catalogue_item {
+        INTEGER item_id PK
+    }
+    catalogue_media_asset {
+        TEXT sha256 PK
+    }
+    catalogue_pack_version {
+        INTEGER pack_version_id PK
+    }
+    catalogue_variety {
+        INTEGER variety_id PK
+    }
+    catalogue_activity_v ||--o{ catalogue_accepted_answer_v : "pack_version_id, activity_item_id"
+    catalogue_variety |o--o{ catalogue_accepted_answer_v : "variety_id"
+    catalogue_activity_v ||--o{ catalogue_activity_use_v : "pack_version_id, activity_item_id"
+    catalogue_item ||--o{ catalogue_activity_use_v : "item_id"
+    catalogue_lesson_v |o--o{ catalogue_activity_v : "pack_version_id, lesson_item_id"
+    catalogue_media_asset |o--o{ catalogue_activity_v : "media_sha256"
+    catalogue_item |o--o{ catalogue_activity_v : "grammar_item_id"
+    catalogue_activity_type ||--o{ catalogue_activity_v : "activity_type"
+    catalogue_item ||--o{ catalogue_activity_v : "item_id"
+    catalogue_pack_version ||--o{ catalogue_activity_v : "pack_version_id"
+    catalogue_course_node_v |o--o{ catalogue_course_node_v : "pack_version_id, parent_item_id"
+    catalogue_item ||--o{ catalogue_course_node_v : "item_id"
+    catalogue_pack_version ||--o{ catalogue_course_node_v : "pack_version_id"
+    catalogue_deck_v ||--o{ catalogue_deck_item_v : "pack_version_id, deck_key"
+    catalogue_item ||--o{ catalogue_deck_item_v : "item_id"
+    catalogue_pack_version ||--o{ catalogue_deck_v : "pack_version_id"
+    catalogue_course_node_v |o--o{ catalogue_lesson_item_v : "pack_version_id, taught_in_item_id"
+    catalogue_lesson_v ||--o{ catalogue_lesson_item_v : "pack_version_id, lesson_item_id"
+    catalogue_item ||--o{ catalogue_lesson_item_v : "item_id"
+    catalogue_course_node_v ||--o{ catalogue_lesson_return_v : "pack_version_id, node_item_id"
+    catalogue_lesson_v ||--o{ catalogue_lesson_return_v : "pack_version_id, lesson_item_id"
+    catalogue_course_node_v |o--o{ catalogue_lesson_v : "pack_version_id, recap_of_item_id"
+    catalogue_course_node_v ||--o{ catalogue_lesson_v : "pack_version_id, item_id"
+    catalogue_lesson_v ||--o{ catalogue_prediction_option_v : "pack_version_id, lesson_item_id"

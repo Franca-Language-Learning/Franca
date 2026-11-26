@@ -1,0 +1,99 @@
+erDiagram
+    ai_budget {
+        INTEGER ai_budget_id PK
+        INTEGER changed_by_learner_id FK
+    }
+    ai_budget_alert {
+        TEXT category PK
+        TEXT month PK
+        TEXT level PK
+    }
+    ai_conversation {
+        INTEGER conversation_id PK
+        INTEGER session_id FK
+        INTEGER scenario_item_id FK
+    }
+    ai_price {
+        INTEGER ai_price_id PK
+    }
+    ai_request {
+        INTEGER ai_request_id PK
+        INTEGER learner_id FK
+        INTEGER ai_price_id FK
+    }
+    ai_turn {
+        INTEGER conversation_id PK,FK
+        INTEGER turn_no PK
+        INTEGER recording_id FK
+    }
+    partner_review {
+        INTEGER partner_review_id PK
+        INTEGER attempt_id FK
+        INTEGER reviewer_learner_id FK
+    }
+    partner_roleplay {
+        INTEGER roleplay_id PK
+        INTEGER scenario_item_id FK
+    }
+    partner_roleplay_member {
+        INTEGER roleplay_id PK,FK
+        INTEGER session_id FK
+        TEXT role PK
+    }
+    partner_share {
+        INTEGER owner_learner_id PK,FK
+        INTEGER viewer_learner_id PK,FK
+        INTEGER pack_id PK,FK
+        TEXT scope PK
+    }
+    speech_assessment {
+        INTEGER recording_id PK,FK
+    }
+    speech_phone_score {
+        INTEGER recording_id PK,FK
+        INTEGER position PK
+        TEXT error_type FK
+    }
+    speech_recording {
+        INTEGER recording_id PK
+        INTEGER learner_id FK
+        INTEGER attempt_id FK
+    }
+    catalogue_error_type {
+        TEXT error_type PK
+    }
+    catalogue_item {
+        INTEGER item_id PK
+    }
+    catalogue_pack {
+        INTEGER pack_id PK
+    }
+    identity_learner {
+        INTEGER learner_id PK
+    }
+    study_attempt {
+        INTEGER attempt_id PK
+    }
+    study_session {
+        INTEGER session_id PK
+    }
+    identity_learner |o--o{ ai_budget : "changed_by_learner_id"
+    catalogue_item |o--o{ ai_conversation : "scenario_item_id"
+    study_session ||--o{ ai_conversation : "session_id"
+    ai_price |o--o{ ai_request : "ai_price_id"
+    identity_learner |o--o{ ai_request : "learner_id"
+    speech_recording |o--o{ ai_turn : "recording_id"
+    ai_conversation ||--o{ ai_turn : "conversation_id"
+    identity_learner ||--o{ partner_review : "reviewer_learner_id"
+    study_attempt ||--o{ partner_review : "attempt_id"
+    catalogue_item ||--o{ partner_roleplay : "scenario_item_id"
+    study_session ||--o{ partner_roleplay_member : "session_id"
+    partner_roleplay ||--o{ partner_roleplay_member : "roleplay_id"
+    catalogue_pack ||--o{ partner_share : "pack_id"
+    identity_learner ||--o{ partner_share : "viewer_learner_id"
+    identity_learner ||--o{ partner_share : "owner_learner_id"
+    speech_recording ||--o{ speech_assessment : "recording_id"
+    catalogue_error_type |o--o{ speech_phone_score : "error_type"
+    speech_assessment ||--o{ speech_phone_score : "recording_id"
+    study_attempt |o--o{ speech_recording : "attempt_id"
+    identity_learner ||--o{ speech_recording : "learner_id"

@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+# Runs before each commit. Stops the commit if a staged file is course material, media, learner data or a secret
+# (story E01-014, docs/repository-split.md). Set up by scripts/setup with  git config core.hooksPath .githooks
+top="$(git rev-parse --show-toplevel)"
+# Python 3 is python3 on Linux, macOS and WSL, and "py -3" on Windows.
+if command -v python3 >/dev/null 2>&1 && python3 -c "import sys; sys.exit(sys.version_info < (3, 10))" 2>/dev/null; then
+    python="python3"
+elif command -v py >/dev/null 2>&1 && py -3 -c "import sys; sys.exit(sys.version_info < (3, 10))" 2>/dev/null; then
+    python="py -3"
+else
+    echo "The content guard needs Python 3.10 or later, and none was found. Install Python, then try again." >&2
+    exit 1
+fi
+# The variable may be "py -3", so it is split into words on purpose.
+# shellcheck disable=SC2086
+exec $python -I "$top/tools/content_guard.py" --staged

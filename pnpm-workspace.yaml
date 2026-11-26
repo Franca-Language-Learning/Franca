@@ -1,0 +1,14 @@
+# The pnpm workspace for Franca's TypeScript packages, and pnpm's supply-chain settings (story E01-004).
+packages:
+  - client
+
+# No release younger than seven days is installed (7 × 24 × 60 minutes), the same rule as uv's exclude-newer.
+minimumReleaseAge: 10080
+minimumReleaseAgeStrict: true
+# The install fails if a package was published with weaker provenance than its earlier releases.
+trustPolicy: no-downgrade
+# Only direct dependencies may come from a Git repository or a tarball URL.
+blockExoticSubdeps: true
+# Install scripts of dependencies do not run unless they are listed here, and an unlisted one stops the install.
+strictDepBuilds: true
+allowBuilds: {}

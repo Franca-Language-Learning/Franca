@@ -1,0 +1,62 @@
+# Fixture pack "fx" for the public tests: settings for the warm-up, the daily plan, the mixed run and the listening stages.
+# The values are the starting values from the experts' check of 11 November 2026, so the tests match the real pack's settings.
+language: fx
+warmup:
+  bridge_min: 3                    # pedagogy expert: some retrieval before every input (forward testing effect)
+  bridge_max: 6
+  bridge_max_seconds: 90
+  recall_below: 0.90               # the scheduler's target retention: picks the items that are due
+  lapses_in_30_days: 2
+  skip_if_reviewed_within_hours: 24
+  reminders_max: 2                 # never-met items: at most 2 reminder screens
+  reminder_seconds: 20
+  offer_review_first_above: 6      # more core items slipping than this: offer review before the lesson
+  target_seconds: 180
+  limit_seconds: 240
+  preteach_max: {orientation: 4, pre-a1: 4, a1: 4, a2: 4, b1: 6, b2: 6, c1: 6, c2: 6}
+daily_plan:
+  fewer_new_above: 0.333           # review above a third of the planned time: no extra, fewer new items
+  no_new_lesson_above: 0.5         # above half: no new lesson in the plan
+  new_items_factor_when_reduced: 0.5
+mixed_run:
+  recall_band: [0.80, 0.92]
+  skip_above: 0.95
+  skip_if_reviewed_within_hours: 24
+  updates_per_item_per_day: 1
+  recognition_updates_only_on_failure: true
+listening:
+  pre-a1:
+    listens_without_text: 1
+    transcript_from: 2
+    highlight_words: true
+    english: {from: 2, mode: per-line}
+  a1:
+    listens_without_text: 1
+    transcript_from: 2
+    english: {from: 3, mode: per-line-and-switch}
+  a2:
+    listens_without_text: 1
+    extra_listen_without_text_offered: true
+    transcript_from: 2
+    english: {from: 3, mode: per-line}
+  b1:
+    listens_without_text: 2
+    transcript_from: 3
+    english: {from: 3, mode: target-language-definitions}
+goals:                             # accepted on 22 November 2026 (course design answers 1 and 3)
+  goal_share_max: 0.2              # goal words and subject terms: at most 20% of the day's new items, after the brake
+  subject_terms_from: a2           # the subject word lists start at A2
+library:
+  suggest_text_from: 0.95          # Hu & Nation 2000; Laufer & Ravenhorst-Kalovski 2010
+  easy_reading_from: 0.98
+  suggest_audio_video_from: 0.90   # van Zeeland & Schmitt 2013
+games:                             # course design section Games and puzzles, 22 November 2026
+  crossword: {from: a1}
+  collocation_match: {from: a2}
+  sentence_building: {from: a1}
+  odd_one_out: {from: a1}
+  article_sort: {from: a1}
+  memory_game: {from: orientation, until: pre-a1}
+  sound_game: {from: orientation}
+  guess_the_word: {from: a2}
+  story_game: {from: a2}

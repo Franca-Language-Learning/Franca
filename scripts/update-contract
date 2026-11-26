@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Writes the server's API description to contracts/openapi.yaml. Run after changing a route.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/../server"
+PYTHONPATH=src uv run python -m franca.api.export_openapi

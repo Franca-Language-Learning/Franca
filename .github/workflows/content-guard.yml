@@ -1,0 +1,35 @@
+# Content guard (story E01-014): course material, media, learner data and secrets must not be in this public
+# repository. The pre-push hook is what prevents a leak; this workflow finds one after a push, on every branch and
+# tag, so it can be removed quickly (docs/repository-split.md, "If course material was pushed by mistake").
+name: Content guard
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["**"]
+  pull_request:
+  merge_group:
+  schedule:
+    - cron: "23 2 * * 0"
+
+permissions: {}
+
+jobs:
+  content-guard:
+    name: Content guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check every file version in the new commits
+        env:
+          FRANCA_FINGERPRINT_KEY: ${{ secrets.FRANCA_FINGERPRINT_KEY }}
+        run: python3 -I tools/content_guard.py --ci

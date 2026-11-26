@@ -1,0 +1,5 @@
+# Media files that may be kept in the public repository: the app's own icons and screenshots for the
+# documentation. One pattern per line (fnmatch). Pictures, sound and video from the course are kept in franca-content.
+client/public/icons/*.png
+client/public/favicon.ico
+docs/images/*.png

@@ -1,0 +1,3 @@
+# Fingerprints of the private repository franca-content, made by  tools/content_guard.py --fingerprint
+# There are none yet: the private repository is created on the first day of the build. Each line is a short
+# SHA-256 hash, so this file shows nothing of the private content.

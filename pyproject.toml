@@ -1,0 +1,11 @@
+# The uv workspace for Franca's Python packages. Each member has its own pyproject.toml.
+[tool.uv.workspace]
+members = ["server"]
+
+[tool.uv]
+# Supply-chain rules (story E01-004): no release younger than seven days is installed,
+# and packages are installed from built wheels only, so no package runs its own build code.
+exclude-newer = "7 days"
+no-build = true
+# Pinned, because tools/startup-files-allowed.txt has the hash of the _virtualenv.py that this uv writes.
+required-version = "==0.11.32" # renovate: datasource=github-releases depName=astral-sh/uv

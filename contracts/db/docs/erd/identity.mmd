@@ -1,0 +1,50 @@
+erDiagram
+    identity_audit_event {
+        INTEGER audit_event_id PK
+        INTEGER learner_id FK
+    }
+    identity_auth_session {
+        INTEGER auth_session_id PK
+        INTEGER learner_id FK
+    }
+    identity_external_identity {
+        INTEGER external_identity_id PK
+        INTEGER learner_id FK
+    }
+    identity_invitation {
+        INTEGER invitation_id PK
+        INTEGER invited_by_learner_id FK
+        INTEGER accepted_learner_id FK
+    }
+    identity_learner {
+        INTEGER learner_id PK
+    }
+    identity_passkey {
+        BLOB credential_id PK
+        INTEGER learner_id FK
+    }
+    identity_preferences {
+        INTEGER learner_id PK,FK
+    }
+    identity_push_subscription {
+        INTEGER push_subscription_id PK
+        INTEGER learner_id FK
+    }
+    identity_recovery_code {
+        INTEGER recovery_code_id PK
+        INTEGER learner_id FK
+    }
+    identity_reminder {
+        INTEGER learner_id PK,FK
+        INTEGER weekday PK
+    }
+    identity_learner |o--o{ identity_audit_event : "learner_id"
+    identity_learner ||--o{ identity_auth_session : "learner_id"
+    identity_learner ||--o{ identity_external_identity : "learner_id"
+    identity_learner |o--o{ identity_invitation : "accepted_learner_id"
+    identity_learner |o--o{ identity_invitation : "invited_by_learner_id"
+    identity_learner ||--o{ identity_passkey : "learner_id"
+    identity_learner ||--o{ identity_preferences : "learner_id"
+    identity_learner ||--o{ identity_push_subscription : "learner_id"
+    identity_learner ||--o{ identity_recovery_code : "learner_id"
+    identity_learner ||--o{ identity_reminder : "learner_id"

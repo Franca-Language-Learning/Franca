@@ -1,0 +1,74 @@
+[project]
+name = "franca-server"
+version = "0.1.0"
+description = "Franca's application service: the API, the learning engine and the module boundaries between them."
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+license = "LicenseRef-All-Rights-Reserved"
+dependencies = [
+    "fastapi>=0.115",
+    "pydantic>=2.9",
+    "pyyaml>=6",
+    "jsonschema>=4.23",
+    "uvicorn>=0.32",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "hypothesis>=6.112",
+    "httpx2>=0.1",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "types-pyyaml>=6",
+    "types-jsonschema>=4.23",
+    "import-linter>=2.1",
+    "shellcheck-py>=0.10",
+    "zizmor>=1.0",
+]
+
+[tool.uv]
+# The server is not built into a package. uv installs wheels only (see the root pyproject.toml), so the source
+# is used in place: pytest and mypy look in src/, and the container image copies src/ and sets PYTHONPATH.
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "../contracts/db/tests", "../tools/tests"]
+addopts = "-q --strict-markers"
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 140
+target-version = "py314"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# E/F/W: errors and pyflakes; I: import order; B: bugbear; S: security (bandit rules); UP: modern syntax.
+select = ["E", "F", "W", "I", "B", "S", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+"../contracts/**" = ["S101", "S603", "S608"]
+"../tools/**" = ["S101", "S603", "S607"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+packages = ["franca"]
+mypy_path = "src"
+
+# Module boundaries (story E01-003). The HTTP layer sits above the twelve modules, and the modules sit above
+# franca.platform (settings, database access, logging). Modules may import each other's package root only;
+# tests/test_module_boundaries.py checks that, using the same import graph (grimp) as import-linter.
+[tool.importlinter]
+root_package = "franca"
+
+[[tool.importlinter.contracts]]
+name = "Layers: api, then modules, then platform"
+type = "layers"
+layers = [
+    "franca.api",
+    "franca.identity : franca.catalogue : franca.study : franca.memory : franca.checking : franca.mastery : franca.speech_client : franca.partner : franca.ai : franca.library : franca.studio : franca.records",
+    "franca.platform",
+]

@@ -1,0 +1,238 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://franca.local/spec/lesson.schema.json",
+  "title": "Franca lesson file",
+  "description": "One lesson in a language pack. These fields tell the app what the lesson teaches, what it builds on and what it only shows, so that the warm-up and the pack builder work the same way for every language.",
+  "type": "object",
+  "required": [
+    "id",
+    "title",
+    "level",
+    "teaches",
+    "builds_on",
+    "preteach",
+    "activities"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "item_id": {
+      "description": "language:type:slug, for example nl:grammar:article-indefinite or zh:sound:tone-3. The type is any item type the pack defines. A variety or script subtag may follow the language, for example nl-be:lexeme:gsm or zh-hans:character:ma.",
+      "type": "string",
+      "pattern": "^[a-z]{2,3}(-[a-z0-9]{2,8})?:[a-z]+(-[a-z]+)*:[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "node_id": {
+      "description": "A lesson or unit id, for example nl:lesson:a1-u05-l03 or nl:unit:a1-u06.",
+      "type": "string",
+      "pattern": "^[a-z]{2,3}(-[a-z0-9]{2,8})?:(lesson|unit):[a-z0-9]+(-[a-z0-9]+)*$"
+    }
+  },
+  "properties": {
+    "id": {
+      "$ref": "#/$defs/node_id"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "level": {
+      "enum": [
+        "orientation",
+        "pre-a1",
+        "a1",
+        "a2",
+        "b1",
+        "b2",
+        "c1",
+        "c2"
+      ]
+    },
+    "teaches": {
+      "description": "Items that are new in this lesson.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/item_id"
+      },
+      "uniqueItems": true
+    },
+    "builds_on": {
+      "description": "Items the lesson uses but does not teach. Core items are needed to follow the lesson; support items help. The warm-up chooses its bridge items from this list.",
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "required": [
+          "item",
+          "weight"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "item": {
+            "$ref": "#/$defs/item_id"
+          },
+          "weight": {
+            "enum": [
+              "core",
+              "support"
+            ]
+          },
+          "prompt": {
+            "description": "Optional recall prompt for the warm-up, such as a sentence the lesson will change. A string is the target-language answer; an object can add a transliteration and the learner's-language cue. Without it, the item's own review card is used.",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "target"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "target": {
+                    "type": "string"
+                  },
+                  "transliteration": {
+                    "type": "string"
+                  },
+                  "cue": {
+                    "type": "object",
+                    "description": "The prompt in the learner's language, by language code, for example {\"en\": \"Do you have bread?\"}",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "exposure_only": {
+      "description": "Items used in this lesson before they are taught. They are never a production target here.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "item",
+          "taught_in"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "item": {
+            "$ref": "#/$defs/item_id"
+          },
+          "taught_in": {
+            "$ref": "#/$defs/node_id"
+          }
+        }
+      }
+    },
+    "preteach": {
+      "description": "Words taught just before the input. The maximum per level is in the course settings (4 at A1 and A2, 6 at B1).",
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "$ref": "#/$defs/item_id"
+      },
+      "uniqueItems": true
+    },
+    "recap_of": {
+      "description": "The lesson that the reminder at the start of the warm-up refers to.",
+      "$ref": "#/$defs/node_id"
+    },
+    "returns_in": {
+      "description": "Lessons and units where this lesson's content comes back.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/node_id"
+      }
+    },
+    "prediction": {
+      "description": "The guess at the start of the warm-up. It is not marked and is checked after the first listen.",
+      "type": "object",
+      "required": [
+        "question",
+        "options",
+        "answers",
+        "multiple"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "question": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "string"
+          }
+        },
+        "answers": {
+          "description": "Indexes of the options that match the recording, checked after the first listen.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "minItems": 1
+        },
+        "multiple": {
+          "description": "Whether the learner can choose more than one option.",
+          "type": "boolean"
+        },
+        "feedback": {
+          "description": "One line per option, shown with the check after the first listen.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "activities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "step",
+          "items"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]+$"
+          },
+          "step": {
+            "enum": [
+              "warm-up",
+              "input",
+              "notice",
+              "practise",
+              "your-turn",
+              "wrap-up"
+            ]
+          },
+          "items": {
+            "description": "Every item the activity uses. The pack builder checks each one against teaches, preteach, builds_on, exposure_only and earlier lessons.",
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/item_id"
+            }
+          },
+          "production_targets": {
+            "description": "Items the learner has to produce. An exposure_only item cannot be one.",
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/item_id"
+            }
+          }
+        }
+      }
+    }
+  }
+}

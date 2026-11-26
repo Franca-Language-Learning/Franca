@@ -1,0 +1,340 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://franca.local/spec/course-config.schema.json",
+  "title": "Franca course settings",
+  "description": "Settings in a language pack for the warm-up, the daily plan, the mixed run and the listening stages. The values are starting points, to be tuned on the learners' review logs.",
+  "type": "object",
+  "required": [
+    "language",
+    "warmup",
+    "daily_plan",
+    "mixed_run",
+    "listening",
+    "goals",
+    "library",
+    "games"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "fraction": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "exclusiveMaximum": 1
+    },
+    "stage_rule": {
+      "type": "object",
+      "required": [
+        "listens_without_text",
+        "transcript_from",
+        "english"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "listens_without_text": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "extra_listen_without_text_offered": {
+          "type": "boolean",
+          "default": false
+        },
+        "transliteration_listen": {
+          "description": "For packs in another script: a listen with pinyin or Latin transliteration before the native script.",
+          "type": "boolean",
+          "default": false
+        },
+        "transcript_from": {
+          "description": "The listen on which the target-language transcript first appears.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "highlight_words": {
+          "type": "boolean",
+          "default": false
+        },
+        "english": {
+          "type": "object",
+          "required": [
+            "from",
+            "mode"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "from": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4
+            },
+            "mode": {
+              "enum": [
+                "per-line",
+                "per-line-and-switch",
+                "off",
+                "target-language-definitions"
+              ]
+            }
+          }
+        },
+        "slower_speed": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    }
+  },
+  "properties": {
+    "language": {
+      "type": "string",
+      "pattern": "^[a-z]{2,3}$"
+    },
+    "warmup": {
+      "type": "object",
+      "required": [
+        "bridge_min",
+        "bridge_max",
+        "bridge_max_seconds",
+        "recall_below",
+        "lapses_in_30_days",
+        "skip_if_reviewed_within_hours",
+        "offer_review_first_above",
+        "target_seconds",
+        "limit_seconds",
+        "preteach_max",
+        "reminders_max",
+        "reminder_seconds"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "bridge_min": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6
+        },
+        "bridge_max": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "bridge_max_seconds": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 180
+        },
+        "recall_below": {
+          "$ref": "#/$defs/fraction",
+          "description": "An item qualifies when its predicted recall is below this value. 0.90 matches the scheduler's target retention, so it picks the items that are due."
+        },
+        "lapses_in_30_days": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "skip_if_reviewed_within_hours": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "offer_review_first_above": {
+          "description": "Offer review before the lesson when more core items than this qualify.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "target_seconds": {
+          "type": "integer"
+        },
+        "limit_seconds": {
+          "type": "integer"
+        },
+        "preteach_max": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8
+          }
+        },
+        "reminders_max": {
+          "description": "At most this many reminder screens for items the learner has never met.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "reminder_seconds": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 60
+        }
+      }
+    },
+    "daily_plan": {
+      "type": "object",
+      "required": [
+        "fewer_new_above",
+        "no_new_lesson_above",
+        "new_items_factor_when_reduced"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "fewer_new_above": {
+          "description": "Share of the planned daily time above which the review drops the optional extra and cuts new items.",
+          "$ref": "#/$defs/fraction"
+        },
+        "no_new_lesson_above": {
+          "description": "Share of the planned daily time above which no new lesson is planned.",
+          "$ref": "#/$defs/fraction"
+        },
+        "new_items_factor_when_reduced": {
+          "$ref": "#/$defs/fraction"
+        }
+      }
+    },
+    "mixed_run": {
+      "type": "object",
+      "required": [
+        "recall_band",
+        "skip_above",
+        "skip_if_reviewed_within_hours",
+        "updates_per_item_per_day",
+        "recognition_updates_only_on_failure"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "recall_band": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/fraction"
+            },
+            {
+              "$ref": "#/$defs/fraction"
+            }
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "skip_above": {
+          "$ref": "#/$defs/fraction"
+        },
+        "skip_if_reviewed_within_hours": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "updates_per_item_per_day": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "recognition_updates_only_on_failure": {
+          "type": "boolean"
+        }
+      }
+    },
+    "listening": {
+      "type": "object",
+      "description": "Stage rules per level, used in the listening step of lessons. In the library the learner chooses freely.",
+      "propertyNames": {
+        "enum": [
+          "orientation",
+          "pre-a1",
+          "a1",
+          "a2",
+          "b1",
+          "b2",
+          "c1",
+          "c2"
+        ]
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/stage_rule"
+      }
+    },
+    "goals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "goal_share_max",
+        "subject_terms_from"
+      ],
+      "properties": {
+        "goal_share_max": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "subject_terms_from": {
+          "enum": [
+            "orientation",
+            "pre-a1",
+            "a1",
+            "a2",
+            "b1",
+            "b2",
+            "c1",
+            "c2"
+          ]
+        }
+      }
+    },
+    "library": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "suggest_text_from",
+        "easy_reading_from",
+        "suggest_audio_video_from"
+      ],
+      "properties": {
+        "suggest_text_from": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "easy_reading_from": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "suggest_audio_video_from": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "games": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "from"
+        ],
+        "properties": {
+          "from": {
+            "enum": [
+              "orientation",
+              "pre-a1",
+              "a1",
+              "a2",
+              "b1",
+              "b2",
+              "c1",
+              "c2"
+            ]
+          },
+          "until": {
+            "enum": [
+              "orientation",
+              "pre-a1",
+              "a1",
+              "a2",
+              "b1",
+              "b2",
+              "c1",
+              "c2"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

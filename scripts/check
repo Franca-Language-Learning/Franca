@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Runs the same checks as the pipeline, on this checkout:  scripts/check
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+root="$(pwd)"
+
+step() { printf '\n== %s\n' "$1"; }
+
+step "Content guard"
+python3 -I tools/content_guard.py --index
+
+step "Python packages"
+uv sync --locked --quiet
+tools/check-startup-files.sh .venv
+
+cd "$root/server"
+step "Lint and format"
+uv run ruff check . ../contracts ../tools
+uv run ruff format --check . ../contracts ../tools
+step "Type check"
+uv run mypy
+uv run mypy --strict ../tools/content_guard.py
+step "Module boundaries"
+PYTHONPATH=src uv run lint-imports
+step "Server, contract and tool tests"
+uv run pytest
+step "Shell scripts"
+uv run shellcheck ../tools/*.sh ../.githooks/* ../scripts/*
+step "Workflow security"
+uv run zizmor --offline ../.github/workflows
+
+cd "$root"
+step "Client"
+pnpm install --frozen-lockfile --silent
+pnpm --filter @franca/client typecheck
+pnpm --filter @franca/client test
+pnpm --filter @franca/client build
+
+printf '\nAll checks passed.\n'

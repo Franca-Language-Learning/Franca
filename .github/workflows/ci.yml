@@ -1,0 +1,114 @@
+# Checks for every change (stories E01-003, E01-004 and E01-013). The content guard has its own workflow.
+# Actions are pinned to a full commit SHA, with the release tag in a comment; Renovate updates both.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  server:
+    name: Server, contracts and tools
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          # Pinned, because tools/startup-files-allowed.txt has the hash of the _virtualenv.py that this uv writes.
+          version: "0.11.32" # renovate: datasource=github-releases depName=astral-sh/uv
+          enable-cache: false
+      - name: Install the locked Python packages
+        run: uv sync --locked
+      - name: Check for start-up files in the environment
+        run: tools/check-startup-files.sh .venv
+      - name: Lint and format
+        working-directory: server
+        run: |
+          uv run ruff check . ../contracts ../tools
+          uv run ruff format --check . ../contracts ../tools
+      - name: Type check
+        working-directory: server
+        run: |
+          uv run mypy
+          uv run mypy --strict ../tools/content_guard.py
+      - name: Module boundaries
+        working-directory: server
+        env:
+          PYTHONPATH: src
+        run: uv run lint-imports
+      - name: Tests
+        working-directory: server
+        env:
+          CI: "true"
+        run: uv run pytest
+      - name: Shell scripts
+        working-directory: server
+        run: uv run shellcheck ../tools/*.sh ../.githooks/* ../scripts/*
+      - name: Workflow security
+        working-directory: server
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run zizmor ../.github/workflows
+
+  client:
+    name: Client
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install the locked packages
+        run: pnpm install --frozen-lockfile
+      - name: Type check
+        run: pnpm --filter @franca/client typecheck
+      - name: Tests
+        run: pnpm --filter @franca/client test
+      - name: Build
+        run: pnpm --filter @franca/client build
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
+        with:
+          fail-on-severity: moderate
+          # Licences that would stop the app's code being published under a licence of the owner's choice later.
+          # The speech container is GPL-3.0-or-later and has its own dependencies (speech/LICENSE).
+          deny-licenses: AGPL-1.0-or-later, AGPL-3.0-only, AGPL-3.0-or-later, GPL-2.0-only, GPL-2.0-or-later, GPL-3.0-only, GPL-3.0-or-later, SSPL-1.0

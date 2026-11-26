@@ -1,0 +1,83 @@
+# Fixture lesson for the public tests: the structure of the unit 5, lesson 3 example in the specification,
+# with item keys in the made-up pack "fx". The real Dutch pack is kept in the private content repository.
+id: fx:lesson:a1-u05-l03
+title: Fixture lesson
+level: a1
+teaches:
+  - fx:grammar:niet-geen
+  - fx:lexeme:zakje
+  - fx:chunk:nodig-hebben
+builds_on:
+  - item: fx:grammar:article-indefinite
+    weight: core
+    prompt: Fixture prompt one.
+  - item: fx:grammar:article-definite-gender
+    weight: core
+    prompt: Fixture prompt two.
+  - item: fx:grammar:zero-article-plural-mass
+    weight: core
+    prompt: Fixture prompt three.
+  - item: fx:grammar:word-order-v2
+    weight: core
+    prompt:
+      target: Fixture prompt four?
+      cue: {en: "Fixture cue four?"}
+  - item: fx:lexeme:duur
+    weight: core
+    prompt: Fixture prompt five.
+  - item: fx:lexeme:kaas
+    weight: core
+  - item: fx:grammar:present-hebben-zijn
+    weight: core
+  - item: fx:grammar:possessive-determiners
+    weight: support
+  - item: fx:chunk:mag-ik
+    weight: support
+exposure_only:
+  - item: fx:grammar:demonstratives
+    taught_in: fx:lesson:a1-u07-l02
+  - item: fx:grammar:adjective-inflection
+    taught_in: fx:lesson:a1-u07-l01
+  - item: fx:grammar:object-pronouns
+    taught_in: fx:lesson:a1-u05-l05
+  - item: fx:grammar:imperfect
+    taught_in: fx:lesson:a2-u14-l02
+preteach:
+  - fx:lexeme:boterham
+  - fx:lexeme:confituur
+  - fx:lexeme:zoet
+  - fx:lexeme:ontbijt
+recap_of: fx:lesson:a1-u05-l02
+returns_in:
+  - fx:lesson:a1-u05-l04
+  - fx:lesson:a1-u05-l08
+  - fx:unit:a1-u06
+  - fx:unit:a1-u12
+prediction:
+  question: Fixture prediction question?
+  options: [option one, option two, option three, option four]
+  answers: [0, 2]
+  multiple: true
+  feedback:
+    - Fixture feedback one.
+    - Fixture feedback two.
+    - Fixture feedback three.
+    - Fixture feedback four.
+activities:
+  - id: listen-robin
+    step: input
+    items: [fx:lexeme:ontbijt, fx:lexeme:boterham, fx:lexeme:confituur, fx:lexeme:zoet, fx:lexeme:kaas, fx:grammar:niet-geen, fx:grammar:word-order-v2]
+  - id: rule-card
+    step: notice
+    items: [fx:grammar:niet-geen, fx:grammar:article-indefinite, fx:grammar:article-definite-gender, fx:grammar:possessive-determiners, fx:grammar:demonstratives]
+  - id: fill-niet-geen
+    step: practise
+    items: [fx:grammar:niet-geen, fx:lexeme:zakje, fx:lexeme:duur, fx:grammar:present-hebben-zijn, fx:grammar:adjective-inflection]
+    production_targets: [fx:grammar:niet-geen, fx:lexeme:zakje]
+  - id: market-role-play
+    step: your-turn
+    items: [fx:grammar:niet-geen, fx:chunk:nodig-hebben, fx:chunk:mag-ik, fx:lexeme:kaas]
+    production_targets: [fx:grammar:niet-geen, fx:chunk:nodig-hebben]
+  - id: wrap-up-story
+    step: wrap-up
+    items: [fx:grammar:niet-geen, fx:grammar:imperfect, fx:grammar:object-pronouns]

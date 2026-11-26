@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Sets up a checkout for development: the Git hooks, the Python packages and the npm packages.
+# Run once after cloning:  scripts/setup
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+git config core.hooksPath .githooks
+echo "Git hooks: .githooks (the content guard runs before each commit and push)"
+
+uv sync --locked
+tools/check-startup-files.sh .venv
+
+pnpm install --frozen-lockfile
+echo "Set up. Run scripts/check to run every check."

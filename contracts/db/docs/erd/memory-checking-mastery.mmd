@@ -1,0 +1,58 @@
+erDiagram
+    checking_feedback {
+        INTEGER attempt_id PK,FK
+        INTEGER position PK
+        TEXT error_type FK
+        INTEGER rule_item_id FK
+        INTEGER step_item_id FK
+    }
+    mastery_estimate {
+        INTEGER enrolment_id PK,FK
+        INTEGER can_do_item_id PK,FK
+        TEXT component PK
+    }
+    mastery_self_assessment {
+        INTEGER enrolment_id PK,FK
+        INTEGER can_do_item_id PK,FK
+        TEXT at PK
+    }
+    memory_card {
+        INTEGER card_id PK
+        INTEGER enrolment_id FK
+        INTEGER item_id FK
+    }
+    memory_fsrs_parameters {
+        INTEGER enrolment_id PK,FK
+    }
+    memory_review_log {
+        INTEGER review_id PK
+        INTEGER card_id FK
+        INTEGER attempt_id FK
+        INTEGER corrects_review_id FK
+    }
+    catalogue_error_type {
+        TEXT error_type PK
+    }
+    catalogue_item {
+        INTEGER item_id PK
+    }
+    study_attempt {
+        INTEGER attempt_id PK
+    }
+    study_enrolment {
+        INTEGER enrolment_id PK
+    }
+    catalogue_item |o--o{ checking_feedback : "step_item_id"
+    catalogue_item |o--o{ checking_feedback : "rule_item_id"
+    catalogue_error_type |o--o{ checking_feedback : "error_type"
+    study_attempt ||--o{ checking_feedback : "attempt_id"
+    catalogue_item ||--o{ mastery_estimate : "can_do_item_id"
+    study_enrolment ||--o{ mastery_estimate : "enrolment_id"
+    catalogue_item ||--o{ mastery_self_assessment : "can_do_item_id"
+    study_enrolment ||--o{ mastery_self_assessment : "enrolment_id"
+    catalogue_item ||--o{ memory_card : "item_id"
+    study_enrolment ||--o{ memory_card : "enrolment_id"
+    study_enrolment ||--o{ memory_fsrs_parameters : "enrolment_id"
+    memory_review_log |o--o{ memory_review_log : "corrects_review_id"
+    study_attempt |o--o{ memory_review_log : "attempt_id"
+    memory_card ||--o{ memory_review_log : "card_id"

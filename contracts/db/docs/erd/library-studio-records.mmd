@@ -1,0 +1,93 @@
+erDiagram
+    library_caption_track {
+        INTEGER library_item_id PK,FK
+        TEXT language PK
+        TEXT vtt_sha256 FK
+    }
+    library_item {
+        INTEGER library_item_id PK
+        INTEGER pack_id FK
+        TEXT media_sha256 FK
+        TEXT licence_code FK
+        INTEGER added_by_learner_id FK
+    }
+    library_item_goal {
+        INTEGER library_item_id PK,FK
+        TEXT goal_key PK,FK
+    }
+    library_progress {
+        INTEGER enrolment_id PK,FK
+        INTEGER library_item_id PK,FK
+    }
+    library_section {
+        INTEGER section_id PK
+        INTEGER library_item_id FK
+    }
+    library_term {
+        INTEGER term_id PK
+        INTEGER enrolment_id FK
+        INTEGER item_id FK
+    }
+    library_term_parent {
+        INTEGER term_id PK,FK
+        INTEGER parent_term_id PK,FK
+    }
+    records_xapi_statement {
+        TEXT statement_uuid PK
+        INTEGER learner_id FK
+        INTEGER attempt_id FK
+    }
+    studio_review_task {
+        INTEGER review_task_id PK
+        INTEGER pack_id FK
+        INTEGER item_id FK
+        INTEGER attempt_id FK
+        INTEGER raised_by_learner_id FK
+        INTEGER resolved_by_learner_id FK
+    }
+    catalogue_item {
+        INTEGER item_id PK
+    }
+    catalogue_licence {
+        TEXT licence_code PK
+    }
+    catalogue_media_asset {
+        TEXT sha256 PK
+    }
+    catalogue_pack {
+        INTEGER pack_id PK
+    }
+    identity_learner {
+        INTEGER learner_id PK
+    }
+    study_attempt {
+        INTEGER attempt_id PK
+    }
+    study_enrolment {
+        INTEGER enrolment_id PK
+    }
+    study_goal {
+        TEXT goal_key PK
+    }
+    catalogue_media_asset ||--o{ library_caption_track : "vtt_sha256"
+    library_item ||--o{ library_caption_track : "library_item_id"
+    identity_learner |o--o{ library_item : "added_by_learner_id"
+    catalogue_licence ||--o{ library_item : "licence_code"
+    catalogue_media_asset |o--o{ library_item : "media_sha256"
+    catalogue_pack ||--o{ library_item : "pack_id"
+    study_goal ||--o{ library_item_goal : "goal_key"
+    library_item ||--o{ library_item_goal : "library_item_id"
+    library_item ||--o{ library_progress : "library_item_id"
+    study_enrolment ||--o{ library_progress : "enrolment_id"
+    library_item ||--o{ library_section : "library_item_id"
+    catalogue_item |o--o{ library_term : "item_id"
+    study_enrolment ||--o{ library_term : "enrolment_id"
+    library_term ||--o{ library_term_parent : "parent_term_id"
+    library_term ||--o{ library_term_parent : "term_id"
+    study_attempt |o--o{ records_xapi_statement : "attempt_id"
+    identity_learner ||--o{ records_xapi_statement : "learner_id"
+    identity_learner |o--o{ studio_review_task : "resolved_by_learner_id"
+    identity_learner |o--o{ studio_review_task : "raised_by_learner_id"
+    study_attempt |o--o{ studio_review_task : "attempt_id"
+    catalogue_item |o--o{ studio_review_task : "item_id"
+    catalogue_pack ||--o{ studio_review_task : "pack_id"

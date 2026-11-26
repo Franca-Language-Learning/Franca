@@ -1,0 +1,194 @@
+erDiagram
+    catalogue_can_do_component_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER can_do_item_id PK,FK
+        TEXT component PK
+    }
+    catalogue_can_do_evidence_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER can_do_item_id PK,FK
+        TEXT component PK,FK
+        INTEGER item_id PK,FK
+    }
+    catalogue_can_do_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER item_id PK,FK
+    }
+    catalogue_confusable_pair_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER item_a_id PK,FK
+        INTEGER item_b_id PK,FK
+    }
+    catalogue_exam_v {
+        INTEGER pack_version_id PK,FK
+        TEXT exam_key PK
+        INTEGER level_exam_item_id FK
+    }
+    catalogue_explanation_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER grammar_item_id PK,FK
+        TEXT depth PK
+        TEXT section PK
+    }
+    catalogue_goal_link_v {
+        INTEGER pack_version_id PK,FK
+        TEXT goal_key PK,FK
+        INTEGER item_id PK,FK
+    }
+    catalogue_goal_v {
+        INTEGER pack_version_id PK,FK
+        TEXT goal_key PK,FK
+    }
+    catalogue_grammar_point_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER item_id PK,FK
+    }
+    catalogue_grammar_prerequisite_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER grammar_item_id PK,FK
+        INTEGER requires_item_id PK,FK
+    }
+    catalogue_item_kind {
+        TEXT kind PK
+    }
+    catalogue_minimal_pair_audio_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER contrast_item_id PK,FK
+        INTEGER pair_no PK,FK
+        TEXT side PK
+        TEXT speaker_key PK,FK
+        TEXT audio_sha256 FK
+    }
+    catalogue_minimal_pair_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER contrast_item_id PK,FK
+        INTEGER pair_no PK
+    }
+    catalogue_module_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER item_id PK,FK
+    }
+    catalogue_node_can_do_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER node_item_id PK,FK
+        INTEGER can_do_item_id PK,FK
+    }
+    catalogue_rule_example_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER rule_item_id PK,FK
+        INTEGER example_no PK
+        INTEGER step_item_id FK
+    }
+    catalogue_rule_exception_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER rule_item_id PK,FK
+        INTEGER exception_no PK
+        INTEGER lexeme_item_id FK
+    }
+    catalogue_rule_step_outcome_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER step_item_id PK,FK
+        INTEGER outcome_no PK
+        INTEGER next_step_item_id FK
+    }
+    catalogue_rule_step_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER item_id PK,FK
+        INTEGER rule_item_id FK
+    }
+    catalogue_rule_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER item_id PK,FK
+        INTEGER grammar_item_id FK
+    }
+    catalogue_scenario_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER item_id PK,FK
+        INTEGER can_do_item_id FK
+        INTEGER variety_id FK
+        INTEGER slot_node_item_id FK
+    }
+    catalogue_sound_contrast_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER item_id PK,FK
+        INTEGER sound_a_item_id FK
+        INTEGER sound_b_item_id FK
+    }
+    catalogue_sound_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER item_id PK,FK
+    }
+    catalogue_course_node_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER item_id PK,FK
+    }
+    catalogue_item {
+        INTEGER item_id PK
+    }
+    catalogue_lexeme_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER item_id PK,FK
+    }
+    catalogue_media_asset {
+        TEXT sha256 PK
+    }
+    catalogue_pack_version {
+        INTEGER pack_version_id PK
+    }
+    catalogue_speaker_v {
+        INTEGER pack_version_id PK,FK
+        TEXT speaker_key PK
+    }
+    catalogue_variety {
+        INTEGER variety_id PK
+    }
+    study_goal {
+        TEXT goal_key PK
+    }
+    catalogue_can_do_v ||--o{ catalogue_can_do_component_v : "pack_version_id, can_do_item_id"
+    catalogue_can_do_component_v ||--o{ catalogue_can_do_evidence_v : "pack_version_id, can_do_item_id, component"
+    catalogue_item ||--o{ catalogue_can_do_evidence_v : "item_id"
+    catalogue_item ||--o{ catalogue_can_do_v : "item_id"
+    catalogue_pack_version ||--o{ catalogue_can_do_v : "pack_version_id"
+    catalogue_item ||--o{ catalogue_confusable_pair_v : "item_b_id"
+    catalogue_item ||--o{ catalogue_confusable_pair_v : "item_a_id"
+    catalogue_pack_version ||--o{ catalogue_confusable_pair_v : "pack_version_id"
+    catalogue_course_node_v |o--o{ catalogue_exam_v : "pack_version_id, level_exam_item_id"
+    catalogue_pack_version ||--o{ catalogue_exam_v : "pack_version_id"
+    catalogue_grammar_point_v ||--o{ catalogue_explanation_v : "pack_version_id, grammar_item_id"
+    catalogue_goal_v ||--o{ catalogue_goal_link_v : "pack_version_id, goal_key"
+    catalogue_item ||--o{ catalogue_goal_link_v : "item_id"
+    study_goal ||--o{ catalogue_goal_v : "goal_key"
+    catalogue_pack_version ||--o{ catalogue_goal_v : "pack_version_id"
+    catalogue_item ||--o{ catalogue_grammar_point_v : "item_id"
+    catalogue_pack_version ||--o{ catalogue_grammar_point_v : "pack_version_id"
+    catalogue_grammar_point_v ||--o{ catalogue_grammar_prerequisite_v : "pack_version_id, requires_item_id"
+    catalogue_grammar_point_v ||--o{ catalogue_grammar_prerequisite_v : "pack_version_id, grammar_item_id"
+    catalogue_speaker_v ||--o{ catalogue_minimal_pair_audio_v : "pack_version_id, speaker_key"
+    catalogue_minimal_pair_v ||--o{ catalogue_minimal_pair_audio_v : "pack_version_id, contrast_item_id, pair_no"
+    catalogue_media_asset ||--o{ catalogue_minimal_pair_audio_v : "audio_sha256"
+    catalogue_sound_contrast_v ||--o{ catalogue_minimal_pair_v : "pack_version_id, contrast_item_id"
+    catalogue_course_node_v ||--o{ catalogue_module_v : "pack_version_id, item_id"
+    catalogue_can_do_v ||--o{ catalogue_node_can_do_v : "pack_version_id, can_do_item_id"
+    catalogue_course_node_v ||--o{ catalogue_node_can_do_v : "pack_version_id, node_item_id"
+    catalogue_rule_step_v |o--o{ catalogue_rule_example_v : "pack_version_id, step_item_id"
+    catalogue_rule_v ||--o{ catalogue_rule_example_v : "pack_version_id, rule_item_id"
+    catalogue_lexeme_v |o--o{ catalogue_rule_exception_v : "pack_version_id, lexeme_item_id"
+    catalogue_rule_v ||--o{ catalogue_rule_exception_v : "pack_version_id, rule_item_id"
+    catalogue_rule_step_v |o--o{ catalogue_rule_step_outcome_v : "pack_version_id, next_step_item_id"
+    catalogue_rule_step_v ||--o{ catalogue_rule_step_outcome_v : "pack_version_id, step_item_id"
+    catalogue_rule_v ||--o{ catalogue_rule_step_v : "pack_version_id, rule_item_id"
+    catalogue_item ||--o{ catalogue_rule_step_v : "item_id"
+    catalogue_grammar_point_v |o--o{ catalogue_rule_v : "pack_version_id, grammar_item_id"
+    catalogue_item ||--o{ catalogue_rule_v : "item_id"
+    catalogue_pack_version ||--o{ catalogue_rule_v : "pack_version_id"
+    catalogue_course_node_v |o--o{ catalogue_scenario_v : "pack_version_id, slot_node_item_id"
+    catalogue_can_do_v |o--o{ catalogue_scenario_v : "pack_version_id, can_do_item_id"
+    catalogue_variety |o--o{ catalogue_scenario_v : "variety_id"
+    catalogue_item ||--o{ catalogue_scenario_v : "item_id"
+    catalogue_pack_version ||--o{ catalogue_scenario_v : "pack_version_id"
+    catalogue_sound_v ||--o{ catalogue_sound_contrast_v : "pack_version_id, sound_b_item_id"
+    catalogue_sound_v ||--o{ catalogue_sound_contrast_v : "pack_version_id, sound_a_item_id"
+    catalogue_item ||--o{ catalogue_sound_contrast_v : "item_id"
+    catalogue_item ||--o{ catalogue_sound_v : "item_id"
+    catalogue_pack_version ||--o{ catalogue_sound_v : "pack_version_id"

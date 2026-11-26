@@ -1,0 +1,197 @@
+erDiagram
+    study_attempt {
+        INTEGER attempt_id PK
+        INTEGER session_id FK
+        INTEGER activity_item_id FK
+        TEXT activity_type FK
+        INTEGER item_id FK
+    }
+    study_checkpoint_result {
+        INTEGER session_id PK,FK
+        INTEGER node_item_id FK
+    }
+    study_daily_plan {
+        INTEGER daily_plan_id PK
+        INTEGER enrolment_id FK
+        INTEGER lesson_item_id FK
+        TEXT extra_goal_key FK
+    }
+    study_daily_plan_entry {
+        INTEGER daily_plan_id PK,FK
+        INTEGER entry_no PK
+        INTEGER card_id FK
+        INTEGER item_id FK
+    }
+    study_device_check {
+        INTEGER learner_id PK,FK
+        TEXT device_kind PK
+        TEXT check_kind PK
+    }
+    study_enrolment {
+        INTEGER enrolment_id PK
+        INTEGER learner_id FK
+        INTEGER pack_id FK
+        INTEGER variety_id FK
+    }
+    study_enrolment_goal {
+        INTEGER enrolment_goal_id PK
+        INTEGER enrolment_id FK
+        TEXT goal_key FK
+    }
+    study_enrolment_module {
+        INTEGER enrolment_module_id PK
+        INTEGER enrolment_id FK
+        INTEGER module_item_id FK
+    }
+    study_enrolment_target {
+        INTEGER target_id PK
+        INTEGER enrolment_id FK
+    }
+    study_goal {
+        TEXT goal_key PK
+    }
+    study_goal_review {
+        INTEGER enrolment_id PK,FK
+        TEXT shown_at PK
+    }
+    study_goal_statement {
+        INTEGER goal_statement_id PK
+        INTEGER enrolment_id FK
+    }
+    study_handover {
+        INTEGER handover_id PK
+        INTEGER session_id FK
+        INTEGER activity_item_id FK
+        INTEGER claimed_by_auth_session_id FK
+    }
+    study_help_step {
+        INTEGER attempt_id PK,FK
+        INTEGER position PK
+        INTEGER step_item_id FK
+    }
+    study_listen {
+        INTEGER session_id PK,FK
+        INTEGER activity_item_id PK,FK
+        INTEGER listen_no PK
+    }
+    study_lookup {
+        INTEGER lookup_id PK
+        INTEGER enrolment_id FK
+        INTEGER session_id FK
+        INTEGER item_id FK
+    }
+    study_node_progress {
+        INTEGER enrolment_id PK,FK
+        INTEGER node_item_id PK,FK
+    }
+    study_notebook_entry {
+        INTEGER entry_id PK
+        INTEGER enrolment_id FK
+        INTEGER item_id FK
+    }
+    study_personal_can_do {
+        INTEGER personal_can_do_id PK
+        INTEGER enrolment_id FK
+        INTEGER can_do_item_id FK
+    }
+    study_placement {
+        INTEGER session_id PK,FK
+        INTEGER start_node_item_id FK
+    }
+    study_practice_run {
+        INTEGER session_id PK,FK
+    }
+    study_practice_run_type {
+        INTEGER session_id PK,FK
+        TEXT activity_type PK,FK
+    }
+    study_prediction_choice {
+        INTEGER session_id PK,FK
+        INTEGER lesson_item_id PK,FK
+        INTEGER option_no PK
+    }
+    study_session {
+        INTEGER session_id PK
+        INTEGER enrolment_id FK
+        INTEGER daily_plan_id FK
+        INTEGER node_item_id FK
+    }
+    study_tour_part {
+        TEXT tour_part_key PK
+    }
+    study_tour_progress {
+        INTEGER learner_id PK,FK
+        TEXT tour_part_key PK,FK
+    }
+    catalogue_activity_type {
+        TEXT activity_type PK
+    }
+    catalogue_item {
+        INTEGER item_id PK
+    }
+    catalogue_pack {
+        INTEGER pack_id PK
+    }
+    catalogue_variety {
+        INTEGER variety_id PK
+    }
+    identity_auth_session {
+        INTEGER auth_session_id PK
+    }
+    identity_learner {
+        INTEGER learner_id PK
+    }
+    memory_card {
+        INTEGER card_id PK
+    }
+    catalogue_item ||--o{ study_attempt : "item_id"
+    catalogue_activity_type ||--o{ study_attempt : "activity_type"
+    catalogue_item |o--o{ study_attempt : "activity_item_id"
+    study_session ||--o{ study_attempt : "session_id"
+    catalogue_item ||--o{ study_checkpoint_result : "node_item_id"
+    study_session ||--o{ study_checkpoint_result : "session_id"
+    study_goal |o--o{ study_daily_plan : "extra_goal_key"
+    catalogue_item |o--o{ study_daily_plan : "lesson_item_id"
+    study_enrolment ||--o{ study_daily_plan : "enrolment_id"
+    catalogue_item |o--o{ study_daily_plan_entry : "item_id"
+    memory_card |o--o{ study_daily_plan_entry : "card_id"
+    study_daily_plan ||--o{ study_daily_plan_entry : "daily_plan_id"
+    identity_learner ||--o{ study_device_check : "learner_id"
+    catalogue_variety ||--o{ study_enrolment : "pack_id, variety_id"
+    catalogue_pack ||--o{ study_enrolment : "pack_id"
+    identity_learner ||--o{ study_enrolment : "learner_id"
+    study_goal ||--o{ study_enrolment_goal : "goal_key"
+    study_enrolment ||--o{ study_enrolment_goal : "enrolment_id"
+    catalogue_item ||--o{ study_enrolment_module : "module_item_id"
+    study_enrolment ||--o{ study_enrolment_module : "enrolment_id"
+    study_enrolment ||--o{ study_enrolment_target : "enrolment_id"
+    study_enrolment ||--o{ study_goal_review : "enrolment_id"
+    study_enrolment ||--o{ study_goal_statement : "enrolment_id"
+    identity_auth_session |o--o{ study_handover : "claimed_by_auth_session_id"
+    catalogue_item ||--o{ study_handover : "activity_item_id"
+    study_session ||--o{ study_handover : "session_id"
+    catalogue_item ||--o{ study_help_step : "step_item_id"
+    study_attempt ||--o{ study_help_step : "attempt_id"
+    catalogue_item ||--o{ study_listen : "activity_item_id"
+    study_session ||--o{ study_listen : "session_id"
+    catalogue_item |o--o{ study_lookup : "item_id"
+    study_session |o--o{ study_lookup : "session_id"
+    study_enrolment ||--o{ study_lookup : "enrolment_id"
+    catalogue_item ||--o{ study_node_progress : "node_item_id"
+    study_enrolment ||--o{ study_node_progress : "enrolment_id"
+    catalogue_item |o--o{ study_notebook_entry : "item_id"
+    study_enrolment ||--o{ study_notebook_entry : "enrolment_id"
+    catalogue_item ||--o{ study_personal_can_do : "can_do_item_id"
+    study_enrolment ||--o{ study_personal_can_do : "enrolment_id"
+    catalogue_item |o--o{ study_placement : "start_node_item_id"
+    study_session ||--o{ study_placement : "session_id"
+    study_session ||--o{ study_practice_run : "session_id"
+    catalogue_activity_type ||--o{ study_practice_run_type : "activity_type"
+    study_practice_run ||--o{ study_practice_run_type : "session_id"
+    catalogue_item ||--o{ study_prediction_choice : "lesson_item_id"
+    study_session ||--o{ study_prediction_choice : "session_id"
+    catalogue_item |o--o{ study_session : "node_item_id"
+    study_daily_plan |o--o{ study_session : "daily_plan_id"
+    study_enrolment ||--o{ study_session : "enrolment_id"
+    study_tour_part ||--o{ study_tour_progress : "tour_part_key"
+    identity_learner ||--o{ study_tour_progress : "learner_id"

@@ -1,0 +1,89 @@
+erDiagram
+    catalogue_activity_type {
+        TEXT activity_type PK
+    }
+    catalogue_alignment_token_v {
+        INTEGER pack_version_id PK,FK
+        TEXT media_sha256 PK,FK
+        INTEGER line_no PK,FK
+        INTEGER token_no PK
+        INTEGER item_id FK
+        INTEGER grammar_item_id FK
+    }
+    catalogue_course_config_v {
+        INTEGER pack_version_id PK,FK
+    }
+    catalogue_element_name_v {
+        INTEGER pack_version_id PK,FK
+        TEXT element_key PK,FK
+    }
+    catalogue_error_type {
+        TEXT error_type PK
+    }
+    catalogue_glossary_v {
+        INTEGER pack_version_id PK,FK
+        TEXT term_key PK
+    }
+    catalogue_item {
+        INTEGER item_id PK
+        INTEGER pack_id FK
+        TEXT kind FK
+    }
+    catalogue_licence {
+        TEXT licence_code PK
+    }
+    catalogue_listening_rule_v {
+        INTEGER pack_version_id PK,FK
+        TEXT level PK
+    }
+    catalogue_media_asset {
+        TEXT sha256 PK
+        TEXT licence_code FK
+    }
+    catalogue_pack {
+        INTEGER pack_id PK
+    }
+    catalogue_pack_version {
+        INTEGER pack_version_id PK
+        INTEGER pack_id FK
+    }
+    catalogue_preteach_limit_v {
+        INTEGER pack_version_id PK,FK
+        TEXT level PK
+    }
+    catalogue_transcript_line_v {
+        INTEGER pack_version_id PK,FK
+        TEXT media_sha256 PK,FK
+        INTEGER line_no PK
+    }
+    catalogue_ui_element {
+        TEXT element_key PK
+    }
+    catalogue_ui_string_v {
+        INTEGER pack_version_id PK,FK
+        TEXT string_key PK
+    }
+    catalogue_variety {
+        INTEGER variety_id PK
+        INTEGER pack_id FK
+    }
+    catalogue_item_kind {
+        TEXT kind PK
+    }
+    catalogue_transcript_line_v ||--o{ catalogue_alignment_token_v : "pack_version_id, media_sha256, line_no"
+    catalogue_item |o--o{ catalogue_alignment_token_v : "grammar_item_id"
+    catalogue_item |o--o{ catalogue_alignment_token_v : "item_id"
+    catalogue_pack_version ||--o{ catalogue_course_config_v : "pack_version_id"
+    catalogue_ui_element ||--o{ catalogue_element_name_v : "element_key"
+    catalogue_pack_version ||--o{ catalogue_element_name_v : "pack_version_id"
+    catalogue_pack_version ||--o{ catalogue_glossary_v : "pack_version_id"
+    catalogue_item_kind ||--o{ catalogue_item : "kind"
+    catalogue_pack ||--o{ catalogue_item : "pack_id"
+    catalogue_pack_version ||--o{ catalogue_listening_rule_v : "pack_version_id"
+    catalogue_licence ||--o{ catalogue_media_asset : "licence_code"
+    catalogue_pack ||--o{ catalogue_pack_version : "pack_id"
+    catalogue_pack_version ||--o{ catalogue_preteach_limit_v : "pack_version_id"
+    catalogue_media_asset ||--o{ catalogue_transcript_line_v : "media_sha256"
+    catalogue_pack_version ||--o{ catalogue_transcript_line_v : "pack_version_id"
+    catalogue_pack_version ||--o{ catalogue_ui_string_v : "pack_version_id"
+    catalogue_pack ||--o{ catalogue_variety : "pack_id"

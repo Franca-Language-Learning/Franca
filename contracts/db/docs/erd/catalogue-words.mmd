@@ -1,0 +1,129 @@
+erDiagram
+    catalogue_chunk_part_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER chunk_item_id PK,FK
+        INTEGER position PK
+        INTEGER lexeme_item_id FK
+    }
+    catalogue_chunk_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER item_id PK,FK
+    }
+    catalogue_form_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER lexeme_item_id PK,FK
+        TEXT cell_key PK,FK
+        INTEGER variant_no PK
+        INTEGER variety_id FK
+    }
+    catalogue_lexeme_feature_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER lexeme_item_id PK,FK
+        TEXT feature PK
+        TEXT value PK
+    }
+    catalogue_lexeme_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER item_id PK,FK
+    }
+    catalogue_paradigm_cell_v {
+        INTEGER pack_version_id PK,FK
+        TEXT cell_key PK
+    }
+    catalogue_picture_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER sense_item_id PK,FK
+        TEXT image_sha256 PK,FK
+    }
+    catalogue_pronunciation_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER pronunciation_no PK
+        INTEGER item_id FK
+        INTEGER variety_id FK
+        TEXT speaker_key FK
+        TEXT audio_sha256 FK
+    }
+    catalogue_sense_example_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER sense_item_id PK,FK
+        INTEGER example_no PK
+        TEXT audio_sha256 FK
+    }
+    catalogue_sense_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER item_id PK,FK
+        INTEGER lexeme_item_id FK
+        INTEGER variety_id FK
+    }
+    catalogue_speaker_v {
+        INTEGER pack_version_id PK,FK
+        TEXT speaker_key PK
+        INTEGER variety_id FK
+    }
+    catalogue_verb_auxiliary_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER verb_item_id PK,FK
+        INTEGER auxiliary_item_id PK,FK
+    }
+    catalogue_verb_class_v {
+        INTEGER pack_version_id PK,FK
+        TEXT class_key PK
+    }
+    catalogue_verb_rule_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER verb_item_id PK,FK
+        INTEGER rule_item_id PK,FK
+    }
+    catalogue_verb_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER lexeme_item_id PK,FK
+        TEXT class_key FK
+    }
+    catalogue_item {
+        INTEGER item_id PK
+    }
+    catalogue_media_asset {
+        TEXT sha256 PK
+    }
+    catalogue_pack_version {
+        INTEGER pack_version_id PK
+    }
+    catalogue_rule_v {
+        INTEGER pack_version_id PK,FK
+        INTEGER item_id PK,FK
+    }
+    catalogue_variety {
+        INTEGER variety_id PK
+    }
+    catalogue_lexeme_v |o--o{ catalogue_chunk_part_v : "pack_version_id, lexeme_item_id"
+    catalogue_chunk_v ||--o{ catalogue_chunk_part_v : "pack_version_id, chunk_item_id"
+    catalogue_item ||--o{ catalogue_chunk_v : "item_id"
+    catalogue_pack_version ||--o{ catalogue_chunk_v : "pack_version_id"
+    catalogue_paradigm_cell_v ||--o{ catalogue_form_v : "pack_version_id, cell_key"
+    catalogue_lexeme_v ||--o{ catalogue_form_v : "pack_version_id, lexeme_item_id"
+    catalogue_variety |o--o{ catalogue_form_v : "variety_id"
+    catalogue_lexeme_v ||--o{ catalogue_lexeme_feature_v : "pack_version_id, lexeme_item_id"
+    catalogue_item ||--o{ catalogue_lexeme_v : "item_id"
+    catalogue_pack_version ||--o{ catalogue_lexeme_v : "pack_version_id"
+    catalogue_pack_version ||--o{ catalogue_paradigm_cell_v : "pack_version_id"
+    catalogue_sense_v ||--o{ catalogue_picture_v : "pack_version_id, sense_item_id"
+    catalogue_media_asset ||--o{ catalogue_picture_v : "image_sha256"
+    catalogue_speaker_v |o--o{ catalogue_pronunciation_v : "pack_version_id, speaker_key"
+    catalogue_media_asset |o--o{ catalogue_pronunciation_v : "audio_sha256"
+    catalogue_variety ||--o{ catalogue_pronunciation_v : "variety_id"
+    catalogue_item ||--o{ catalogue_pronunciation_v : "item_id"
+    catalogue_pack_version ||--o{ catalogue_pronunciation_v : "pack_version_id"
+    catalogue_sense_v ||--o{ catalogue_sense_example_v : "pack_version_id, sense_item_id"
+    catalogue_media_asset |o--o{ catalogue_sense_example_v : "audio_sha256"
+    catalogue_lexeme_v ||--o{ catalogue_sense_v : "pack_version_id, lexeme_item_id"
+    catalogue_variety |o--o{ catalogue_sense_v : "variety_id"
+    catalogue_item ||--o{ catalogue_sense_v : "item_id"
+    catalogue_variety ||--o{ catalogue_speaker_v : "variety_id"
+    catalogue_pack_version ||--o{ catalogue_speaker_v : "pack_version_id"
+    catalogue_lexeme_v ||--o{ catalogue_verb_auxiliary_v : "pack_version_id, auxiliary_item_id"
+    catalogue_verb_v ||--o{ catalogue_verb_auxiliary_v : "pack_version_id, verb_item_id"
+    catalogue_pack_version ||--o{ catalogue_verb_class_v : "pack_version_id"
+    catalogue_rule_v ||--o{ catalogue_verb_rule_v : "pack_version_id, rule_item_id"
+    catalogue_verb_v ||--o{ catalogue_verb_rule_v : "pack_version_id, verb_item_id"
+    catalogue_verb_class_v ||--o{ catalogue_verb_v : "pack_version_id, class_key"
+    catalogue_lexeme_v ||--o{ catalogue_verb_v : "pack_version_id, lexeme_item_id"
