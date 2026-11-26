@@ -169,8 +169,8 @@ def main() -> int:
             started = sh(*compose, "up", "--detach", "--no-build", "--wait", "--wait-timeout", "120", check=False)
             check(started.returncode == 0, "the bundle starts with the monitoring profile, and its containers are healthy", failures)
             if started.returncode != 0:
-                print(started.stdout[-2000:], started.stderr[-2000:], sep="\n")
-                print(sh(*compose, "ps", "--all", check=False).stdout)
+                print(started.returncode, started.stdout[-3000:], started.stderr[:1500], started.stderr[-3000:], sep="\n", flush=True)
+                print(sh(*compose, "ps", "--all", check=False).stdout, flush=True)
 
             check(wait_for(lambda: healthy("franca_app"), 90), "Gatus reports the app as healthy", failures)
             check(wait_for(lambda: healthy("franca_web-server"), 30), "Gatus reports the web server as healthy", failures)
