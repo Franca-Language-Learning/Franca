@@ -18,7 +18,7 @@ function NotFound() {
     <main>
       <h1>Page not found</h1>
       <p>
-        There is no page at this address. <Link to="/">Go to the home page</Link>
+        There is no page at this address. <Link to="/">Go to the home page</Link>.
       </p>
     </main>
   );
@@ -39,7 +39,7 @@ declare module "@tanstack/react-router" {
   }
 }
 
-/** initialPath is for tests; in the browser the address bar gives the path. */
+/** initialPath is for tests. In the browser, the path is read from the address bar. */
 export function AppRoot({ initialPath }: { initialPath?: string }) {
   const [queryClient] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: initialPath ? false : 2 } } }));
   const [router] = useState(() => makeRouter(initialPath));

@@ -9,9 +9,9 @@ export function HomePage() {
     <main>
       <h1>Franca</h1>
       {health.isError ? (
-        <p role="alert">Franca cannot reach its server. Check that Franca is running on your PC, then reload this page.</p>
+        <p role="alert">The Franca server is not responding. Check that it is running on your PC, then reload this page.</p>
       ) : (
-        <p role="status">{health.data ? `Franca is running. Version ${health.data.version}.` : "Checking the server…"}</p>
+        <p role="status">{health.data ? `The Franca server is running (version ${health.data.version}).` : "Checking the server…"}</p>
       )}
     </main>
   );

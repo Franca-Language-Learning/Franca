@@ -1,5 +1,5 @@
 // The client for Franca's API. The types in schema.d.ts are generated from contracts/openapi.yaml by
-// pnpm --filter @franca/client generate:api, so a changed endpoint shows up as a type error here.
+// pnpm --filter @franca/client generate:api, so after the types are regenerated, a changed endpoint causes a type error here.
 import createClient from "openapi-fetch";
 import type { components, paths } from "./schema";
 

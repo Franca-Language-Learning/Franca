@@ -1,5 +1,5 @@
 // Mock API handlers made from contracts/openapi.yaml, so the client can be built and tested without the server
-// (story E13-001). A test can replace a handler with server.use(...) to give a specific answer.
+// (story E13-001). In a test, a handler can be replaced with server.use(...) to return a specific answer.
 import { fromOpenApi } from "@mswjs/source/open-api";
 import type { HttpHandler } from "msw";
 import { parse } from "yaml";

@@ -12,6 +12,7 @@ blockExoticSubdeps: true
 # Install scripts of dependencies do not run unless they are listed here, and an unlisted one stops the install.
 strictDepBuilds: true
 allowBuilds:
-  # msw's install script copies its service worker file into the client; it is not needed, because the mock
-  # API is used in tests (Node) only.
+  # msw's install script copies its service worker file only to the folders listed under msw.workerDirectory
+  # in package.json. The client lists none, because the mock API is used in tests (Node) only, so the script is
+  # not run.
   msw: false

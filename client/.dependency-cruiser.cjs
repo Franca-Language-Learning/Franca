@@ -5,7 +5,10 @@
  * Features live in src/features/<name>/. Another feature may import a feature's index file only, the same rule
  * as the server's modules, which import each other's package root only.
  *
- * Test code is the *.test.ts(x) files, src/test-setup.ts and the mock API in src/mocks/.
+ * Test code is:
+ *   - *.test.ts(x) files
+ *   - src/test-setup.ts
+ *   - src/mocks/ (the mock API)
  */
 const TEST_CODE = "\\.test\\.tsx?$|^src/test-setup\\.ts$|^src/mocks/";
 /** @type {import('dependency-cruiser').IConfiguration} */
