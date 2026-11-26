@@ -1,0 +1,28 @@
+# A fixture noun, with a sense, an example, a picture, a plural and two pronunciations.
+key: fx:lexeme:zakje
+lemma: zakje
+upos: NOUN
+frequency_rank: 4120
+level: a1
+review_status: draft
+features:
+  Gender: [Neut]
+senses:
+  - gloss_en: small bag
+    register: neutral
+    level: a1
+    examples:
+      - tl: Fixture sentence with zakje.
+        en: Fixture sentence with a small bag.
+    pictures:
+      - media: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
+        alt: {en: A small paper bag, tl: Fixture alt text}
+forms:
+  - cell: plural
+    form: zakjes
+pronunciations:
+  - variety: fx-north
+    ipa: ˈzɑkjə
+  - variety: fx-north
+    speaker: speaker-one
+    media: fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9

@@ -1,0 +1,13 @@
+# Fixture interface strings, element names and a glossary term.
+element_names:
+  warm_up: Fixture opwarming
+  notebook: Fixture schrift
+strings:
+  home.greeting: "Fixture hallo, {name}."
+  lesson.items_left: "{count, plural, one {# fixture item} other {# fixture items}}"
+glossary:
+  - key: article
+    term: {tl: lidwoord, en: article}
+    explanation:
+      en: A small word before a noun, such as de, het or een.
+      tl: Fixture uitleg.

@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://franca.local/spec/pack.schema.json",
+  "title": "Franca pack description (pack.yaml)",
+  "description": "The language of a pack and the settings that the rest of the pack refers to: its varieties, speakers, paradigm cells, verb classes, word decks, the learner goals it offers and the exams a learner can name. Imported into catalogue_pack, catalogue_variety and the matching _v tables.",
+  "type": "object",
+  "required": ["language", "name_en", "script", "direction", "varieties"],
+  "additionalProperties": false,
+  "$defs": {
+    "variety_entry": {
+      "type": "object",
+      "required": ["code", "name_en", "productive"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "$ref": "common.schema.json#/$defs/variety" },
+        "name_en": { "$ref": "common.schema.json#/$defs/text" },
+        "productive": { "description": "true: learners are taught to speak and write this variety.", "type": "boolean" },
+        "receptive_from": {
+          "description": "The level from which learners hear and read this variety.",
+          "$ref": "common.schema.json#/$defs/level"
+        }
+      }
+    },
+    "speaker": {
+      "type": "object",
+      "required": ["key", "display_name", "variety", "voice"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "$ref": "common.schema.json#/$defs/speaker" },
+        "display_name": { "$ref": "common.schema.json#/$defs/text" },
+        "variety": { "$ref": "common.schema.json#/$defs/variety" },
+        "voice": { "description": "synthetic voices are labelled as such wherever they are heard.", "enum": ["recorded", "synthetic"] }
+      }
+    },
+    "paradigm_cell": {
+      "description": "A cell in an inflection table, for example present.2sg.inverted, past.pl or plural. The cells are shown in the order given.",
+      "type": "object",
+      "required": ["key", "upos", "form_type", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z0-9._-]+$" },
+        "upos": { "$ref": "common.schema.json#/$defs/upos" },
+        "form_type": { "type": "string", "pattern": "^[a-z_]+$" },
+        "ud_feats": { "description": "Universal Dependencies features, for example Number=Plur|Tense=Past.", "type": "string" },
+        "label": { "$ref": "common.schema.json#/$defs/bilingual" }
+      }
+    },
+    "verb_class": {
+      "type": "object",
+      "required": ["key", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z_]+$" },
+        "label": { "$ref": "common.schema.json#/$defs/bilingual" }
+      }
+    },
+    "deck": {
+      "description": "A themed word deck, such as the words in a picture dictionary page.",
+      "type": "object",
+      "required": ["key", "title", "items"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "$ref": "common.schema.json#/$defs/slug" },
+        "title": { "$ref": "common.schema.json#/$defs/bilingual" },
+        "items": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "common.schema.json#/$defs/item_key" } }
+      }
+    },
+    "goal": {
+      "description": "A learner goal as this pack offers it. The goal keys are the app's (study_goal); the pack names them and says which it offers.",
+      "type": "object",
+      "required": ["key", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z][a-z_]*$" },
+        "name": { "$ref": "common.schema.json#/$defs/bilingual" },
+        "offered": { "type": "boolean", "default": true }
+      }
+    },
+    "exam": {
+      "description": "An exam a learner can name as a target. available: false lists it as coming after this release.",
+      "type": "object",
+      "required": ["key", "name", "issuer", "level", "skills", "checked_on"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z0-9_-]{2,}$" },
+        "name": { "$ref": "common.schema.json#/$defs/bilingual" },
+        "issuer": { "$ref": "common.schema.json#/$defs/text" },
+        "level": { "$ref": "common.schema.json#/$defs/level" },
+        "skills": { "$ref": "common.schema.json#/$defs/text" },
+        "url": { "type": "string", "format": "uri" },
+        "checked_on": { "description": "The day the details were last checked.", "type": "string", "format": "date" },
+        "level_exam": { "description": "The course node with the matching level exam.", "$ref": "common.schema.json#/$defs/node_key" },
+        "available": { "type": "boolean", "default": true }
+      }
+    }
+  },
+  "properties": {
+    "language": { "description": "The ISO 639 code of the language, for example nl.", "type": "string", "pattern": "^[a-z]{2,3}$" },
+    "name_en": { "$ref": "common.schema.json#/$defs/text" },
+    "script": { "description": "The ISO 15924 code of the script, for example Latn.", "type": "string", "pattern": "^[A-Z][a-z]{3}$" },
+    "direction": { "enum": ["ltr", "rtl"] },
+    "varieties": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/variety_entry" } },
+    "typology": {
+      "description": "Facts about the language that change how it is taught, for example word order, gender or tone. Read by the course design rules.",
+      "type": "object",
+      "additionalProperties": { "type": ["string", "boolean", "number"] }
+    },
+    "fonts": { "description": "The fonts the interface uses for this language.", "type": "array", "items": { "$ref": "common.schema.json#/$defs/text" } },
+    "reading_aids": {
+      "description": "Aids offered while reading, such as a transliteration or tone marks.",
+      "type": "array",
+      "items": { "$ref": "common.schema.json#/$defs/slug" }
+    },
+    "speakers": { "type": "array", "items": { "$ref": "#/$defs/speaker" } },
+    "paradigm_cells": { "type": "array", "items": { "$ref": "#/$defs/paradigm_cell" } },
+    "verb_classes": { "type": "array", "items": { "$ref": "#/$defs/verb_class" } },
+    "decks": { "type": "array", "items": { "$ref": "#/$defs/deck" } },
+    "goals": { "type": "array", "items": { "$ref": "#/$defs/goal" } },
+    "exams": { "type": "array", "items": { "$ref": "#/$defs/exam" } },
+    "confusable_pairs": {
+      "description": "Pairs of items that learners often confuse, practised together in the mixed run.",
+      "type": "array",
+      "items": {
+        "type": "array",
+        "minItems": 2,
+        "maxItems": 2,
+        "uniqueItems": true,
+        "items": { "$ref": "common.schema.json#/$defs/item_key" }
+      }
+    }
+  }
+}

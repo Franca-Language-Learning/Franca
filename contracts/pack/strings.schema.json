@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://franca.local/spec/strings.schema.json",
+  "title": "Franca interface strings (strings/<name>.yaml)",
+  "description": "The interface in the pack's language: the names of interface elements, the interface messages in ICU MessageFormat, and the glossary of grammar terms. The pack builder checks that the messages match the English catalogue key for key (story E03-002). Imported into catalogue_element_name_v, catalogue_ui_string_v and catalogue_glossary_v.",
+  "type": "object",
+  "additionalProperties": false,
+  "minProperties": 1,
+  "properties": {
+    "element_names": {
+      "description": "The names of interface elements in the pack's language, by element key.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+      "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 40 }
+    },
+    "strings": {
+      "description": "Interface messages in ICU MessageFormat, by string key.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z0-9_.]+$" },
+      "additionalProperties": { "$ref": "common.schema.json#/$defs/text" }
+    },
+    "glossary": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "term", "explanation"],
+        "additionalProperties": false,
+        "properties": {
+          "key": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
+          "term": { "$ref": "common.schema.json#/$defs/bilingual" },
+          "explanation": { "$ref": "common.schema.json#/$defs/english_first" }
+        }
+      }
+    }
+  }
+}

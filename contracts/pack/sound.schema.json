@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://franca.local/spec/sound.schema.json",
+  "title": "Franca sound or sound contrast (sounds/<key>.yaml)",
+  "description": "Either a sound of the language (kind: sound) or a contrast between two sounds with its minimal pairs (kind: contrast). Imported into catalogue_sound_v, or into catalogue_sound_contrast_v, catalogue_minimal_pair_v and catalogue_minimal_pair_audio_v.",
+  "type": "object",
+  "required": ["kind", "key"],
+  "$defs": {
+    "recording": {
+      "type": "object",
+      "required": ["side", "speaker", "media"],
+      "additionalProperties": false,
+      "properties": {
+        "side": { "description": "Which word of the pair is said: a or b.", "enum": ["a", "b"] },
+        "speaker": { "$ref": "common.schema.json#/$defs/speaker" },
+        "media": { "$ref": "common.schema.json#/$defs/sha256" }
+      }
+    },
+    "minimal_pair": {
+      "type": "object",
+      "required": ["a", "b"],
+      "additionalProperties": false,
+      "properties": {
+        "a": { "description": "The word with the first sound.", "$ref": "common.schema.json#/$defs/text" },
+        "b": { "description": "The word with the second sound.", "$ref": "common.schema.json#/$defs/text" },
+        "recordings": { "type": "array", "items": { "$ref": "#/$defs/recording" } }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "title": "A sound",
+      "additionalProperties": false,
+      "required": ["kind", "key", "ipa", "name_en"],
+      "properties": {
+        "kind": { "const": "sound" },
+        "key": { "$ref": "common.schema.json#/$defs/item_key" },
+        "ipa": { "$ref": "common.schema.json#/$defs/text" },
+        "name_en": { "$ref": "common.schema.json#/$defs/text" },
+        "description_en": { "$ref": "common.schema.json#/$defs/text" },
+        "pronunciations": { "$ref": "common.schema.json#/$defs/pronunciations" }
+      }
+    },
+    {
+      "title": "A contrast between two sounds",
+      "additionalProperties": false,
+      "required": ["kind", "key", "sounds", "minimal_pairs"],
+      "properties": {
+        "kind": { "const": "contrast" },
+        "key": { "$ref": "common.schema.json#/$defs/item_key" },
+        "sounds": {
+          "description": "The two sounds, by their keys.",
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "common.schema.json#/$defs/item_key" }
+        },
+        "priority": { "description": "How early the contrast is practised, from 1.", "type": "integer", "minimum": 1 },
+        "note_en": { "$ref": "common.schema.json#/$defs/text" },
+        "minimal_pairs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/minimal_pair" } }
+      }
+    }
+  ]
+}

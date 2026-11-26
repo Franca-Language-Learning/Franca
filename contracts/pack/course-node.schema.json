@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://franca.local/spec/course-node.schema.json",
+  "title": "Franca course node (course/<name>.node.yaml)",
+  "description": "A level, stage, unit or domain module in the course tree. Lessons are written in lesson files (lesson.schema.json). Imported into catalogue_course_node_v, catalogue_module_v, catalogue_node_can_do_v and catalogue_goal_link_v.",
+  "type": "object",
+  "required": ["key", "type", "position", "title"],
+  "additionalProperties": false,
+  "properties": {
+    "key": { "$ref": "common.schema.json#/$defs/node_key" },
+    "type": { "enum": ["level", "stage", "unit", "module"] },
+    "parent": { "description": "The node this one belongs to. A level has none.", "$ref": "common.schema.json#/$defs/node_key" },
+    "position": { "description": "The node's place among the children of its parent, from 0.", "type": "integer", "minimum": 0 },
+    "level": { "$ref": "common.schema.json#/$defs/level" },
+    "title": { "$ref": "common.schema.json#/$defs/bilingual" },
+    "estimated_minutes": { "type": "integer", "minimum": 1 },
+    "can_dos": {
+      "description": "The can-do descriptors the node works towards.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "common.schema.json#/$defs/item_key" }
+    },
+    "goals": { "$ref": "common.schema.json#/$defs/goals" },
+    "module": {
+      "description": "For a domain module: terminology is offered from the first level, and genre and task work from the second.",
+      "type": "object",
+      "required": ["terminology_from", "tasks_from"],
+      "additionalProperties": false,
+      "properties": {
+        "terminology_from": { "$ref": "common.schema.json#/$defs/level" },
+        "tasks_from": { "$ref": "common.schema.json#/$defs/level" }
+      }
+    }
+  },
+  "if": { "properties": { "type": { "const": "module" } } },
+  "then": { "required": ["module"] },
+  "else": { "not": { "required": ["module"] } }
+}

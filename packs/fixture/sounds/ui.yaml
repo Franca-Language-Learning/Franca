@@ -1,0 +1,9 @@
+# A fixture sound.
+kind: sound
+key: fx:sound:ui
+ipa: œy
+name_en: the fixture ui sound
+description_en: Fixture description of how the sound is made.
+pronunciations:
+  - variety: fx-north
+    ipa: œy

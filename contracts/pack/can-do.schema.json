@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://franca.local/spec/can-do.schema.json",
+  "title": "Franca can-do descriptor (course/<name>.can-do.yaml)",
+  "description": "A can-do descriptor, the components that are measured for it, and the items that count as evidence for each component. Imported into catalogue_can_do_v, catalogue_can_do_component_v, catalogue_can_do_evidence_v and catalogue_goal_link_v.",
+  "type": "object",
+  "required": ["key", "level", "activity", "descriptor", "components"],
+  "additionalProperties": false,
+  "$defs": {
+    "component": {
+      "enum": ["vocabulary", "grammar", "pronunciation", "spelling", "pragmatics", "sociocultural", "fluency", "comprehension"]
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["item"],
+      "additionalProperties": false,
+      "properties": {
+        "item": { "$ref": "common.schema.json#/$defs/item_key" },
+        "weight": { "type": "number", "exclusiveMinimum": 0, "maximum": 10, "default": 1.0 }
+      }
+    }
+  },
+  "properties": {
+    "key": { "$ref": "common.schema.json#/$defs/item_key" },
+    "level": { "$ref": "common.schema.json#/$defs/level" },
+    "activity": {
+      "description": "The communicative activity, as in the CEFR.",
+      "enum": [
+        "listening",
+        "reading",
+        "audiovisual",
+        "spoken_production",
+        "written_production",
+        "spoken_interaction",
+        "written_interaction",
+        "mediation"
+      ]
+    },
+    "descriptor": { "$ref": "common.schema.json#/$defs/english_first" },
+    "components": {
+      "description": "Each component that is measured, with the items that count as evidence for it.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/component" },
+      "additionalProperties": { "type": "array", "items": { "$ref": "#/$defs/evidence" } }
+    },
+    "goals": { "$ref": "common.schema.json#/$defs/goals" }
+  }
+}
