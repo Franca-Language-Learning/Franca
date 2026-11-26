@@ -4,8 +4,8 @@
 #
 # The installer writes the .env file beside this file. A release names its images by digest there
 # (FRANCA_APP_IMAGE, FRANCA_CADDY_IMAGE, FRANCA_UPDATER_IMAGE), and the updater changes them (story E01-007).
-# The updater and its socket proxy are in the "updates" profile, which the installer switches on with
-# COMPOSE_PROFILES=updates.
+# The updater and its socket proxy are in the "updates" profile, and the backup is in the "backups" profile. The
+# installer switches them on with COMPOSE_PROFILES=updates,backups.
 
 x-hardening: &hardening
   read_only: true
@@ -113,15 +113,45 @@ services:
       - updater-status:/status
     networks: [internal, docker-api]
 
+  # The nightly backup and the monthly restore test (story E01-008). The backups go to FRANCA_BACKUP_DIR, a folder
+  # on a second disk in the PC (disk J:) until an off-site store is chosen.
+  backup:
+    <<: *hardening
+    build:
+      context: ..
+      dockerfile: infra/images/backup.Dockerfile
+      args:
+        FRANCA_VERSION: ${FRANCA_VERSION:-0.1.0-dev}
+    image: ${FRANCA_BACKUP_IMAGE:-franca/backup:${FRANCA_VERSION:-0.1.0-dev}}
+    profiles: [backups]
+    # A small init process passes stop signals on, so a stop does not cut restic off mid-way.
+    init: true
+    stop_grace_period: 2m
+    environment:
+      FRANCA_BACKUP_AT_UTC: ${FRANCA_BACKUP_AT_UTC:-03:30}
+      FRANCA_HEALTH_URL: http://app:8000/api/v1/health
+    secrets: [backup_password]
+    volumes:
+      - app-data:/data
+      - backup-cache:/cache
+      - backup-status:/status
+      - ${FRANCA_BACKUP_DIR:-/franca-backups-not-set}:/backups
+    networks: [internal]
+
 # Secrets are files in the secrets folder on the PC (FRANCA_SECRETS_DIR). The installer writes them (story E01-011).
 secrets:
   google_client_secret:
     file: ${FRANCA_SECRETS_DIR:-./secrets}/google_client_secret
   session_secret:
     file: ${FRANCA_SECRETS_DIR:-./secrets}/session_secret
+  # The backups' encryption password. Without it the backups cannot be read, so the owner keeps a copy elsewhere.
+  backup_password:
+    file: ${FRANCA_SECRETS_DIR:-./secrets}/backup_password
 
 volumes:
   updater-status:
+  backup-cache:
+  backup-status:
   app-data:
   caddy-data:
   caddy-config:

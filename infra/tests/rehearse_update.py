@@ -143,6 +143,7 @@ def main() -> int:
         secrets.mkdir()
         (secrets / "google_client_secret").write_text("", encoding="utf-8")
         (secrets / "session_secret").write_text(os.urandom(32).hex(), encoding="utf-8")
+        (secrets / "backup_password").write_text(os.urandom(32).hex(), encoding="utf-8")
         for secret in secrets.iterdir():
             secret.chmod(0o644)
         port = free_port()
