@@ -197,19 +197,19 @@ jobs:
           version: "0.11.32" # renovate: datasource=github-releases depName=astral-sh/uv
           enable-cache: false
       - name: Rehearse an update and a rollback
-        run: uv run --no-project --python 3.14.10 python infra/tests/rehearse_update.py
+        run: uv run --no-project --python 3.14 python infra/tests/rehearse_update.py
       - name: Rehearse a backup, a restore test and a restore
-        run: uv run --no-project --python 3.14.10 python infra/tests/rehearse_backup.py
+        run: uv run --no-project --python 3.14 python infra/tests/rehearse_backup.py
       - name: Rehearse the private network
-        run: uv run --no-project --python 3.14.10 python infra/tests/rehearse_tailnet.py
+        run: uv run --no-project --python 3.14 python infra/tests/rehearse_tailnet.py
       - name: Rehearse health monitoring
-        run: uv run --no-project --python 3.14.10 python infra/tests/rehearse_status.py
+        run: uv run --no-project --python 3.14 python infra/tests/rehearse_status.py
       - name: Rehearse the installer
-        run: uv run --no-project --python 3.14.10 python infra/tests/rehearse_install.py
+        run: uv run --no-project --python 3.14 python infra/tests/rehearse_install.py
       # Cosign is downloaded by the installer and kept only when its hash matches, so the download is tried here.
       - name: Check the installer's cosign download against its hash
         run: >-
-          uv run --no-project --python 3.14.10 python -I -c "import pathlib, sys, tempfile; sys.path[:0] = ['installer/linux', 'infra/updater'];
+          uv run --no-project --python 3.14 python -I -c "import pathlib, sys, tempfile; sys.path[:0] = ['installer/linux', 'infra/updater'];
           import franca_install; franca_install.install_cosign(pathlib.Path(tempfile.mkdtemp()) / 'cosign')"
       # The same scan as in the release workflow, so a vulnerable image is found before a release.
       - name: Scan the app image for known vulnerabilities
