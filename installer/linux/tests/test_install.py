@@ -53,17 +53,17 @@ def test_answers_are_read_from_json(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("field", "value"),
+    ("field", "value", "named"),
     [
-        ("owner_email", "not an address"),
-        ("google_client_id", "123-abc"),
-        ("tailscale_authkey", "tskey-api-123"),
-        ("backup_dir", "relative/folder"),
-        ("google_client_secret", "line\nbreak"),
+        ("owner_email", "not an address", "e-mail"),
+        ("google_client_id", "123-abc", "Google client ID"),
+        ("tailscale_authkey", "tskey-api-123", "Tailscale auth key"),
+        ("backup_dir", "relative/folder", "backup folder"),
+        ("google_client_secret", "line\nbreak", "Google client secret"),
     ],
 )
-def test_an_answer_that_cannot_be_right_is_refused_with_a_message(tmp_path: Path, field: str, value: str) -> None:
-    with pytest.raises(fi.InstallError, match="(?i)" + field.split("_")[0]):
+def test_an_answer_that_cannot_be_right_is_refused_with_a_message(tmp_path: Path, field: str, value: str, named: str) -> None:
+    with pytest.raises(fi.InstallError, match=named):
         answers(tmp_path, **{field: value})
 
 
