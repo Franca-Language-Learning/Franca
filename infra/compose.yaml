@@ -1,11 +1,12 @@
 # Franca's container bundle (story E01-005). Start it from the repository root with:
 #   docker compose -f infra/compose.yaml up -d --build --wait
-# The other containers (worker, speech, languagetool, backup, status, tailscale) are added in their own stories.
+# The other containers (worker, speech, languagetool, status) are added in their own stories.
 #
 # The installer writes the .env file beside this file. A release names its images by digest there
 # (FRANCA_APP_IMAGE, FRANCA_CADDY_IMAGE, FRANCA_UPDATER_IMAGE), and the updater changes them (story E01-007).
-# The updater and its socket proxy are in the "updates" profile, and the backup is in the "backups" profile. The
-# installer switches them on with COMPOSE_PROFILES=updates,backups.
+# The updater and its socket proxy are in the "updates" profile, the backup is in the "backups" profile, and the
+# private network is in the "tailnet" profile. The installer switches them on with
+# COMPOSE_PROFILES=updates,backups,tailnet.
 
 x-hardening: &hardening
   read_only: true
@@ -46,12 +47,49 @@ services:
     depends_on:
       app:
         condition: service_healthy
+    environment:
+      # The PC's name on the tailnet, such as franca.tail1234.ts.net. The installer writes it to .env. Until then a
+      # placeholder name is used, so that Caddy can start.
+      FRANCA_TAILSCALE_NAME: ${FRANCA_TAILSCALE_NAME:-tailscale-name-not-set.ts.net}
     ports:
-      # Loopback only: the bundle is not reachable from the network until Tailscale is added (story E01-009).
+      # Loopback only, for checks on the PC itself. Phones and laptops reach Franca over the tailnet, through the
+      # tailscale container, on port 443.
       - "127.0.0.1:${FRANCA_PORT:-8080}:8080"
     volumes:
       - caddy-data:/data
       - caddy-config:/config
+      # Caddy asks tailscaled for the certificate of the Tailscale name through this socket.
+      - tailscale-socket:/var/run/tailscale:ro
+    networks: [internal]
+
+  # The private network (story E01-009). The PC joins the owner's tailnet as a device named franca, and connections
+  # to port 443 on that name are passed to Caddy on port 8443, still encrypted. Caddy serves HTTPS there with the
+  # certificate for the Tailscale name, which tailscaled gets from Let's Encrypt. No port is opened on the PC.
+  tailscale:
+    <<: *hardening
+    build:
+      context: ..
+      dockerfile: infra/images/tailscale.Dockerfile
+    image: ${FRANCA_TAILSCALE_IMAGE:-franca/tailscale:${FRANCA_VERSION:-0.1.0-dev}}
+    profiles: [tailnet]
+    environment:
+      TS_AUTHKEY: file:/run/secrets/tailscale_authkey
+      # The key is used to join once. At later starts the saved state is used, so a used or expired key does not matter.
+      TS_AUTH_ONCE: "true"
+      TS_HOSTNAME: ${FRANCA_TAILSCALE_HOSTNAME:-franca}
+      TS_STATE_DIR: /var/lib/tailscale
+      # The socket itself has to be in the shared volume. Without this, containerboot puts it in /tmp and leaves only a
+      # symlink in the volume, which Caddy cannot follow.
+      TS_SOCKET: /var/run/tailscale/tailscaled.sock
+      TS_USERSPACE: "true"
+      # Caddy's user may fetch the certificate. Any user of the socket can read the status and open connections to
+      # other devices in the tailnet. The tailnet policy in docs/private-network.md has no rule for connections from
+      # franca.
+      TS_PERMIT_CERT_UID: "10002"
+    secrets: [tailscale_authkey]
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - tailscale-socket:/var/run/tailscale
     networks: [internal]
 
   # Docker's API, limited to the calls the updater needs: containers, images, networks and volumes, with starting
@@ -147,6 +185,9 @@ secrets:
   # The backups' encryption password. Without it the backups cannot be read, so the owner keeps a copy elsewhere.
   backup_password:
     file: ${FRANCA_SECRETS_DIR:-./secrets}/backup_password
+  # A Tailscale auth key, used once when the PC joins the tailnet.
+  tailscale_authkey:
+    file: ${FRANCA_SECRETS_DIR:-./secrets}/tailscale_authkey
 
 volumes:
   updater-status:
@@ -155,6 +196,8 @@ volumes:
   app-data:
   caddy-data:
   caddy-config:
+  tailscale-state:
+  tailscale-socket:
 
 networks:
   internal:

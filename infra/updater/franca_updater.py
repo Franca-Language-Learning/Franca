@@ -40,12 +40,22 @@ from typing import Protocol
 REPOSITORY = "Franca-Language-Learning/Franca"
 RELEASE_WORKFLOW_IDENTITY = f"https://github.com/{REPOSITORY}/.github/workflows/release.yml@refs/tags/{{tag}}"
 OIDC_ISSUER = "https://token.actions.githubusercontent.com"
-IMAGE_PATTERN = re.compile(r"^ghcr\.io/franca-language-learning/franca-(?P<service>app|caddy|updater|backup)@sha256:[0-9a-f]{64}$")
+IMAGE_PATTERN = re.compile(
+    r"^ghcr\.io/franca-language-learning/franca-(?P<service>app|caddy|updater|backup|tailscale)@sha256:[0-9a-f]{64}$"
+)
 VERSION_PATTERN = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 # The .env keys that name each image. A release has to have the app and caddy images; they are started at once. New
-# updater and backup images are checked and written to .env too, and are used from the next start of the bundle.
-IMAGE_KEYS = {"app": "FRANCA_APP_IMAGE", "caddy": "FRANCA_CADDY_IMAGE", "updater": "FRANCA_UPDATER_IMAGE", "backup": "FRANCA_BACKUP_IMAGE"}
+# updater, backup and tailscale images are checked and written to .env too, and are used from the next start of the
+# bundle.
+IMAGE_KEYS = {
+    "app": "FRANCA_APP_IMAGE",
+    "caddy": "FRANCA_CADDY_IMAGE",
+    "updater": "FRANCA_UPDATER_IMAGE",
+    "backup": "FRANCA_BACKUP_IMAGE",
+    "tailscale": "FRANCA_TAILSCALE_IMAGE",
+}
 REQUIRED_IMAGES = frozenset({"app", "caddy"})
+TAILNET_PROFILE = "tailnet"  # the Compose profile of the private network (story E01-009)
 VERSION_KEY = "FRANCA_VERSION"
 SNAPSHOTS_KEPT = 5
 PLACEHOLDER_BUNDLE_DIR = "/franca-bundle-not-set"
@@ -454,9 +464,29 @@ class Updater:
             return self._roll_back(checked, old_version, release.version, old_text, snapshot, str(error))
         if self.high_water is not None:
             self.high_water.raise_to(release.version)
-        return self._report(
-            "installed", checked, str(release.version), release.version, f"Installed {release.version}; snapshot {snapshot}"
-        )
+        message = f"Installed {release.version}; snapshot {snapshot}" + self._start_new_tailscale(old, new)
+        return self._report("installed", checked, str(release.version), release.version, message)
+
+    def _start_new_tailscale(self, old: dict[str, str], new: dict[str, str]) -> str:
+        """Start a new tailscale image once the app is healthy, if the private network is on.
+
+        The tailscale container is exposed to the tailnet, so its update is not left for later. If the new image does
+        not start, the old one is put back and started. Returns a note for the status message, or an empty string."""
+        key = IMAGE_KEYS["tailscale"]
+        profiles = {profile.strip() for profile in old.get("COMPOSE_PROFILES", "").split(",")}
+        if TAILNET_PROFILE not in profiles or old.get(key) == new.get(key):
+            return ""
+        try:
+            self.compose.up("tailscale")
+        except Exception as error:  # noqa: BLE001 - the app update is kept and the old tailscale image is put back
+            put_back = {name: value for name, value in new.items() if name != key} | ({key: old[key]} if key in old else {})
+            try:
+                self.env.write(put_back)
+                self.compose.up("tailscale")
+            except Exception as again:  # noqa: BLE001 - reported for the owner
+                return f". The new tailscale image did not start ({error}), and starting the old one failed too: {again}"
+            return f". The new tailscale image did not start ({error}), so the old one was started again"
+        return ""
 
     def _restart_unchanged(self, checked: str, old_version: str, failed: Version, reason: str) -> str:
         """Nothing was changed yet; the installed version is started again."""

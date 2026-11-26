@@ -137,6 +137,8 @@ def test_the_image_list_names_the_images_by_digest() -> None:
     assert fu.parse_images([APP, "", CADDY]) == {"app": APP, "caddy": CADDY}
     updater = f"ghcr.io/franca-language-learning/franca-updater@{DIGEST}"
     assert fu.parse_images([APP, CADDY, updater])["updater"] == updater
+    tailscale = f"ghcr.io/franca-language-learning/franca-tailscale@{DIGEST}"
+    assert fu.parse_images([APP, CADDY, tailscale])["tailscale"] == tailscale
 
 
 @pytest.mark.parametrize(
@@ -247,6 +249,59 @@ def test_a_newer_signed_release_is_installed(tmp_path: Path) -> None:
     assert env == {"FRANCA_VERSION": "1.1.0", "FRANCA_APP_IMAGE": APP, "FRANCA_CADDY_IMAGE": CADDY, "FRANCA_PORT": "8080"}
     assert status(tmp_path)["result"] == "installed"
     assert status(tmp_path)["installed"] == "1.1.0"
+
+
+TAILSCALE = f"ghcr.io/franca-language-learning/franca-tailscale@sha256:{'d' * 64}"
+OLD_TAILSCALE = f"ghcr.io/franca-language-learning/franca-tailscale@sha256:{'e' * 64}"
+WITH_TAILSCALE = fu.Release(fu.Version(1, 1, 0), {"app": APP, "caddy": CADDY, "tailscale": TAILSCALE})
+
+
+def with_tailnet(tmp_path: Path, profiles: str = "updates,backups,tailnet") -> None:
+    env = tmp_path / ".env"
+    env.write_text(
+        env.read_text(encoding="utf-8") + f"COMPOSE_PROFILES={profiles}\nFRANCA_TAILSCALE_IMAGE={OLD_TAILSCALE}\n", encoding="utf-8"
+    )
+
+
+def test_a_new_tailscale_image_is_started_after_the_app_is_healthy(tmp_path: Path) -> None:
+    updater, log, _verifier = make(tmp_path, WITH_TAILSCALE)
+    with_tailnet(tmp_path)
+
+    assert updater.run_once(NOW) == "installed"
+
+    assert log[-2:] == ["up app caddy", "up tailscale"]
+    assert fu.EnvFile(tmp_path / ".env").read()["FRANCA_TAILSCALE_IMAGE"] == TAILSCALE
+
+
+def test_tailscale_is_not_started_when_the_private_network_is_switched_off(tmp_path: Path) -> None:
+    updater, log, _verifier = make(tmp_path, WITH_TAILSCALE)
+    with_tailnet(tmp_path, profiles="updates,backups")
+
+    assert updater.run_once(NOW) == "installed"
+
+    assert "up tailscale" not in log
+
+
+def test_an_unchanged_tailscale_image_is_not_restarted(tmp_path: Path) -> None:
+    updater, log, _verifier = make(tmp_path, fu.Release(fu.Version(1, 1, 0), {"app": APP, "caddy": CADDY, "tailscale": OLD_TAILSCALE}))
+    with_tailnet(tmp_path)
+
+    assert updater.run_once(NOW) == "installed"
+
+    assert "up tailscale" not in log
+
+
+def test_a_tailscale_image_that_does_not_start_is_put_back_and_the_app_update_kept(tmp_path: Path) -> None:
+    updater, log, _verifier = make(tmp_path, WITH_TAILSCALE, fail_on={"up tailscale"})
+    with_tailnet(tmp_path)
+
+    assert updater.run_once(NOW) == "installed"
+
+    assert log[-3:] == ["up app caddy", "up tailscale", "up tailscale"]
+    env = fu.EnvFile(tmp_path / ".env").read()
+    assert env["FRANCA_TAILSCALE_IMAGE"] == OLD_TAILSCALE
+    assert env["FRANCA_APP_IMAGE"] == APP
+    assert "tailscale" in status(tmp_path)["message"]
 
 
 def test_the_same_release_is_not_installed_again(tmp_path: Path) -> None:

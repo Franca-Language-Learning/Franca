@@ -90,6 +90,18 @@
       "matchStrings": [
         "(?:version: |required-version = )\"(?:==)?(?<currentValue>[0-9][^\"]*)\" # renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)"
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "Images pulled by the rehearsal scripts, marked with a renovate comment. Renovate adds their digests, as for the Dockerfiles.",
+      "managerFilePatterns": [
+        "/^infra/tests/.+\\.py$/"
+      ],
+      "matchStrings": [
+        "= \"(?<depName>[a-z0-9./-]+):(?<currentValue>[^\"@\\s]+)(?:@(?<currentDigest>sha256:[a-f0-9]{64}))?\"  # renovate: image"
+      ],
+      "datasourceTemplate": "docker",
+      "autoReplaceStringTemplate": "= \"{{depName}}:{{newValue}}{{#if newDigest}}@{{newDigest}}{{/if}}\"  # renovate: image"
     }
   ]
 }

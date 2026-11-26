@@ -13,6 +13,7 @@ export FRANCA_SECRETS_DIR
 : > "$FRANCA_SECRETS_DIR/google_client_secret"
 head -c 32 /dev/urandom | base64 > "$FRANCA_SECRETS_DIR/session_secret"
 head -c 32 /dev/urandom | base64 > "$FRANCA_SECRETS_DIR/backup_password"
+: > "$FRANCA_SECRETS_DIR/tailscale_authkey"  # the tailnet is rehearsed separately, in rehearse_tailnet.py
 # Compose mounts secret files with their own permissions, so the app's user (10001) has to be able to read them.
 chmod 0644 "$FRANCA_SECRETS_DIR"/*
 compose=(docker compose -f infra/compose.yaml)
@@ -74,6 +75,13 @@ if build_log="$("${compose[@]}" --profile backups build backup 2>&1)"; then pass
 backup_image="franca/backup:${FRANCA_VERSION:-0.1.0-dev}"
 if docker run --rm --entrypoint restic "$backup_image" version >/dev/null 2>&1; then pass "the backup image has restic"; else fail "the backup image lacks restic"; fi
 if [[ "$(docker inspect --format '{{.Config.User}}' "$backup_image")" == "10001:10001" ]]; then pass "the backup runs as the app's user"; else fail "the backup does not run as user 10001"; fi
+
+# The tailscale image (story E01-009) is in the "tailnet" profile, so it is built and checked on its own here. The
+# tailnet itself is rehearsed in rehearse_tailnet.py.
+if build_log="$("${compose[@]}" --profile tailnet build tailscale 2>&1)"; then pass "the tailscale image builds"; else echo "$build_log" | tail -40; fail "the tailscale image does not build"; fi
+tailscale_image="franca/tailscale:${FRANCA_VERSION:-0.1.0-dev}"
+if docker run --rm --entrypoint tailscale "$tailscale_image" version >/dev/null 2>&1; then pass "the tailscale image has tailscale"; else fail "the tailscale image lacks tailscale"; fi
+if [[ "$(docker inspect --format '{{.Config.User}}' "$tailscale_image")" == "10004:10004" ]]; then pass "tailscale runs as user 10004"; else fail "tailscale does not run as user 10004"; fi
 
 if [[ "$failures" -ne 0 ]]; then
     "${compose[@]}" logs --no-color | tail -50

@@ -1,11 +1,30 @@
-# Caddy configuration for the bundle (story E01-005). HTTPS on the Tailscale name is added in story E01-009;
-# until then Caddy listens on port 8080 inside the bundle, and the port is published on the PC's loopback only.
+# Caddy configuration for the bundle (stories E01-005 and E01-009).
+#
+# Port 8443: HTTPS on the PC's Tailscale name (FRANCA_TAILSCALE_NAME). The tailscale container passes connections to
+# port 443 on that name here, still encrypted. For a name that ends in .ts.net, Caddy gets the certificate from
+# tailscaled through tailscaled's socket, and does not ask a certificate authority itself.
+# Port 8080: plain HTTP for checks on the PC itself. It is published on the PC's loopback only.
 {
 	admin off
-	auto_https off
+	# There is no port 80 to redirect from, and the container runs as non-root and cannot listen on ports below 1024.
+	auto_https disable_redirects
+
+	servers :8443 {
+		listener_wrappers {
+			# The tailscale container sends a PROXY protocol header with the device's tailnet address. The header is
+			# accepted only from the bundle's private networks, and is read before TLS.
+			proxy_protocol {
+				timeout 5s
+				allow 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+			}
+			tls
+		}
+		# HTTP/3 would be offered on UDP port 8443, which is not passed on over the tailnet.
+		protocols h1 h2
+	}
 }
 
-:8080 {
+(franca) {
 	encode zstd gzip
 
 	header {
@@ -27,4 +46,13 @@
 		try_files {path} /index.html
 		file_server
 	}
+}
+
+https://{$FRANCA_TAILSCALE_NAME}:8443 {
+	header Strict-Transport-Security "max-age=31536000"
+	import franca
+}
+
+:8080 {
+	import franca
 }
