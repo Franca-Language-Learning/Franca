@@ -58,6 +58,16 @@ for service in app caddy; do
     if [[ "$caps" == *ALL* ]]; then pass "$service drops all capabilities"; else fail "$service keeps capabilities: $caps"; fi
 done
 
+# The updater image (story E01-007) is in the "updates" profile, so it is built and checked on its own here.
+if "${compose[@]}" --profile updates build updater >/dev/null; then pass "the updater image builds"; else fail "the updater image does not build"; fi
+updater_image="franca/updater:${FRANCA_VERSION:-0.1.0-dev}"
+if docker run --rm --entrypoint sh "$updater_image" -c 'docker --version && docker compose version && cosign version' >/dev/null 2>&1; then
+    pass "the updater image has docker, compose and cosign"
+else
+    fail "the updater image lacks docker, compose or cosign"
+fi
+if [[ "$(docker inspect --format '{{.Config.User}}' "$updater_image")" == "10003:10003" ]]; then pass "the updater runs as user 10003"; else fail "the updater does not run as user 10003"; fi
+
 if [[ "$failures" -ne 0 ]]; then
     "${compose[@]}" logs --no-color | tail -50
     echo "$failures check(s) failed."

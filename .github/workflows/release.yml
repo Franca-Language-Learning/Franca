@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        image: [app, caddy]
+        image: [app, caddy, updater]
     permissions:
       contents: read
       packages: write
