@@ -12,7 +12,17 @@ COPY contracts/ui contracts/ui
 COPY client client
 RUN pnpm --filter @franca/client build
 
+# Caddy 2.11.9 is built here with newer versions of two of its libraries, which fix GO-2026-6865 (compress)
+# and GO-2026-6860 (x/net). Remove this stage and the COPY of /usr/bin/caddy below when a Caddy release
+# has these versions or newer.
+FROM caddy:2.11.9-builder-alpine AS caddy
+RUN xcaddy build v2.11.9 \
+        --output /usr/bin/caddy \
+        --replace github.com/klauspost/compress=github.com/klauspost/compress@v1.20.2 \
+        --replace golang.org/x/net=golang.org/x/net@v0.62.0
+
 FROM caddy:2.11.9-alpine
+COPY --from=caddy /usr/bin/caddy /usr/bin/caddy
 # Security fixes from Alpine that came out after the base image was built are installed here.
 RUN apk upgrade --no-cache
 RUN addgroup -g 10002 -S caddyuser && adduser -u 10002 -S -G caddyuser -H caddyuser \
