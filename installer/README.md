@@ -31,5 +31,5 @@ Before the first release exists, or in the rehearsal, `--release-file` names loc
 - `wsl.exe --install` with `--name` and `--location` needs a recent WSL. The installer runs `wsl.exe --update` first.
 - A scheduled task with S4U is the way to start WSL before anyone signs in without storing a password. If it does not start WSL on the owner's PC, the task can be changed to store the owner's password, which the owner types in Task Scheduler.
 - The backup disk has to be NTFS. On exFAT or FAT32, Linux owners are not kept, and the installer stops with a message.
-- The owner is asked five questions. The story's acceptance criteria name three; the Google client ID and the backup disk letter are the two more.
+- The owner is asked five questions. The story's acceptance criteria name three. The two extra questions are the Google client ID and the backup disk letter.
 - The updater changes image references in `.env` and not `compose.yaml`. A release that changes `compose.yaml` needs the installer to be run again.

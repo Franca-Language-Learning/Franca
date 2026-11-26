@@ -138,9 +138,9 @@ SHOWN_ONCE = ("backup_password", "ntfy_topic")
 
 
 def write_secrets(folder: Path, answers: Answers) -> dict[str, str]:
-    """Writes the secret files. The generated ones are kept when they exist. Returns the generated values that the
-    owner has to keep (the backup password and the ntfy topic) until the owner has been shown them: a marker file is
-    kept until mark_shown, so a run that stops before the end shows them in the next run."""
+    """Writes the secret files. The generated ones are kept when they exist. Returns the backup password and the ntfy
+    topic as long as the owner has not been shown them. A marker file stays in the folder until mark_shown is called,
+    so if a run stops before the end, the values are shown in the next run."""
     folder.mkdir(parents=True, exist_ok=True)
     folder.chmod(0o700)
     _write_private(folder / "google_client_secret", answers.google_client_secret)
@@ -220,7 +220,7 @@ def prepare_backup_folder(
     chown(marker, BACKUP_UID, BACKUP_UID)
     if owner_of(folder) != BACKUP_UID:
         raise InstallError(
-            f"The backup disk does not keep Linux owners, so the backup cannot write to {folder}. Use a disk formatted as NTFS."
+            f"The backup disk does not keep Linux file owners, so backups cannot be written to {folder}. Use a disk formatted as NTFS."
         )
 
 
@@ -304,7 +304,7 @@ def start_bundle(bundle: Path, release: fu.Release, answers: Answers, run: Run =
         _check(run(_compose(bundle, "up", "--detach", "--no-build", "--wait", "--wait-timeout", "180", "tailscale")), "Joining the tailnet")
         name = tailscale_name(bundle, run)
     finally:
-        # A key can be used once. After this try it is not kept, whether the PC joined or not.
+        # An auth key can be used once, so it is emptied here whether the PC joined the tailnet or not.
         _write_private(bundle / "secrets" / "tailscale_authkey", "")
     write_env(bundle, release, answers, tailscale_name=name)
     _check(run(_compose(bundle, "up", "--detach", "--no-build", "--wait", "--wait-timeout", "300")), "Starting Franca")
