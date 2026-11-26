@@ -17,11 +17,38 @@ from franca.platform import db
 CONTRACT_SCHEMA = Path(__file__).resolve().parents[2] / "contracts" / "db" / "schema.sql"
 
 
-def schema_of(connection: sqlite3.Connection) -> list[tuple[str, str, str]]:
-    rows = connection.execute(
-        "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name != 'alembic_version' ORDER BY type, name"
+def _normalised_sql(sql: str | None) -> str:
+    lines = [line.split("--", 1)[0] for line in (sql or "").splitlines()]
+    return " ".join(" ".join(lines).split())
+
+
+def schema_of(connection: sqlite3.Connection) -> dict[str, object]:
+    """The schema as structure: columns, keys and indexes for tables, and the SQL text for views, triggers and index
+    conditions. Table SQL text is not compared, because ALTER TABLE ADD COLUMN writes it differently from CREATE TABLE."""
+    objects = connection.execute(
+        "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name != 'alembic_version'"
     ).fetchall()
-    return [(kind, name, " ".join((sql or "").split())) for kind, name, sql in rows]
+    schema: dict[str, object] = {
+        "user_version": connection.execute("PRAGMA user_version").fetchone()[0],
+        "application_id": connection.execute("PRAGMA application_id").fetchone()[0],
+    }
+    for kind, name, table, sql in objects:
+        if kind == "table":
+            schema[f"table {name}"] = {
+                "options": connection.execute("SELECT strict, wr FROM pragma_table_list WHERE name = ?", (name,)).fetchall(),
+                "columns": connection.execute(f"PRAGMA table_xinfo('{name}')").fetchall(),
+                "foreign_keys": connection.execute(f"PRAGMA foreign_key_list('{name}')").fetchall(),
+                "checks": _normalised_sql(sql).count("CHECK"),
+            }
+        elif kind == "index":
+            schema[f"index {name}"] = {
+                "table": table,
+                "columns": connection.execute(f"PRAGMA index_xinfo('{name}')").fetchall(),
+                "sql": _normalised_sql(sql),
+            }
+        else:
+            schema[f"{kind} {name}"] = _normalised_sql(sql)
+    return schema
 
 
 def test_connections_use_the_agreed_sqlite_settings(tmp_path: Path) -> None:
@@ -31,6 +58,17 @@ def test_connections_use_the_agreed_sqlite_settings(tmp_path: Path) -> None:
         assert connection.execute(text("PRAGMA journal_mode")).scalar() == "wal"
         assert connection.execute(text("PRAGMA busy_timeout")).scalar() == 5000
         assert connection.execute(text("PRAGMA synchronous")).scalar() == 1  # NORMAL
+
+
+def test_a_failed_change_is_undone_in_full(tmp_path: Path) -> None:
+    # A migration that fails halfway must not leave half a schema behind (the driver does not do this by itself).
+    engine = db.make_engine(tmp_path / "franca.db")
+    with pytest.raises(RuntimeError), engine.begin() as connection:
+        connection.exec_driver_sql("CREATE TABLE first (id INTEGER PRIMARY KEY) STRICT")
+        raise RuntimeError("the second statement failed")
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql("SELECT count(*) FROM sqlite_master").scalar() == 0
+    engine.dispose()
 
 
 def test_migrations_build_the_contract_schema(tmp_path: Path) -> None:
@@ -62,6 +100,22 @@ def test_the_migration_command_upgrades_the_configured_database(tmp_path: Path) 
     assert "identity_learner" in tables
 
 
+def test_a_column_added_by_alter_table_compares_equal_to_the_same_column_in_create_table() -> None:
+    altered = sqlite3.connect(":memory:")
+    altered.executescript("CREATE TABLE t (a INTEGER PRIMARY KEY, b TEXT -- note\n) STRICT; ALTER TABLE t ADD COLUMN c TEXT;")
+    created = sqlite3.connect(":memory:")
+    created.executescript("CREATE TABLE t (a INTEGER PRIMARY KEY, b TEXT, c TEXT) STRICT;")
+    assert schema_of(altered) == schema_of(created)
+
+
+def test_a_missing_column_is_found() -> None:
+    one = sqlite3.connect(":memory:")
+    one.executescript("CREATE TABLE t (a INTEGER PRIMARY KEY, b TEXT) STRICT;")
+    two = sqlite3.connect(":memory:")
+    two.executescript("CREATE TABLE t (a INTEGER PRIMARY KEY) STRICT;")
+    assert schema_of(one) != schema_of(two)
+
+
 def test_the_baseline_migration_cannot_be_undone(tmp_path: Path) -> None:
     path = tmp_path / "franca.db"
     db.upgrade(path)
@@ -75,3 +129,19 @@ def test_the_baseline_sql_is_not_edited() -> None:
 
     baseline = Path(db.__file__).parent / "migrations" / "versions" / "0001_baseline.sql"
     assert hashlib.sha256(baseline.read_bytes()).hexdigest() == "d894df59ec348dc0f32cef65ff4d2ec24fc991494c39e57581b6b8e7f3f95799"
+
+
+def test_the_statement_splitter_refuses_an_incomplete_last_statement() -> None:
+    import importlib.util
+
+    path = Path(db.__file__).parent / "migrations" / "versions" / "0001_baseline.py"
+    spec = importlib.util.spec_from_file_location("baseline", path)
+    assert spec and spec.loader
+    baseline = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(baseline)
+    sql = "-- header\nCREATE TABLE a (x INTEGER);\nCREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT 1; END;\nCREATE TABLE b (y)"
+    statements = baseline._statements(sql)
+    assert next(statements).startswith("-- header\nCREATE TABLE a")
+    assert next(statements).startswith("CREATE TRIGGER t")
+    with pytest.raises(ValueError, match="incomplete statement"):
+        next(statements)

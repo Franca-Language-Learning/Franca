@@ -29,14 +29,22 @@ def _statements(sql: str) -> Iterator[str]:
         if sqlite3.complete_statement(buffer):
             statement = buffer.strip()
             buffer = ""
-            if statement and not all(part.startswith("--") for part in statement.splitlines() if part.strip()):
+            if not _only_comments(statement):
                 yield statement
+    if not _only_comments(buffer):
+        raise ValueError(f"The SQL ends with an incomplete statement: {buffer.strip()[:80]}")
+
+
+def _only_comments(sql: str) -> bool:
+    return all(line.strip().startswith("--") for line in sql.splitlines() if line.strip())
 
 
 def upgrade() -> None:
     sql = (Path(__file__).with_name("0001_baseline.sql")).read_text(encoding="utf-8")
+    connection = op.get_bind()
     for statement in _statements(sql):
-        op.execute(statement)
+        # Sent to the driver as it is, so a colon in a string literal is not read as a bind parameter.
+        connection.exec_driver_sql(statement)
 
 
 def downgrade() -> None:
