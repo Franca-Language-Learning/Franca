@@ -12,7 +12,7 @@ RUN git clone --quiet --depth 1 --branch v0.19.1 https://github.com/restic/resti
     && cd /src/restic \
     && test "$(git rev-parse HEAD)" = 6aa3a516ce654808a1f28f9fa21e9b7c8e6e90bf \
     && go get github.com/klauspost/compress@v1.20.2 golang.org/x/net@v0.62.0 \
-        google.golang.org/grpc@v1.83.1 github.com/go-jose/go-jose/v4@v4.1.6 \
+        google.golang.org/grpc@v1.83.2 github.com/go-jose/go-jose/v4@v4.1.6 \
     && go build -ldflags "-s -w -X main.version=0.19.1" -o /out/restic ./cmd/restic
 
 FROM python:3.14.10-slim-trixie
