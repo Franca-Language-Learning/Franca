@@ -1,6 +1,11 @@
 # Franca's container bundle (story E01-005). Start it from the repository root with:
 #   docker compose -f infra/compose.yaml up -d --build --wait
 # The other containers (worker, speech, languagetool, backup, status, tailscale) are added in their own stories.
+#
+# The installer writes the .env file beside this file. A release names its images by digest there
+# (FRANCA_APP_IMAGE, FRANCA_CADDY_IMAGE, FRANCA_UPDATER_IMAGE), and the updater changes them (story E01-007).
+# The updater and its socket proxy are in the "updates" profile, which the installer switches on with
+# COMPOSE_PROFILES=updates.
 
 x-hardening: &hardening
   read_only: true
@@ -18,7 +23,7 @@ services:
       dockerfile: infra/images/app.Dockerfile
       args:
         FRANCA_VERSION: ${FRANCA_VERSION:-0.1.0-dev}
-    image: franca/app:${FRANCA_VERSION:-0.1.0-dev}
+    image: ${FRANCA_APP_IMAGE:-franca/app:${FRANCA_VERSION:-0.1.0-dev}}
     # A small init process passes stop signals on, also while the migration runs before the service starts.
     init: true
     environment:
@@ -37,7 +42,7 @@ services:
     build:
       context: ..
       dockerfile: infra/images/caddy.Dockerfile
-    image: franca/caddy:${FRANCA_VERSION:-0.1.0-dev}
+    image: ${FRANCA_CADDY_IMAGE:-franca/caddy:${FRANCA_VERSION:-0.1.0-dev}}
     depends_on:
       app:
         condition: service_healthy
@@ -49,6 +54,65 @@ services:
       - caddy-config:/config
     networks: [internal]
 
+  # Docker's API, limited to the calls the updater needs: containers, images, networks and volumes, with starting
+  # and stopping. Exec, build, swarm, plugins, secrets and system calls are refused. The proxy is on its own
+  # network, which only the updater joins.
+  socket-proxy:
+    <<: *hardening
+    image: lscr.io/linuxserver/socket-proxy:3.4.8-r0-ls107
+    profiles: [updates]
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      NETWORKS: 1
+      VOLUMES: 1
+      INFO: 1
+      VERSION: 1
+      POST: 1
+      ALLOW_START: 1
+      ALLOW_STOP: 1
+      ALLOW_RESTARTS: 1
+      EXEC: 0
+      BUILD: 0
+      SWARM: 0
+      SERVICES: 0
+      TASKS: 0
+      SECRETS: 0
+      CONFIGS: 0
+      PLUGINS: 0
+      SYSTEM: 0
+      AUTH: 0
+      DISABLE_IPV6: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    tmpfs:
+      - /run
+      - /tmp
+    networks: [docker-api]
+
+  updater:
+    <<: *hardening
+    build:
+      context: ..
+      dockerfile: infra/images/updater.Dockerfile
+      args:
+        FRANCA_VERSION: ${FRANCA_VERSION:-0.1.0-dev}
+    image: ${FRANCA_UPDATER_IMAGE:-franca/updater:${FRANCA_VERSION:-0.1.0-dev}}
+    profiles: [updates]
+    depends_on: [socket-proxy]
+    environment:
+      DOCKER_HOST: tcp://socket-proxy:2375
+      # The bundle folder is mounted at the same path as on the PC, so that the paths in this file (secrets, the
+      # .env file) mean the same inside the updater as they do to Docker.
+      FRANCA_BUNDLE_DIR: ${FRANCA_BUNDLE_DIR:-/franca-bundle-not-set}
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-franca}
+      FRANCA_HEALTH_URL: http://app:8000/api/v1/health
+      FRANCA_UPDATE_AT_UTC: ${FRANCA_UPDATE_AT_UTC:-02:30}
+    volumes:
+      - ${FRANCA_BUNDLE_DIR:-/franca-bundle-not-set}:${FRANCA_BUNDLE_DIR}
+      - updater-status:/status
+    networks: [internal, docker-api]
+
 # Secrets are files in the secrets folder on the PC (FRANCA_SECRETS_DIR). The installer writes them (story E01-011).
 secrets:
   google_client_secret:
@@ -57,9 +121,12 @@ secrets:
     file: ${FRANCA_SECRETS_DIR:-./secrets}/session_secret
 
 volumes:
+  updater-status:
   app-data:
   caddy-data:
   caddy-config:
 
 networks:
   internal:
+  docker-api:
+    internal: true

@@ -41,7 +41,7 @@ dev = [
 package = false
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "../contracts/db/tests", "../tools/tests"]
+testpaths = ["tests", "../contracts/db/tests", "../tools/tests", "../infra/updater/tests"]
 addopts = "-q --strict-markers"
 pythonpath = ["src"]
 
@@ -59,6 +59,10 @@ ignore = ["E501"]
 "tests/**" = ["S101"]
 "../contracts/**" = ["S101", "S603", "S608"]
 "../tools/**" = ["S101", "S603", "S607"]
+# The updater runs docker and cosign by name, with arguments it builds itself.
+"../infra/updater/**" = ["S603", "S607"]
+"../infra/updater/tests/**" = ["S101", "S102", "S603", "S607"]
+"../infra/tests/**" = ["S603", "S607", "S608"]
 
 [tool.mypy]
 python_version = "3.14"

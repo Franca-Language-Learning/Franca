@@ -40,13 +40,13 @@ jobs:
       - name: Lint and format
         working-directory: server
         run: |
-          uv run ruff check . ../contracts ../tools
-          uv run ruff format --check . ../contracts ../tools
+          uv run ruff check . ../contracts ../tools ../infra/updater ../infra/tests
+          uv run ruff format --check . ../contracts ../tools ../infra/updater ../infra/tests
       - name: Type check
         working-directory: server
         run: |
           uv run mypy
-          uv run mypy --strict ../tools/content_guard.py
+          uv run mypy --strict ../tools/content_guard.py ../infra/updater/franca_updater.py ../infra/tests/rehearse_update.py
       - name: Module boundaries
         working-directory: server
         env:
@@ -152,6 +152,8 @@ jobs:
           persist-credentials: false
       - name: Build, start and check the bundle
         run: infra/tests/test-bundle.sh
+      - name: Rehearse an update and a rollback
+        run: python3 infra/tests/rehearse_update.py
       # The same scan as in the release workflow, so a vulnerable image is found before a release.
       - name: Scan the app image for known vulnerabilities
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
@@ -165,6 +167,14 @@ jobs:
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           image: franca/caddy:0.1.0-dev
+          fail-build: true
+          severity-cutoff: high
+          only-fixed: true
+          output-format: table
+      - name: Scan the updater image for known vulnerabilities
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: franca/updater:0.1.0-dev
           fail-build: true
           severity-cutoff: high
           only-fixed: true

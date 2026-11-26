@@ -1,5 +1,5 @@
 # Infrastructure
 
-- `compose.yaml`, the image files and the Caddy configuration are in this folder (story E01-005). The updater and the backup settings will be added in stories E01-007 and E01-008.
+- `compose.yaml`, the image files and the Caddy configuration are in this folder (story E01-005). The updater is in `updater/` (story E01-007); its tests run with the server's (`cd server && uv run pytest ../infra/updater/tests`), and `tests/rehearse_update.py` rehearses an update with real containers. The backup settings come with story E01-008.
 - Containers run as non-root with read-only file systems and health checks. Base images are named by tag, and Renovate adds their digests.
 - Secrets are files mounted under /run/secrets, never environment variables in Compose files and never committed.
