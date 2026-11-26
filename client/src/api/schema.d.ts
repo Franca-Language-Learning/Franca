@@ -25,7 +25,13 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** Health */
+        /**
+         * Health
+         * @example {
+         *       "status": "ok",
+         *       "version": "0.1.0"
+         *     }
+         */
         Health: {
             /** Status */
             status: string;

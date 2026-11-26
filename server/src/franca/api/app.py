@@ -1,7 +1,7 @@
 """The application factory. Routes are grouped in one router per module and mounted under /api/v1."""
 
 from fastapi import APIRouter, FastAPI, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from franca.platform import Settings, load_settings
 
@@ -9,6 +9,9 @@ API_PREFIX = "/api/v1"
 
 
 class Health(BaseModel):
+    # Each response model has an example; the client's mock API answers with it.
+    model_config = ConfigDict(json_schema_extra={"examples": [{"status": "ok", "version": "0.1.0"}]})
+
     status: str
     version: str
 

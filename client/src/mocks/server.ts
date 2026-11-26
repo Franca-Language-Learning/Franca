@@ -1,4 +1,4 @@
 import { setupServer } from "msw/node";
 import { handlersFromContract } from "./handlers";
 
-export const server = setupServer(...(await handlersFromContract()));
+export const server = setupServer(...handlersFromContract());
