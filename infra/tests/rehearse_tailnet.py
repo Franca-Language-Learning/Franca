@@ -32,9 +32,9 @@ PROJECT = f"franca-tailnet-rehearsal-{os.getpid()}"
 APP = "franca/app:rehearsal-tailnet"
 CADDY = "franca/caddy:rehearsal-tailnet"
 TAILSCALE = "franca/tailscale:rehearsal"
-# Renovate adds the digests of these two images (see .github/renovate.json).
+# These two images are named by digest, and Renovate updates them (see .github/renovate.json).
 HEADSCALE = "headscale/headscale:0.29.7@sha256:11f81665e842809db9fe3006a38c56a66e968baa5abd4bac498e86445572b970"  # renovate: image
-PHONE = "tailscale/tailscale:v1.104.7"  # renovate: image
+PHONE = "tailscale/tailscale:v1.104.7@sha256:72c1e19e0aedca96b8533bbb0b4368564410ff20b17e53b804eb6c1f04a31be4"  # renovate: image
 LOGIN_SERVER = "http://headscale:8080"
 
 HEADSCALE_CONFIG = """\

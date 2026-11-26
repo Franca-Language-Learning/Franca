@@ -19,7 +19,7 @@ uv run ruff check . ../contracts ../tools ../infra/updater ../infra/backup ../in
 uv run ruff format --check . ../contracts ../tools ../infra/updater ../infra/backup ../infra/tests ../installer/linux
 step "Type check"
 uv run mypy
-uv run mypy --strict ../tools/content_guard.py ../infra/updater/franca_updater.py ../infra/backup/franca_backup.py ../infra/tests/rehearse_update.py ../infra/tests/rehearse_backup.py ../infra/tests/rehearse_tailnet.py ../infra/tests/rehearse_status.py ../installer/linux/franca_install.py ../infra/tests/rehearse_install.py
+uv run mypy --strict ../tools/content_guard.py ../tools/check_pins.py ../infra/updater/franca_updater.py ../infra/backup/franca_backup.py ../infra/tests/rehearse_update.py ../infra/tests/rehearse_backup.py ../infra/tests/rehearse_tailnet.py ../infra/tests/rehearse_status.py ../installer/linux/franca_install.py ../infra/tests/rehearse_install.py
 step "Module boundaries"
 PYTHONPATH=src uv run lint-imports
 step "Server, contract and tool tests"

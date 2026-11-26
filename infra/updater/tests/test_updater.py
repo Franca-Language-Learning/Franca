@@ -687,3 +687,32 @@ def test_without_a_push_token_nothing_is_reported(tmp_path: Path) -> None:
     fu.Monitor("http://status:8080", token, send=sent.append).report("nightly_update", True, "Installed")
 
     assert sent == []
+
+
+# --- reading from GitHub
+
+
+class FakeResponse:
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+
+    def __enter__(self) -> FakeResponse:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def read(self, size: int = -1) -> bytes:
+        return self.body if size < 0 else self.body[:size]
+
+
+def test_a_body_up_to_the_limit_is_read_whole(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = b"x" * 2_000_000
+    monkeypatch.setattr(urllib.request, "urlopen", lambda request, timeout: FakeResponse(body))
+    assert fu.http_fetch("https://example.org/cosign", limit=2_000_000) == body
+
+
+def test_a_body_over_the_limit_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(urllib.request, "urlopen", lambda request, timeout: FakeResponse(b"x" * 1_000_001))
+    with pytest.raises(fu.UpdateError, match="larger than"):
+        fu.http_fetch("https://example.org/release.json")

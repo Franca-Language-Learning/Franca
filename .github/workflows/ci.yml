@@ -46,7 +46,7 @@ jobs:
         working-directory: server
         run: |
           uv run mypy
-          uv run mypy --strict ../tools/content_guard.py ../infra/updater/franca_updater.py ../infra/backup/franca_backup.py ../infra/tests/rehearse_update.py ../infra/tests/rehearse_backup.py ../infra/tests/rehearse_tailnet.py ../infra/tests/rehearse_status.py ../installer/linux/franca_install.py ../infra/tests/rehearse_install.py
+          uv run mypy --strict ../tools/content_guard.py ../tools/check_pins.py ../infra/updater/franca_updater.py ../infra/backup/franca_backup.py ../infra/tests/rehearse_update.py ../infra/tests/rehearse_backup.py ../infra/tests/rehearse_tailnet.py ../infra/tests/rehearse_status.py ../installer/linux/franca_install.py ../infra/tests/rehearse_install.py
       - name: Module boundaries
         working-directory: server
         env:
@@ -89,10 +89,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
+      # pnpm is installed with Corepack and checked against the hash in package.json (packageManager).
+      - name: Install pnpm
+        run: corepack enable pnpm && corepack install
       - name: Install the locked packages
         run: pnpm install --frozen-lockfile
       - name: API types match the contract
@@ -114,6 +116,10 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+    env:
+      # Chromium comes from Playwright's image, named by digest, so the browser is pinned like the other images.
+      # Renovate updates the image together with @playwright/test, because the two versions have to match.
+      PLAYWRIGHT_IMAGE: "mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579"  # renovate: image
     steps:
       - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
@@ -125,20 +131,39 @@ jobs:
         with:
           version: "0.11.32" # renovate: datasource=github-releases depName=astral-sh/uv
           enable-cache: false
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
+      # pnpm is installed with Corepack and checked against the hash in package.json (packageManager).
+      - name: Install pnpm
+        run: corepack enable pnpm && corepack install
       - name: Install the locked packages
         run: |
           uv sync --locked
           pnpm install --frozen-lockfile
-      - name: Install Playwright's Chromium
-        run: pnpm --filter @franca/client exec playwright install --with-deps chromium
+      # Chromium is run in Playwright's container and is reached on port 3000. The container is on the runner's
+      # network, so the test servers can be reached on localhost from the browser. The checkout is mounted read-only
+      # at the same path, and the locked Playwright in node_modules is used.
+      - name: Start Chromium in Playwright's container
+        run: |
+          docker run --detach --name playwright --init --network host --user pwuser \
+            --shm-size=1g --cap-drop ALL --security-opt no-new-privileges \
+            --volume "$PWD:$PWD:ro" --workdir "$PWD/client" "$PLAYWRIGHT_IMAGE" \
+            node_modules/.bin/playwright run-server --port 3000 --host 127.0.0.1
+          for _ in $(seq 60); do
+            if curl --silent --output /dev/null http://127.0.0.1:3000/; then exit 0; fi
+            sleep 1
+          done
+          docker logs playwright
+          exit 1
       - name: Browser tests
         env:
           CI: "true"
+          PW_TEST_CONNECT_WS_ENDPOINT: ws://127.0.0.1:3000/
         run: pnpm --filter @franca/client e2e
+      - name: Show the log of Playwright's container
+        if: failure()
+        run: docker logs playwright
       - name: Keep the test report for 7 days
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -160,6 +185,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The same check is run with the server's tests. In this job the registries can be reached, so the digest of an
+      # image that has none is printed in the log.
+      - name: Check that images and sources are pinned
+        run: python3 -I tools/check_pins.py --resolve
       - name: Build, start and check the bundle
         run: infra/tests/test-bundle.sh
       # The rehearsal runs the updater's code on the runner, with the same Python as the updater's image.
@@ -177,6 +206,11 @@ jobs:
         run: uv run --no-project --python 3.14 python infra/tests/rehearse_status.py
       - name: Rehearse the installer
         run: uv run --no-project --python 3.14 python infra/tests/rehearse_install.py
+      # Cosign is downloaded by the installer and kept only when its hash matches, so the download is tried here.
+      - name: Check the installer's cosign download against its hash
+        run: >-
+          uv run --no-project --python 3.14 python -I -c "import pathlib, sys, tempfile; sys.path[:0] = ['installer/linux', 'infra/updater'];
+          import franca_install; franca_install.install_cosign(pathlib.Path(tempfile.mkdtemp()) / 'cosign')"
       # The same scan as in the release workflow, so a vulnerable image is found before a release.
       - name: Scan the app image for known vulnerabilities
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
@@ -186,6 +220,7 @@ jobs:
           severity-cutoff: high
           only-fixed: true
           output-format: table
+          grype-version: "v0.122.1" # renovate: datasource=github-releases depName=anchore/grype
       - name: Scan the caddy image for known vulnerabilities
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
@@ -194,6 +229,7 @@ jobs:
           severity-cutoff: high
           only-fixed: true
           output-format: table
+          grype-version: "v0.122.1" # renovate: datasource=github-releases depName=anchore/grype
       - name: Scan the updater image for known vulnerabilities
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
@@ -202,6 +238,7 @@ jobs:
           severity-cutoff: high
           only-fixed: true
           output-format: table
+          grype-version: "v0.122.1" # renovate: datasource=github-releases depName=anchore/grype
       - name: Scan the backup image for known vulnerabilities
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
@@ -210,6 +247,7 @@ jobs:
           severity-cutoff: high
           only-fixed: true
           output-format: table
+          grype-version: "v0.122.1" # renovate: datasource=github-releases depName=anchore/grype
       - name: Scan the tailscale image for known vulnerabilities
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
@@ -218,6 +256,7 @@ jobs:
           severity-cutoff: high
           only-fixed: true
           output-format: table
+          grype-version: "v0.122.1" # renovate: datasource=github-releases depName=anchore/grype
       - name: Scan the status image for known vulnerabilities
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
@@ -226,6 +265,7 @@ jobs:
           severity-cutoff: high
           only-fixed: true
           output-format: table
+          grype-version: "v0.122.1" # renovate: datasource=github-releases depName=anchore/grype
 
   api-contract:
     name: API contract changes

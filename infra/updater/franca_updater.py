@@ -128,13 +128,16 @@ def parse_images(lines: Sequence[str]) -> dict[str, str]:
 Fetch = Callable[[str], bytes]
 
 
-def http_fetch(url: str) -> bytes:
+def http_fetch(url: str, limit: int = 1_000_000, accept: str = "application/vnd.github+json") -> bytes:
+    """The body at an https address. UpdateError is raised for a body larger than the limit. The body is not cut short."""
     if not url.startswith("https://"):
         raise UpdateError(f"Only https addresses are read: {url[:120]}")
-    request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "franca-updater"})  # noqa: S310
+    request = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": "franca-updater"})  # noqa: S310
     with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - the URLs are https and fixed
-        body: bytes = response.read(1_000_000)
-        return body
+        body: bytes = response.read(limit + 1)
+    if len(body) > limit:
+        raise UpdateError(f"The answer from {url[:120]} is larger than {limit} bytes.")
+    return body
 
 
 @dataclass(slots=True)

@@ -37,8 +37,9 @@ import franca_updater as fu
 
 BUNDLE_DIR = Path("/opt/franca")
 COSIGN = Path("/usr/local/bin/cosign")
-COSIGN_URL = "https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64"
+COSIGN_URL = "https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64"  # renovate: datasource=github-releases depName=sigstore/cosign
 COSIGN_SHA256 = "424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa"
+PROGRAM_MAX_BYTES = 300_000_000
 # Docker's signing key for its Debian packages, checked by fingerprint before it is trusted.
 DOCKER_KEY_URL = "https://download.docker.com/linux/debian/gpg"
 DOCKER_KEY_FINGERPRINT = "9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
@@ -227,7 +228,12 @@ def prepare_backup_folder(
 # --- programs
 
 
-def install_cosign(target: Path, fetch: Fetch = fu.http_fetch, sha256: str = COSIGN_SHA256) -> None:
+def download_program(url: str) -> bytes:
+    """A program from a release page, up to PROGRAM_MAX_BYTES."""
+    return fu.http_fetch(url, limit=PROGRAM_MAX_BYTES, accept="application/octet-stream")
+
+
+def install_cosign(target: Path, fetch: Fetch = download_program, sha256: str = COSIGN_SHA256) -> None:
     """Downloads cosign and keeps it only when its checksum is the published one."""
     data = fetch(COSIGN_URL)
     if hashlib.sha256(data).hexdigest() != sha256:

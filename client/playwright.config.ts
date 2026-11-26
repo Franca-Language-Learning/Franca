@@ -1,6 +1,7 @@
 // Browser tests (story E01-001). Playwright runs them against the built client and the real server.
 // Run with  pnpm --filter @franca/client e2e
-// The pipeline and scripts/setup install Playwright's Chromium. On a computer that has Chromium elsewhere, put its path in
+// In the pipeline, Chromium is run in Playwright's container (.github/workflows/ci.yml). For local runs, Playwright's
+// Chromium is installed by scripts/setup. On a computer that has Chromium elsewhere, put its path in
 // FRANCA_CHROMIUM.
 import { defineConfig, devices } from "@playwright/test";
 
