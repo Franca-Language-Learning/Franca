@@ -200,12 +200,16 @@ def health_check(url: str) -> Callable[[], bool]:
 
 # --- reports to health monitoring (story E01-010)
 
-# The status files whose results are reported, with the key of their external endpoint in Gatus and the result that
-# counts as a success. A restore by the owner (restore.json) is not reported.
+# The status files whose results are reported, with the key of their external endpoint in Gatus, the result that
+# counts as a success, the field with the time of the last success and a name for messages. A restore by the owner
+# (restore.json) is not reported.
 MONITORED = {
-    "backup.json": ("nightly_backup", "backed-up"),
-    "restore-test.json": ("nightly_restore-test", "restore-test-passed"),
+    "backup.json": ("nightly_backup", "backed-up", "lastSucceededAt", "backup"),
+    "restore-test.json": ("nightly_restore-test", "restore-test-passed", "lastPassedAt", "restore test"),
 }
+# How old the last success may be before the state is a failure: a day and two hours for the nightly backup, and two
+# days more than the month between restore tests.
+STALE_AFTER = {"backup.json": timedelta(hours=26), "restore-test.json": RESTORE_TEST_EVERY + timedelta(days=2)}
 
 
 def _post(request: urllib.request.Request) -> None:
@@ -237,7 +241,7 @@ class Monitor:
                 headers={"Authorization": f"Bearer {token}"},
             )
             self.send(request)
-        except (OSError, ValueError) as error:
+        except Exception as error:  # noqa: BLE001 - a report that cannot be sent never stops the backup
             print(json.dumps({"result": "report-not-sent", "message": str(error)}), flush=True)
 
 
@@ -376,10 +380,29 @@ class Backup:
             self.status.write(name, **line)
         except OSError as error:
             print(json.dumps({"result": "status-not-written", "message": str(error)}), flush=True)
-        if self.monitor is not None and name in MONITORED:
-            key, success = MONITORED[name]
-            self.monitor.report(key, result == success, details.get("message", ""))
         return result
+
+    def report_state(self, now: datetime) -> None:
+        """Reports the state of the backup and of the restore test to health monitoring. A state is good while the last
+        run succeeded and the last success is recent enough (STALE_AFTER). The service reports after each run and every
+        hour, so a restart of the status container, which forgets when the last report came, does not hide a missed
+        run."""
+        if self.monitor is None:
+            return
+        for name, (key, success, stamp, what) in MONITORED.items():
+            state = self.status.read(name)
+            if not state:
+                self.monitor.report(key, True, f"No {what} has run yet")
+                continue
+            if state.get("result") != success:
+                self.monitor.report(key, False, state.get("message", f"The last {what} failed"))
+                continue
+            last = state.get(stamp, "")
+            try:
+                stale = now - datetime.fromisoformat(last) > STALE_AFTER[name]
+            except ValueError:
+                stale = True
+            self.monitor.report(key, not stale, f"No successful {what} since {last or 'the start'}" if stale else state.get("message", ""))
 
 
 # --- the service
@@ -418,9 +441,13 @@ def main(argv: Sequence[str] = sys.argv[1:]) -> int:
     command = argv[0] if argv else "serve"
     now = datetime.now(UTC)
     if command == "backup":
-        return 0 if backup.back_up(now) == "backed-up" else 1
+        result = backup.back_up(now)
+        backup.report_state(now)
+        return 0 if result == "backed-up" else 1
     if command == "restore-test":
-        return 0 if backup.restore_test(now) == "restore-test-passed" else 1
+        result = backup.restore_test(now)
+        backup.report_state(now)
+        return 0 if result == "restore-test-passed" else 1
     if command == "restore-latest":
         return 0 if backup.restore_latest(now) == "restored" else 1
     if command == "health":
@@ -431,16 +458,23 @@ def main(argv: Sequence[str] = sys.argv[1:]) -> int:
     at = backup_time(os.environ.get("FRANCA_BACKUP_AT_UTC", DEFAULT_BACKUP_TIME))
     # The service looks every ten minutes whether a backup is due, so a night when the PC was off or asleep is made
     # up when it is on again. After a failed backup, the next try is an hour later.
+    # The state is reported to health monitoring after each run and every hour (see Backup.report_state).
     retry_after = datetime.min.replace(tzinfo=UTC)
+    report_after = datetime.min.replace(tzinfo=UTC)
     while True:
         try:
             now = datetime.now(UTC)
+            ran = False
             if now >= retry_after and backup.backup_due(now, at):
+                ran = True
                 if backup.back_up(now) == "backed-up":
                     if backup.restore_test_due(now):
                         backup.restore_test(now)
                 else:
                     retry_after = now + timedelta(hours=1)
+            if ran or now >= report_after:
+                backup.report_state(now)
+                report_after = now + timedelta(hours=1)
         except Exception as error:  # noqa: BLE001 - the service keeps running and tries again
             print(json.dumps({"result": "error", "message": repr(error)}), flush=True)
         time.sleep(600)

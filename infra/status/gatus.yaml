@@ -5,8 +5,11 @@
 # FRANCA_TAILNET_CHECKS, which is true once the installer has written the PC's Tailscale name.
 #
 # The app and the web server are checked every minute, and an alert is sent after three failures in a row. The updater
-# and the backup report the result of each run to the external endpoints. An alert is sent at once when a run fails
-# or no report arrives within the heartbeat interval.
+# and the backup report their state to the external endpoints after each run and every hour. The state is a failure
+# when the last run failed or the last success is too old (26 hours, or 32 days for the restore test). An alert is sent
+# at once for a failure, and when no report arrives for two hours, which means the updater or the backup has stopped.
+# Gatus forgets the time of the last report when it restarts, so the age of the last success is worked out by the
+# updater and the backup, not by the heartbeat.
 
 web:
   port: 8080
@@ -76,35 +79,38 @@ endpoints:
       - "[STATUS] == 200"
     alerts:
       - type: ntfy
-        description: The PC is not connected to the tailnet.
+        description: The tailscale container has stopped or is not signed in to the tailnet.
 
 external-endpoints:
   - name: Update
     group: Nightly
     token: ${STATUS_PUSH_TOKEN}
     heartbeat:
-      interval: 25h
+      interval: 2h
     alerts:
       - type: ntfy
         failure-threshold: 1
-        description: The nightly update failed or sent no report.
+        success-threshold: 1
+        description: The nightly update failed, has not succeeded for a day, or the updater has stopped.
 
   - name: Backup
     group: Nightly
     token: ${STATUS_PUSH_TOKEN}
     heartbeat:
-      interval: 25h
+      interval: 2h
     alerts:
       - type: ntfy
         failure-threshold: 1
-        description: The nightly backup failed or sent no report.
+        success-threshold: 1
+        description: The nightly backup failed, has not succeeded for a day, or the backup has stopped.
 
   - name: Restore test
     group: Nightly
     token: ${STATUS_PUSH_TOKEN}
     heartbeat:
-      interval: 745h
+      interval: 2h
     alerts:
       - type: ntfy
         failure-threshold: 1
-        description: The monthly restore test failed or sent no report.
+        success-threshold: 1
+        description: The monthly restore test failed, is overdue, or the backup has stopped.

@@ -63,6 +63,9 @@ MONITOR_KEY = "nightly_update"
 # The services whose new images are started straight after the app is healthy, each with the Compose profile that has
 # to be on: the private network (story E01-009), which faces the tailnet, and health monitoring (story E01-010).
 STARTED_AFTER_THE_APP = {"tailscale": "tailnet", "status": "monitoring"}
+STARTED_AFTER_THE_APP_WAIT = 120  # seconds for such a service to become healthy
+# Without a successful run for this long, the state reported to health monitoring is a failure.
+STALE_AFTER = timedelta(hours=26)
 VERSION_KEY = "FRANCA_VERSION"
 SNAPSHOTS_KEPT = 5
 PLACEHOLDER_BUNDLE_DIR = "/franca-bundle-not-set"
@@ -266,8 +269,10 @@ class Compose:
     def stop(self, *services: str) -> None:
         _check(self.run(self._compose("stop", *services)), "Stopping " + ", ".join(services))
 
-    def up(self, *services: str) -> None:
-        _check(self.run(self._compose("up", "--detach", "--no-build", "--no-deps", *services)), "Starting " + ", ".join(services))
+    def up(self, *services: str, wait: int | None = None) -> None:
+        """Starts the services. With wait, Compose waits up to that many seconds until they are healthy."""
+        waiting = ["--wait", "--wait-timeout", str(wait)] if wait else []
+        _check(self.run(self._compose("up", "--detach", "--no-build", "--no-deps", *waiting, *services)), "Starting " + ", ".join(services))
 
     def run_in_app(self, script: str) -> None:
         """Runs Python in a one-off container of the app image, with the database volume, while the app is stopped."""
@@ -378,6 +383,14 @@ class StatusFile:
         temporary.write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
         os.replace(temporary, self.path)
 
+    def read(self) -> dict[str, str]:
+        """The last status written, or an empty dict when there is none or it cannot be read."""
+        try:
+            loaded = json.loads(self.path.read_text(encoding="utf-8"))
+        except OSError, ValueError:
+            return {}
+        return {str(name): str(value) for name, value in loaded.items()} if isinstance(loaded, dict) else {}
+
 
 @dataclass(slots=True)
 class HighWaterMark:
@@ -441,7 +454,7 @@ class Monitor:
                 headers={"Authorization": f"Bearer {token}"},
             )
             self.send(request)
-        except (OSError, ValueError) as error:
+        except Exception as error:  # noqa: BLE001 - a report that cannot be sent never stops the updater
             print(json.dumps({"result": "report-not-sent", "message": str(error)}), flush=True)
 
 
@@ -464,6 +477,13 @@ class Updater:
     monitor: Monitor | None = None
 
     def run_once(self, now: datetime) -> str:
+        """Checks for a release and installs it, then reports the state to health monitoring. Returns the result, which
+        is also written to the status file."""
+        result = self._run(now)
+        self.report_state(now)
+        return result
+
+    def _run(self, now: datetime) -> str:
         """Checks for a release and installs it. Returns the result, which is also written to the status file.
 
         Every error after the app is stopped leads to the old version being started again, whatever kind of error it
@@ -527,27 +547,16 @@ class Updater:
 
     def _start_new_image(self, service: str, key: str, old: dict[str, str], new: dict[str, str]) -> str:
         try:
-            self.compose.up(service)
+            self.compose.up(service, wait=STARTED_AFTER_THE_APP_WAIT)
         except Exception as error:  # noqa: BLE001 - the app update is kept and the old image is put back
             current = self.env.read()
             put_back = {name: value for name, value in current.items() if name != key} | ({key: old[key]} if key in old else {})
             try:
                 self.env.write(put_back)
-                self.compose.up(service)
+                self.compose.up(service, wait=STARTED_AFTER_THE_APP_WAIT)
             except Exception as again:  # noqa: BLE001 - reported for the owner
                 return f". The new {service} image did not start ({error}), and starting the old one failed too: {again}"
             return f". The new {service} image did not start ({error}), so the old one was started again"
-        return ""
-        try:
-            self.compose.up("tailscale")
-        except Exception as error:  # noqa: BLE001 - the app update is kept and the old tailscale image is put back
-            put_back = {name: value for name, value in new.items() if name != key} | ({key: old[key]} if key in old else {})
-            try:
-                self.env.write(put_back)
-                self.compose.up("tailscale")
-            except Exception as again:  # noqa: BLE001 - reported for the owner
-                return f". The new tailscale image did not start ({error}), and starting the old one failed too: {again}"
-            return f". The new tailscale image did not start ({error}), so the old one was started again"
         return ""
 
     def _restart_unchanged(self, checked: str, old_version: str, failed: Version, reason: str) -> str:
@@ -575,15 +584,36 @@ class Updater:
         return self._report("rolled-back", checked, old_version, failed, f"{reason}. Version {old_version} and its database were put back")
 
     def _report(self, result: str, checked: str, installed: str, latest: Version | None, message: str) -> str:
+        last_success = checked if result in SUCCESSFUL_RESULTS else self.status.read().get("lastSucceededAt", "")
         line = {"result": result, "checkedAt": checked, "installed": installed, "latest": str(latest or ""), "message": message}
+        line["lastSucceededAt"] = last_success
         print(json.dumps(line), flush=True)
         try:
             self.status.write(**line)
         except OSError as error:
             print(json.dumps({"result": "status-not-written", "message": str(error)}), flush=True)
-        if self.monitor is not None:
-            self.monitor.report(MONITOR_KEY, result in SUCCESSFUL_RESULTS, message)
         return result
+
+    def report_state(self, now: datetime) -> None:
+        """Reports the updater's state to health monitoring: good while the last run succeeded and the last success is
+        less than 26 hours old. It is reported after each run and every hour, so a restart of the status container,
+        which forgets when the last report came, does not hide a missed run."""
+        if self.monitor is None:
+            return
+        state = self.status.read()
+        if not state:
+            self.monitor.report(MONITOR_KEY, True, "No update has run yet")
+            return
+        if state.get("result") not in SUCCESSFUL_RESULTS:
+            self.monitor.report(MONITOR_KEY, False, state.get("message", "The last update failed"))
+            return
+        last_success = state.get("lastSucceededAt", "")
+        try:
+            stale = now - datetime.fromisoformat(last_success) > STALE_AFTER
+        except ValueError:
+            stale = True
+        message = f"No successful update since {last_success or 'the start'}" if stale else state.get("message", "")
+        self.monitor.report(MONITOR_KEY, not stale, message)
 
 
 # --- the service
@@ -633,13 +663,19 @@ def main(argv: Sequence[str] = sys.argv[1:], environ: Mapping[str, str] = os.env
         result = updater.run_once(datetime.now(UTC))
         return 0 if result in SUCCESSFUL_RESULTS else 1
     at = update_time(environ.get("FRANCA_UPDATE_AT_UTC", DEFAULT_UPDATE_TIME))
+    wake = next_run(datetime.now(UTC), at)
     while True:
-        wake = next_run(datetime.now(UTC), at)
-        time.sleep(max(0.0, (wake - datetime.now(UTC)).total_seconds()))
+        # The state is reported every hour as well as after each run (see Updater.report_state).
         try:
-            updater.run_once(datetime.now(UTC))
+            now = datetime.now(UTC)
+            if now >= wake:
+                wake = next_run(now, at)
+                updater.run_once(now)
+            else:
+                updater.report_state(now)
         except Exception as error:  # noqa: BLE001 - the updater keeps running and tries again the next night
             print(json.dumps({"result": "error", "message": repr(error)}), flush=True)
+        time.sleep(max(1.0, min(3600.0, (wake - datetime.now(UTC)).total_seconds())))
 
 
 if __name__ == "__main__":

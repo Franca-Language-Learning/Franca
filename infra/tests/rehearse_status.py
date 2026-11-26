@@ -28,6 +28,9 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "infra" / "backup"))
+import franca_backup  # noqa: E402 - the backup's own code sends the reports in this rehearsal
+
 PROJECT = f"franca-status-rehearsal-{os.getpid()}"
 APP = "franca/app:rehearsal-status"
 CADDY = "franca/caddy:rehearsal-status"
@@ -51,6 +54,9 @@ services:
   ntfy:
     image: {APP}
     entrypoint: ["python", "-c", {json.dumps(RECORDER)}]
+    # The app image's health check asks for the app's health page, which the stand-in does not have.
+    healthcheck:
+      disable: true
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -167,15 +173,18 @@ def main() -> int:
             check(wait_for(lambda: healthy("franca_web-server"), 30), "Gatus reports the web server as healthy", failures)
             keys = set(statuses(base))
             check(
-                not keys & {"franca_https-on-the-tailscale-name", "franca_tailscale"},
+                "franca_app" in keys and not keys & {"franca_https-on-the-tailscale-name", "franca_tailscale"},
                 "the HTTPS and Tailscale checks are off while there is no Tailscale name",
                 failures,
             )
 
-            check(push(base, "nightly_backup", token, "success=true") == 200, "a report with the push token is accepted", failures)
+            # The reports are sent with the backup's own Monitor, from this computer to the dashboard's port.
+            monitor = franca_backup.Monitor(base, key_folder / "status_push_token")
+            monitor.report("nightly_backup", True, "The database was backed up")
+            check(wait_for(lambda: healthy("nightly_backup"), 20), "a report with the push token is accepted", failures)
             check(push(base, "nightly_backup", "wrong" * 8, "success=true") == 401, "a report with another token is refused", failures)
 
-            check(push(base, "nightly_update", token, "success=false&error=rehearsal") == 200, "a failed update is reported", failures)
+            monitor.report("nightly_update", False, "rehearsal: the update was rolled back")
             check(
                 wait_for(lambda: any(a.get("topic") == TOPIC and "Update" in a.get("title", "") for a in alerts()), 60),
                 "an alert about the failed update reaches ntfy on the owner's topic",
@@ -190,14 +199,24 @@ def main() -> int:
             )
 
             with tempfile.TemporaryDirectory() as bad:
-                for name, value in (("ntfy_topic", "x\nweb:\n  port: 1"), ("status_push_token", token)):
+                for name, value in (("ntfy_topic", "short"), ("status_push_token", token)):
                     (Path(bad) / name).write_text(value, encoding="utf-8")
                     (Path(bad) / name).chmod(0o644)
                 Path(bad).chmod(0o755)
-                refused = sh("docker", "run", "--rm", "-v", f"{bad}:/run/secrets:ro", STATUS, check=False)
+                secrets = f"{bad}:/run/secrets:ro"
+                refused = sh("docker", "run", "--rm", "-v", secrets, STATUS, check=False)
                 check(
                     refused.returncode != 0 and "ntfy topic" in refused.stderr,
-                    "the start script refuses a topic that could change the configuration",
+                    "the start script refuses a topic that is too short",
+                    failures,
+                )
+                (Path(bad) / "ntfy_topic").write_text(TOPIC, encoding="utf-8")
+                # A line break in a value from .env could add settings to Gatus's configuration.
+                injected = "FRANCA_NTFY_URL=https://ntfy.sh\nweb:\n  port: 1"
+                refused = sh("docker", "run", "--rm", "-v", secrets, "-e", injected, STATUS, check=False)
+                check(
+                    refused.returncode != 0 and "FRANCA_NTFY_URL" in refused.stderr,
+                    "the start script refuses a value with a line break in it",
                     failures,
                 )
 

@@ -8,7 +8,7 @@ import sys
 import urllib.request
 from collections.abc import Sequence
 from contextlib import closing
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -359,39 +359,73 @@ class FakeMonitor(fb.Monitor):
         self.reports.append((key, success, message))
 
 
-def test_a_backup_and_its_failure_are_reported(tmp_path: Path) -> None:
+def states(monitor: FakeMonitor) -> list[tuple[str, bool]]:
+    return [(key, success) for key, success, _message in monitor.reports]
+
+
+def test_before_the_first_backup_both_states_are_good(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    monitor = FakeMonitor()
+    backup.monitor = monitor
+
+    backup.report_state(NOW)
+
+    assert states(monitor) == [("nightly_backup", True), ("nightly_restore-test", True)]
+
+
+def test_a_failed_backup_is_reported_until_one_succeeds(tmp_path: Path) -> None:
     backup, restic = make(tmp_path)
     monitor = FakeMonitor()
     backup.monitor = monitor
-
-    backup.back_up(NOW)
     restic.fail_on = "backup"
     backup.back_up(NOW)
+    backup.report_state(NOW)
+    restic.fail_on = None
+    backup.back_up(NOW + timedelta(hours=1))
+    backup.report_state(NOW + timedelta(hours=1))
 
-    assert [(key, success) for key, success, _message in monitor.reports] == [("nightly_backup", True), ("nightly_backup", False)]
-    assert "backup failed" in monitor.reports[1][2]
+    assert states(monitor)[0::2] == [("nightly_backup", False), ("nightly_backup", True)]
+    assert "backup failed" in monitor.reports[0][2]
 
 
-def test_a_restore_test_is_reported_under_its_own_key(tmp_path: Path) -> None:
+def test_no_successful_backup_for_26_hours_is_a_failure(tmp_path: Path) -> None:
     backup, _restic = make(tmp_path)
-    backup.back_up(NOW)
     monitor = FakeMonitor()
     backup.monitor = monitor
+    backup.back_up(NOW)
 
+    backup.report_state(NOW + timedelta(hours=27))
+
+    key, success, message = monitor.reports[0]
+    assert (key, success) == ("nightly_backup", False)
+    assert "2026-12-07" in message
+
+
+def test_a_restore_test_older_than_32_days_is_a_failure(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    backup.back_up(NOW)
     backup.restore_test(NOW)
+    monitor = FakeMonitor()
+    backup.monitor = monitor
+    later = NOW + timedelta(days=33)
+    backup.back_up(later)
 
-    assert [(key, success) for key, success, _message in monitor.reports] == [("nightly_restore-test", True)]
+    backup.report_state(later)
+
+    assert states(monitor) == [("nightly_backup", True), ("nightly_restore-test", False)]
 
 
-def test_a_restore_by_the_owner_is_not_reported(tmp_path: Path) -> None:
-    backup, _restic = make(tmp_path)
+def test_a_failed_restore_test_is_a_failure(tmp_path: Path) -> None:
+    backup, restic = make(tmp_path)
     backup.back_up(NOW)
+    restic.fail_on = "restore"
+    backup.restore_test(NOW)
     monitor = FakeMonitor()
     backup.monitor = monitor
 
-    backup.restore_latest(NOW)
+    backup.report_state(NOW)
 
-    assert monitor.reports == []
+    assert states(monitor) == [("nightly_backup", True), ("nightly_restore-test", False)]
 
 
 def test_a_report_is_a_post_with_the_token(tmp_path: Path) -> None:

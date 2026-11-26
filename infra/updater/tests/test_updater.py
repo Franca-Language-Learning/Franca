@@ -8,7 +8,7 @@ import subprocess
 import sys
 import urllib.request
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -64,7 +64,7 @@ class FakeCompose(fu.Compose):
     def stop(self, *services: str) -> None:
         self._step("stop " + " ".join(services))
 
-    def up(self, *services: str) -> None:
+    def up(self, *services: str, wait: int | None = None) -> None:
         self._step("up " + " ".join(services))
 
 
@@ -402,6 +402,23 @@ def test_a_failed_rollback_is_reported_as_such(tmp_path: Path) -> None:
 # --- the database steps and the schedule
 
 
+def test_tailscale_and_status_are_started_with_a_wait_for_their_health_check(tmp_path: Path) -> None:
+    commands: list[Sequence[str]] = []
+
+    def run(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        commands.append(list(command))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    updater, _log, _verifier = make(tmp_path, fu.Release(fu.Version(1, 1, 0), {"app": APP, "caddy": CADDY, "status": STATUS}))
+    with_tailnet(tmp_path, profiles="monitoring")
+    real = fu.Compose(tmp_path, run=run)
+    updater.compose = real
+
+    updater._start_new_images(fu.EnvFile(tmp_path / ".env").read(), {"FRANCA_STATUS_IMAGE": STATUS})
+
+    assert commands[-1][-4:] == ["--wait", "--wait-timeout", "120", "status"]
+
+
 def test_the_database_steps_run_in_a_one_off_app_container(tmp_path: Path) -> None:
     commands: list[Sequence[str]] = []
 
@@ -583,6 +600,55 @@ def test_each_run_is_reported_to_the_health_monitoring(
     key, success, message = monitor.reports[0]
     assert (key, success) == ("nightly_update", expected)
     assert message == status(tmp_path)["message"]
+
+
+def test_the_state_is_reported_again_later_so_a_restart_of_the_monitoring_loses_nothing(tmp_path: Path) -> None:
+    updater, _log, _verifier = make(tmp_path, NEW)
+    monitor = FakeMonitor()
+    updater.monitor = monitor
+    updater.run_once(NOW)
+
+    updater.report_state(NOW + timedelta(hours=5))
+
+    assert [(key, success) for key, success, _message in monitor.reports] == [("nightly_update", True)] * 2
+
+
+def test_no_successful_run_for_26_hours_is_reported_as_a_failure(tmp_path: Path) -> None:
+    updater, _log, _verifier = make(tmp_path, NEW)
+    monitor = FakeMonitor()
+    updater.monitor = monitor
+    updater.run_once(NOW)
+
+    updater.report_state(NOW + timedelta(hours=27))
+
+    key, success, message = monitor.reports[-1]
+    assert (key, success) == ("nightly_update", False)
+    assert "2026-12-07" in message
+
+
+def test_a_failed_run_stays_a_failure_until_a_run_succeeds(tmp_path: Path) -> None:
+    updater, _log, _verifier = make(tmp_path, NEW)
+    monitor = FakeMonitor()
+    updater.monitor = monitor
+    updater.run_once(NOW)
+    updater.releases = FakeReleases(fu.UpdateError("GitHub did not answer"))
+    updater.run_once(NOW + timedelta(days=1))
+
+    updater.report_state(NOW + timedelta(days=1, hours=1))
+
+    key, success, message = monitor.reports[-1]
+    assert (key, success) == ("nightly_update", False)
+    assert "GitHub did not answer" in message
+
+
+def test_before_the_first_run_the_state_is_reported_as_good(tmp_path: Path) -> None:
+    updater, _log, _verifier = make(tmp_path, NEW)
+    monitor = FakeMonitor()
+    updater.monitor = monitor
+
+    updater.report_state(NOW)
+
+    assert monitor.reports == [("nightly_update", True, "No update has run yet")]
 
 
 def test_a_report_is_a_post_with_the_token_and_the_reason(tmp_path: Path) -> None:

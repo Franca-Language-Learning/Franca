@@ -95,16 +95,19 @@ The `status` container runs Gatus, an open-source health checker, in the `monito
 | The app answers its health check | Every minute | After three failures in a row |
 | The web server (Caddy) answers | Every minute | After three failures in a row |
 | HTTPS on the Tailscale name works, and the certificate has more than 14 days left | Every minute, once the PC has a Tailscale name | After three failures in a row |
-| The tailscale container is connected to the tailnet | Every minute, once the PC has a Tailscale name | After three failures in a row |
-| The nightly update reports a result | After each run | When it fails, or when there is no report for 25 hours |
-| The nightly backup reports a result | After each run | When it fails, or when there is no report for 25 hours |
-| The monthly restore test reports a result | After each test | When it fails, or when there is no report for 31 days |
+| The tailscale container is running and signed in to the tailnet | Every minute, once the PC has a Tailscale name | After three failures in a row |
+| The last nightly update succeeded, less than 26 hours ago | Reported by the updater after each run and every hour | At once |
+| The last nightly backup succeeded, less than 26 hours ago | Reported by the backup after each run and every hour | At once |
+| The last restore test passed, less than 32 days ago | Reported by the backup after each run and every hour | At once |
+| The updater and the backup are running | No report for two hours | At once |
 
-A second message is sent when a problem is over. Inside the bundle, the Tailscale name is an alias for Caddy, so the HTTPS check is made against Caddy's real certificate. The tailscale container's health port is opened on its address in the bundle's network. Connections from the tailnet arrive at the container's loopback address, where nothing listens on that port, so the port cannot be reached from the tailnet.
+A second message is sent when a problem is over. The age of the last success is worked out by the updater and the backup, because Gatus forgets the time of the last report when it restarts. Inside the bundle, the Tailscale name is an alias for Caddy, so the HTTPS check is made against Caddy's real certificate. The tailscale container's health port is opened on its address in the bundle's network. Connections from the tailnet arrive at the container's loopback address, where nothing listens on that port, so the port cannot be reached from the tailnet.
 
 The updater and the backup report each run with the token in the `status_push_token` secret. While that file is empty, nothing is reported. The topic is in the `ntfy_topic` secret. Anyone who knows the topic can read the alerts, so the installer makes it long and random. The start script checks both values against a strict pattern before Gatus reads them, because Gatus inserts the values into its configuration before reading it, so an unexpected character could change the configuration.
 
-The dashboard is at http://127.0.0.1:8081 on the PC (`FRANCA_STATUS_PORT`). The history of the checks is kept in the `status-data` volume. When a release has a new status image and the `monitoring` profile is on, the updater starts it after the app is healthy, as for the tailscale image.
+The dashboard is at http://127.0.0.1:8081 on the PC (`FRANCA_STATUS_PORT`). The history of the checks is kept in the `status-data` volume. When a release has a new status image and the `monitoring` profile is on, the updater starts it after the app is healthy and waits for its health check, as for the tailscale image.
+
+These are not watched yet. The socket proxy is used by the updater alone, so a fault there shows as a failed update. When the status container itself, Docker or the PC stops, no alert can be sent from the PC. An outside check for that is planned with story E01-012. The Tailscale check shows whether the container is running and signed in, and not whether the tailnet can reach it from outside.
 
 `docs/health-alerts.md` has the owner's steps for the ntfy app.
 

@@ -19,11 +19,15 @@ Franca is checked every minute, and again after the nightly update and backup (s
 | Franca/App | The app does not answer. Wait a few minutes. If no "resolved" message follows, restart the PC. |
 | Franca/Web server | The web server does not answer. Wait a few minutes. If no "resolved" message follows, restart the PC. |
 | Franca/HTTPS on the Tailscale name | Franca cannot be opened over HTTPS, or its certificate is about to expire. Check that HTTPS certificates are still switched on in the Tailscale admin console (see `docs/private-network.md`). |
-| Franca/Tailscale | The PC is not connected to your tailnet. Check that the PC has internet access. |
-| Nightly/Update | The nightly update failed or did not run. The version that was running is kept. |
-| Nightly/Backup | The nightly backup failed or did not run. Check that disk J: is connected. |
-| Nightly/Restore test | The monthly restore test failed. Ask for help soon. Until this is fixed, a restore from backup may not work. |
+| Franca/Tailscale | The tailscale container has stopped or is not signed in to your tailnet. Restart the PC. If the alert comes back, check the `franca` machine in the Tailscale admin console. |
+| Nightly/Update | The nightly update failed, has not succeeded for a day, or the updater has stopped. The version that was running is kept. |
+| Nightly/Backup | The nightly backup failed, has not succeeded for a day, or the backup has stopped. Check that disk J: is connected. |
+| Nightly/Restore test | The monthly restore test failed or is overdue. Ask for help soon. Until this is fixed, a restore from backup may not work. |
 
 ## Looking at the dashboard
 
 5. On the PC, open http://127.0.0.1:8081 in a browser. It lists each check with its recent results. The dashboard cannot be opened from other devices.
+
+## When no alert can be sent
+
+6. If the PC is switched off or Docker has stopped, no alert can be sent from the PC. An outside check for that is planned with the story that keeps Franca running on the PC around the clock (E01-012).

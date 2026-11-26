@@ -197,6 +197,8 @@ services:
     environment:
       FRANCA_TAILSCALE_NAME: ${FRANCA_TAILSCALE_NAME:-tailscale-name-not-set.ts.net}
       FRANCA_NTFY_URL: ${FRANCA_NTFY_URL:-https://ntfy.sh}
+      # The checks of HTTPS and Tailscale are made only when the tailnet profile is on.
+      FRANCA_PROFILES: ${COMPOSE_PROFILES:-}
     secrets: [ntfy_topic, status_push_token]
     ports:
       - "127.0.0.1:${FRANCA_STATUS_PORT:-8081}:8080"

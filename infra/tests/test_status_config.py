@@ -90,13 +90,15 @@ def test_tailscale_is_checked_on_an_address_the_tailnet_cannot_reach(gatus: dict
     assert "127.0.0.1" not in entrypoint
 
 
-@pytest.mark.parametrize(("name", "interval"), [("Update", "25h"), ("Backup", "25h"), ("Restore test", "745h")])
-def test_the_nightly_jobs_report_and_a_missed_report_is_an_alert(gatus: dict[str, Any], name: str, interval: str) -> None:
+@pytest.mark.parametrize("name", ["Update", "Backup", "Restore test"])
+def test_the_nightly_jobs_report_and_a_missed_report_is_an_alert(gatus: dict[str, Any], name: str) -> None:
     job = external(gatus, name)
     assert job["token"] == "${STATUS_PUSH_TOKEN}"  # noqa: S105 - the name of a variable, not a token
-    assert job["heartbeat"]["interval"] == interval
+    # The updater and the backup report every hour, so two hours without a report means that one of them has stopped.
+    assert job["heartbeat"]["interval"] == "2h"
     assert [alert["type"] for alert in job["alerts"]] == ["ntfy"]
     assert job["alerts"][0]["failure-threshold"] == 1
+    assert job["alerts"][0]["success-threshold"] == 1
 
 
 def test_alerts_go_to_ntfy_and_say_when_the_problem_is_over(gatus: dict[str, Any]) -> None:
@@ -116,6 +118,13 @@ def test_the_updater_and_the_backup_can_report(compose: dict[str, Any]) -> None:
         service = compose["services"][name]
         assert "status_push_token" in service["secrets"]
         assert service["environment"]["FRANCA_STATUS_URL"] == "http://status:8080"
+
+
+def test_the_tailnet_checks_need_the_tailnet_profile(compose: dict[str, Any]) -> None:
+    assert compose["services"]["status"]["environment"]["FRANCA_PROFILES"] == "${COMPOSE_PROFILES:-}"
+    entrypoint = (INFRA / "status" / "entrypoint.sh").read_text()
+    assert 'case ",${FRANCA_PROFILES:-}," in' in entrypoint
+    assert "*,tailnet,*)" in entrypoint
 
 
 def test_no_secret_value_is_in_the_config() -> None:

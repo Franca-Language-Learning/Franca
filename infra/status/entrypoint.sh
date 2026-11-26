@@ -18,7 +18,15 @@ read_secret() {
     tr -d '\r\n' < "/run/secrets/$1"
 }
 
+newline='
+'
+
+# A value matches when it is one line and the whole line fits the pattern. grep checks each line on its own, so a
+# value with a line break in it is refused first.
 matches() {
+    case "$1" in
+        *"$newline"*) return 1 ;;
+    esac
     printf '%s' "$1" | grep -Eqx "$2"
 }
 
@@ -30,12 +38,16 @@ matches "$FRANCA_NTFY_URL" 'https?://[A-Za-z0-9.:_/-]+' || fail "FRANCA_NTFY_URL
 
 FRANCA_TAILSCALE_NAME="${FRANCA_TAILSCALE_NAME:-tailscale-name-not-set.ts.net}"
 matches "$FRANCA_TAILSCALE_NAME" '[a-z0-9.-]+' || fail "FRANCA_TAILSCALE_NAME is not a plain host name"
-# The checks of HTTPS and Tailscale are switched on once the installer has written the PC's Tailscale name.
-if [ "$FRANCA_TAILSCALE_NAME" = tailscale-name-not-set.ts.net ]; then
-    FRANCA_TAILNET_CHECKS=false
-else
-    FRANCA_TAILNET_CHECKS=true
-fi
+# The checks of HTTPS and Tailscale are switched on when the tailnet profile is on and the installer has written the
+# PC's Tailscale name.
+FRANCA_TAILNET_CHECKS=false
+case ",${FRANCA_PROFILES:-}," in
+    *,tailnet,*)
+        if [ "$FRANCA_TAILSCALE_NAME" != tailscale-name-not-set.ts.net ]; then
+            FRANCA_TAILNET_CHECKS=true
+        fi
+        ;;
+esac
 
 export NTFY_TOPIC STATUS_PUSH_TOKEN FRANCA_NTFY_URL FRANCA_TAILSCALE_NAME FRANCA_TAILNET_CHECKS
 exec /usr/local/bin/gatus
