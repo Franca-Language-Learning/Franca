@@ -70,6 +70,13 @@
         "typescript"
       ],
       "allowedVersions": "<7.0.0 || >=7.1.0"
+    },
+    {
+      "description": "Container images are pinned by digest, with the tag kept for reading.",
+      "matchDatasources": [
+        "docker"
+      ],
+      "pinDigests": true
     }
   ],
   "customManagers": [

@@ -1,0 +1,16 @@
+# Only what the images need is sent to Docker. Private material is never in this repository, but the rules
+# keep local folders (environments, builds, caches) out of the images.
+**/node_modules
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+client/dist
+client/playwright-report
+client/test-results
+.git
+*.sqlite
+*.db
+.env
+.env.*

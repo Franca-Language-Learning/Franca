@@ -25,7 +25,7 @@ PYTHONPATH=src uv run lint-imports
 step "Server, contract and tool tests"
 uv run pytest
 step "Shell scripts"
-uv run shellcheck ../tools/*.sh ../.githooks/* ../scripts/* ../client/scripts/*.sh
+uv run shellcheck ../tools/*.sh ../.githooks/* ../scripts/* ../client/scripts/*.sh ../infra/tests/*.sh
 step "Workflow security"
 uv run zizmor --offline ../.github/workflows
 
