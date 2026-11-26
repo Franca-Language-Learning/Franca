@@ -5,7 +5,7 @@
   "description": "Definitions that the pack file schemas refer to. The lists of allowed values are the same as the CHECK constraints of the catalogue tables in contracts/db/schema.sql and the reference data in contracts/db/seed.sql. They are compared with those files by the tests in contracts/pack/tests.",
   "$defs": {
     "item_key": {
-      "description": "language:type:slug, for example nl:lexeme:zakje or nl:grammar:niet-geen. The type is the middle part of the key, and the pack builder maps it onto an item kind by the type of file the item is defined in. A variety or script subtag may follow the language. Lexeme keys follow the rule in server/src/franca/catalogue/item_keys.py. Up to 139 characters, so that a key with a sense or step suffix (#<slug>) stays within the 200 characters that the database allows.",
+      "description": "language:type:slug, for example nl:lexeme:zakje or nl:grammar:niet-geen. The type is the middle part of the key, and it is mapped onto an item kind by the pack builder, from the type of file that the item is defined in. A variety or script subtag may follow the language. Lexeme keys follow the rule in server/src/franca/catalogue/item_keys.py. Up to 139 characters, so that a key with a sense or step suffix (#<slug>) stays within the 200 characters that the database allows.",
       "type": "string",
       "pattern": "^[a-z]{2,3}(-[a-z0-9]{2,8})?:[a-z]+(-[a-z]+)*:[a-z0-9]+(-[a-z0-9]+)*$",
       "maxLength": 139

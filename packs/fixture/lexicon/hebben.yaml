@@ -36,4 +36,4 @@ verb:
     - auxiliary: fx:lexeme:hebben
       condition_en: Always.
       example: {tl: Fixture perfect sentence., en: Fixture perfect sentence.}
-  rules: [fx:grammar:niet-geen-rule]
+  rules: [fx:grammar:kofschip-rule]

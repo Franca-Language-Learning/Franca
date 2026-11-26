@@ -107,7 +107,7 @@
       }
     },
     "checker_rule": {
-      "description": "A rule for the answer checker, which is run before LanguageTool and the model (story E07-002). The fields of a match are defined in story E07-002 and are kept in match. Not imported into the database: the pack builder copies the rules into the manifest of the pack file.",
+      "description": "A rule for the answer checker, which is run before LanguageTool and the model (story E07-002). The fields of a match are defined in story E07-002 and are kept in match. The rules are not imported into the database. They are kept in the pack file, and where the app reads them from is worked out in story E03-002.",
       "type": "object",
       "required": ["id", "error_type", "description_en"],
       "properties": {
@@ -115,7 +115,7 @@
         "error_type": { "$ref": "common.schema.json#/$defs/error_type" },
         "description_en": { "$ref": "common.schema.json#/$defs/text" },
         "step": { "$ref": "common.schema.json#/$defs/slug" },
-        "match": { "description": "How the rule finds the error, as defined in story E07-002.", "type": "object" }
+        "match": { "description": "The pattern for the error, as defined in story E07-002.", "type": "object" }
       },
       "additionalProperties": false
     }

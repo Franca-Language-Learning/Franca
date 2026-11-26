@@ -45,7 +45,7 @@
     "licence": { "$ref": "common.schema.json#/$defs/licence" },
     "rights_scope": { "$ref": "common.schema.json#/$defs/rights_scope" },
     "attribution": { "$ref": "common.schema.json#/$defs/text" },
-    "source_url": { "type": "string", "format": "uri", "pattern": "^https?://" },
+    "source_url": { "type": "string", "format": "uri", "pattern": "^https?://[^\\s]+$" },
     "synthetic_voice": {
       "description": "true: the voice was made by speech synthesis, and is labelled as such.",
       "type": "boolean",
@@ -53,6 +53,16 @@
     },
     "transcript": { "type": "array", "items": { "$ref": "#/$defs/line" } }
   },
-  "if": { "properties": { "mime": { "pattern": "^(audio|video)/" } } },
-  "else": { "not": { "required": ["transcript"] } }
+  "allOf": [
+    {
+      "description": "A transcript is for audio and video only.",
+      "if": { "properties": { "mime": { "pattern": "^(audio|video)/" } } },
+      "else": { "not": { "required": ["transcript"] } }
+    },
+    {
+      "description": "A file under a licence for private use is kept private. The licences are the rows of catalogue_licence with shareable = 0.",
+      "if": { "properties": { "licence": { "enum": ["owned-copy", "int-noncommercial"] } }, "required": ["licence"] },
+      "then": { "properties": { "rights_scope": { "const": "private" } } }
+    }
+  ]
 }

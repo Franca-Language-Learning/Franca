@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://franca.local/spec/pack.schema.json",
   "title": "Franca pack description (pack.yaml)",
-  "description": "The language of a pack and the definitions that the rest of the pack refers to: its varieties, speakers, paradigm cells, verb classes, word decks, the learner goals it offers and the exams a learner can name. Imported into catalogue_pack, catalogue_pack_version, catalogue_variety and the matching _v tables.",
+  "description": "The language of a pack and the definitions that the rest of the pack refers to: its varieties, speakers, paradigm cells, verb classes, word decks, the learner goals in the pack and the exams a learner can name. Imported into catalogue_pack, catalogue_pack_version, catalogue_variety and the matching _v tables.",
   "type": "object",
   "required": ["language", "version", "name_en", "script", "direction", "varieties"],
   "additionalProperties": false,
@@ -80,7 +80,7 @@
       }
     },
     "goal": {
-      "description": "A learner goal as this pack offers it. The goal keys belong to the app and are listed in study_goal. The pack has a name for each goal and a flag for whether it is offered.",
+      "description": "A learner goal in this pack. The goal keys belong to the app and are listed in study_goal. The pack has a name for each goal and a flag for whether it is offered.",
       "type": "object",
       "required": ["key", "name"],
       "additionalProperties": false,
@@ -101,7 +101,7 @@
         "issuer": { "$ref": "common.schema.json#/$defs/text" },
         "level": { "$ref": "common.schema.json#/$defs/level" },
         "skills": { "$ref": "common.schema.json#/$defs/text" },
-        "url": { "type": "string", "format": "uri", "pattern": "^https?://" },
+        "url": { "type": "string", "format": "uri", "pattern": "^https?://[^\\s]+$" },
         "checked_on": {
           "description": "The day the details were last checked, as YYYY-MM-DD.",
           "type": "string",
@@ -136,17 +136,17 @@
     "direction": { "enum": ["ltr", "rtl"] },
     "varieties": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/variety_entry" } },
     "typology": {
-      "description": "Facts about the language that matter for how it is taught, for example word order, gender or tone. They are read by the course design rules. Not imported into the database: the pack builder (story E03-002) copies it into the manifest of the pack file.",
+      "description": "Facts about the language that matter for how it is taught, for example word order, gender or tone. They are read by the course design rules. They are not imported into the database. They are kept in the pack file, and where the app reads them from is worked out in story E03-002.",
       "type": "object",
       "additionalProperties": { "type": ["string", "boolean", "number"] }
     },
     "fonts": {
-      "description": "The fonts for this language in the interface. Not imported into the database: the pack builder (story E03-002) copies it into the manifest of the pack file.",
+      "description": "The fonts for this language in the interface. They are not imported into the database. They are kept in the pack file, and where the app reads them from is worked out in story E03-002.",
       "type": "array",
       "items": { "$ref": "common.schema.json#/$defs/text" }
     },
     "reading_aids": {
-      "description": "Aids offered while reading, such as a transliteration or tone marks. Not imported into the database: the pack builder (story E03-002) copies it into the manifest of the pack file.",
+      "description": "Aids offered while reading, such as a transliteration or tone marks. They are not imported into the database. They are kept in the pack file, and where the app reads them from is worked out in story E03-002.",
       "type": "array",
       "items": { "$ref": "common.schema.json#/$defs/slug" }
     },

@@ -2,8 +2,8 @@
 
 Each file type in a language pack has a JSON Schema in contracts/pack. The made-up pack in packs/fixture has an example
 of every file type, and every example has to pass its schema. The lists of allowed values in the schemas have to match
-the CHECK constraints of the tables that the pack is imported into (contracts/db/schema.sql), so that a file that passes
-its schema can also be imported.
+the CHECK constraints in contracts/db/schema.sql and the reference data in contracts/db/seed.sql, so that a file that
+passes its schema can also be imported.
 """
 
 import json
@@ -55,7 +55,8 @@ def registry() -> Registry[Any]:
 
 @cache
 def validator(name: str) -> Draft202012Validator:
-    # The format checker makes "format": "date" and "format": "uri" checks, not only notes.
+    # With the format checker, "format": "date" is checked as a calendar date. "format": "uri" stays a note, because
+    # rfc3987 is not installed, and a pattern is used for it instead.
     return Draft202012Validator(load_schema(name), registry=registry(), format_checker=Draft202012Validator.FORMAT_CHECKER)
 
 
@@ -198,9 +199,15 @@ def test_an_exam_date_that_is_not_a_date_is_refused() -> None:
     assert ("exams/0/checked_on", "pattern") in errors("pack.schema.json", pack)
 
 
+def test_an_exam_date_that_is_not_on_the_calendar_is_refused() -> None:
+    pack = fixture("pack.yaml")
+    pack["exams"][0]["checked_on"] = "2026-13-45"
+    assert ("exams/0/checked_on", "format") in errors("pack.schema.json", pack)
+
+
 def test_an_exam_address_that_is_not_a_web_address_is_refused() -> None:
     pack = fixture("pack.yaml")
-    pack["exams"][0]["url"] = "not a url"
+    pack["exams"][0]["url"] = "https://exa mple.org/"
     assert ("exams/0/url", "pattern") in errors("pack.schema.json", pack)
 
 
@@ -215,6 +222,19 @@ def test_a_media_file_needs_a_full_sha256_and_a_licence_from_the_list() -> None:
     assert ("sha256", "pattern") in errors("media.schema.json", media | {"sha256": "abc123"})
     assert ("", "required") in errors("media.schema.json", without(media, "licence"))
     assert ("licence", "enum") in errors("media.schema.json", media | {"licence": "all-rights-mine"})
+
+
+def test_a_file_under_a_private_licence_is_kept_private() -> None:
+    media = fixture("media/fixture-greeting.yaml") | {"licence": "owned-copy", "rights_scope": "shareable"}
+    assert ("rights_scope", "const") in errors("media.schema.json", media)
+
+
+def test_the_private_licences_are_the_ones_the_database_does_not_share() -> None:
+    rows = re.search(r"INSERT INTO catalogue_licence \([^)]*\) VALUES\n(.*?);\n", SEED, re.DOTALL)
+    assert rows
+    not_shareable = set(re.findall(r"^\s*\('([^']*)'.*, 0\),?$", rows.group(1), re.MULTILINE))
+    rule = load_schema("media.schema.json")["allOf"][1]
+    assert set(rule["if"]["properties"]["licence"]["enum"]) == not_shareable
 
 
 def test_a_picture_has_no_transcript() -> None:
