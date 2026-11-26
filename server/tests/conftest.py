@@ -37,9 +37,10 @@ class FrancaTestClient(TestClient):
 
     def request(self, method: str, url: Any, **kwargs: Any) -> Any:  # type: ignore[override]
         if method.upper() not in {"GET", "HEAD", "OPTIONS"}:
-            if "franca_csrf" not in self.cookies:
+            name = "__Host-franca_csrf" if str(self.base_url).startswith("https") else "franca_csrf"
+            if name not in self.cookies:
                 super().request("GET", "/api/v1/health")
             headers = dict(kwargs.pop("headers", None) or {})
-            headers.setdefault("X-CSRF-Token", self.cookies.get("franca_csrf", ""))
+            headers.setdefault("X-CSRF-Token", self.cookies.get(name, ""))
             kwargs["headers"] = headers
         return super().request(method, url, **kwargs)

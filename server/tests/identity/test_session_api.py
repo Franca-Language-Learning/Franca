@@ -43,7 +43,7 @@ def test_the_devices_need_a_signed_in_learner(client: TestClient) -> None:
 
 
 def test_a_learner_sees_their_devices_and_which_one_this_is(client: TestClient, database_path: Path) -> None:
-    client.cookies.set("franca_session", new_session(database_path))
+    client.cookies.set("__Host-franca_session", new_session(database_path))
     new_session(database_path, "Mozilla/5.0 (Linux; Android 15) Chrome/140.0 Mobile Safari/537.36")
 
     sessions = client.get("/api/v1/sessions").json()["sessions"]
@@ -55,7 +55,7 @@ def test_a_learner_sees_their_devices_and_which_one_this_is(client: TestClient, 
 
 
 def test_a_learner_signs_out_another_device(client: TestClient, database_path: Path) -> None:
-    client.cookies.set("franca_session", new_session(database_path))
+    client.cookies.set("__Host-franca_session", new_session(database_path))
     phone = new_session(database_path, "Mozilla/5.0 (iPhone) Safari/604.1")
     phone_id = next(s["id"] for s in client.get("/api/v1/sessions").json()["sessions"] if not s["current"])
 
@@ -63,12 +63,12 @@ def test_a_learner_signs_out_another_device(client: TestClient, database_path: P
     assert client.delete(f"/api/v1/sessions/{phone_id}").status_code == 404
 
     other = FrancaTestClient(client.app, base_url=ORIGIN)
-    other.cookies.set("franca_session", phone)
+    other.cookies.set("__Host-franca_session", phone)
     assert other.get("/api/v1/me").status_code == 401
 
 
 def test_a_learner_signs_out_on_all_other_devices(client: TestClient, database_path: Path) -> None:
-    client.cookies.set("franca_session", new_session(database_path))
+    client.cookies.set("__Host-franca_session", new_session(database_path))
     for _ in range(3):
         new_session(database_path)
 
@@ -80,7 +80,7 @@ def test_a_learner_signs_out_on_all_other_devices(client: TestClient, database_p
 
 
 def test_removing_a_passkey_signs_out_the_devices_that_used_it(client: TestClient, database_path: Path) -> None:
-    client.cookies.set("franca_session", new_session(database_path))
+    client.cookies.set("__Host-franca_session", new_session(database_path))
     device = PasskeyDevice(ORIGIN)
     options = client.post("/api/v1/passkeys/options").json()["publicKey"]
     passkey_id = client.post("/api/v1/passkeys", json={"credential": device.register(options)}).json()["id"]

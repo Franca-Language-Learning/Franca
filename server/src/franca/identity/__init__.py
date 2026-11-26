@@ -15,11 +15,13 @@ from franca.identity.accounts import (
     end_learner_session,
     end_other_sessions,
     end_session,
+    end_session_by_id,
     invite,
     learner_for_session,
     list_invitations,
     list_sessions,
     normalise_email,
+    session_id_for_token,
     sign_in_with_google,
     start_session,
 )
@@ -54,6 +56,8 @@ from franca.identity.recovery import (
 )
 
 __all__ = [
+    "session_id_for_token",
+    "end_session_by_id",
     "list_sessions",
     "end_other_sessions",
     "end_learner_session",

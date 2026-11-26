@@ -29,7 +29,7 @@ def signed_in(client: TestClient, database_path: Path, minutes_ago: int = 0) -> 
         )
         token = identity.start_session(connection, learner, "pytest", utc_now() - timedelta(minutes=minutes_ago))
     engine.dispose()
-    client.cookies.set("franca_session", token)
+    client.cookies.set("__Host-franca_session", token)
 
 
 def test_the_codes_need_a_signed_in_learner(client: TestClient) -> None:
@@ -67,7 +67,7 @@ def test_a_learner_signs_in_with_a_code(client: TestClient, database_path: Path)
 
     assert response.status_code == 200
     assert response.json() == {"displayName": "Nik", "role": "owner"}
-    assert "franca_session=" in response.headers["set-cookie"]
+    assert "__Host-franca_session=" in response.headers["set-cookie"]
     assert client.get("/api/v1/recovery-codes").json()["unused"] == 9
 
 

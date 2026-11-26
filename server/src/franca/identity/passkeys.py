@@ -276,11 +276,11 @@ def remove_passkey(connection: Connection, learner: Learner, passkey_id: str, no
     ).first()
     if owned is None:
         raise LookupError("No such passkey")
-    end_passkey_sessions(connection, credential_id, now)
+    ended = end_passkey_sessions(connection, credential_id, now)
     removed = connection.execute(
         text("DELETE FROM identity_passkey WHERE credential_id = :id AND learner_id = :learner"),
         {"id": credential_id, "learner": learner.learner_id},
     ).rowcount
     if not removed:
         raise LookupError("No such passkey")
-    record_event(connection, learner.learner_id, "passkey_removed", now)
+    record_event(connection, learner.learner_id, "passkey_removed", now, {"sessions_ended": str(ended)})

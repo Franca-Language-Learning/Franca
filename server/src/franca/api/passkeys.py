@@ -14,14 +14,14 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import APIRouter, Cookie, HTTPException, Request, Response, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 
 from franca import identity
-from franca.api.auth import Db, Me, RecentlySignedIn, SignedIn, set_session_cookie
+from franca.api.auth import Db, Me, RecentlySignedIn, SignedIn, session_token, set_session_cookie
 from franca.platform import Settings, utc_now
 
 CHALLENGE_KEY = "passkey_challenge"
@@ -242,15 +242,14 @@ def passkey_router(settings: Settings) -> APIRouter:
             },
         },
     )
-    def sign_in(
-        body: SignInRequest, request: Request, response: Response, db: Db, franca_session: Annotated[str | None, Cookie()] = None
-    ) -> Me:
+    def sign_in(body: SignInRequest, request: Request, response: Response, db: Db) -> Me:
+        earlier = session_token(request)
         challenge = _take_challenge(request, store, "sign_in")
         now = utc_now()
         try:
             learner = identity.sign_in_with_passkey(db, body.credential, challenge=challenge, rp=rp, now=now)
-            if franca_session:
-                identity.end_session(db, franca_session, now)  # an earlier session in this browser is closed
+            if earlier:
+                identity.end_session(db, earlier, now)  # an earlier session in this browser is closed
             token = identity.start_session(db, learner, request.headers.get("user-agent"), now, passkey_id=str(body.credential["rawId"]))
         except identity.PasskeyUnknown:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, UNKNOWN) from None

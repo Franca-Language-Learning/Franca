@@ -364,25 +364,10 @@ paths:
   /api/v1/auth/google/callback:
     get:
       operationId: finishGoogleSignIn
-      parameters:
-      - in: cookie
-        name: franca_session
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Franca Session
       responses:
         '303':
           description: To the home page, or to the sign-in page with the reason it
             failed
-        '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
       summary: Where Google sends the browser back after sign-in
       tags:
       - identity
@@ -400,15 +385,6 @@ paths:
   /api/v1/auth/passkey:
     post:
       operationId: signInWithPasskey
-      parameters:
-      - in: cookie
-        name: franca_session
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Franca Session
       requestBody:
         content:
           application/json:
@@ -452,15 +428,6 @@ paths:
   /api/v1/auth/recovery-code:
     post:
       operationId: signInWithRecoveryCode
-      parameters:
-      - in: cookie
-        name: franca_session
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Franca Session
       requestBody:
         content:
           application/json:
@@ -494,24 +461,9 @@ paths:
   /api/v1/auth/sign-out:
     post:
       operationId: signOut
-      parameters:
-      - in: cookie
-        name: franca_session
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Franca Session
       responses:
         '204':
           description: Successful Response
-        '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
       summary: Ends the sign-in session on this device
       tags:
       - identity
@@ -531,15 +483,6 @@ paths:
   /api/v1/invitations:
     get:
       operationId: listInvitations
-      parameters:
-      - in: cookie
-        name: franca_session
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Franca Session
       responses:
         '200':
           content:
@@ -551,26 +494,11 @@ paths:
           description: Not signed in
         '403':
           description: Only the owner can see invitations
-        '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
       summary: The invitations, newest first (owner only)
       tags:
       - identity
     post:
       operationId: createInvitation
-      parameters:
-      - in: cookie
-        name: franca_session
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Franca Session
       requestBody:
         content:
           application/json:
@@ -600,15 +528,6 @@ paths:
   /api/v1/me:
     get:
       operationId: getMe
-      parameters:
-      - in: cookie
-        name: franca_session
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Franca Session
       responses:
         '200':
           content:
@@ -618,27 +537,12 @@ paths:
           description: Successful Response
         '401':
           description: Not signed in
-        '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
       summary: The signed-in learner
       tags:
       - identity
   /api/v1/passkeys:
     get:
       operationId: listPasskeys
-      parameters:
-      - in: cookie
-        name: franca_session
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Franca Session
       responses:
         '200':
           content:
@@ -648,26 +552,11 @@ paths:
           description: Successful Response
         '401':
           description: Not signed in
-        '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
       summary: The signed-in learner's passkeys
       tags:
       - identity
     post:
       operationId: addPasskey
-      parameters:
-      - in: cookie
-        name: franca_session
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Franca Session
       requestBody:
         content:
           application/json:
@@ -699,15 +588,6 @@ paths:
   /api/v1/passkeys/options:
     post:
       operationId: getPasskeyRegistrationOptions
-      parameters:
-      - in: cookie
-        name: franca_session
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Franca Session
       responses:
         '200':
           content:
@@ -720,12 +600,6 @@ paths:
         '403':
           description: The learner signed in more than 15 minutes ago (sign-in-again),
             or has the most passkeys allowed
-        '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
       summary: Options for adding a passkey on this device
       tags:
       - identity
@@ -739,14 +613,6 @@ paths:
         schema:
           title: Passkeyid
           type: string
-      - in: cookie
-        name: franca_session
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Franca Session
       responses:
         '204':
           description: Successful Response
@@ -766,15 +632,6 @@ paths:
   /api/v1/recovery-codes:
     get:
       operationId: getRecoveryCodeStatus
-      parameters:
-      - in: cookie
-        name: franca_session
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Franca Session
       responses:
         '200':
           content:
@@ -784,26 +641,11 @@ paths:
           description: Successful Response
         '401':
           description: Not signed in
-        '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
       summary: How many of the signed-in learner's recovery codes are left
       tags:
       - identity
     post:
       operationId: makeRecoveryCodes
-      parameters:
-      - in: cookie
-        name: franca_session
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Franca Session
       responses:
         '201':
           content:
@@ -815,27 +657,12 @@ paths:
           description: Not signed in
         '403':
           description: The learner signed in more than 15 minutes ago (sign-in-again)
-        '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
       summary: Makes ten new recovery codes; the old ones stop working
       tags:
       - identity
   /api/v1/sessions:
     get:
       operationId: listSessions
-      parameters:
-      - in: cookie
-        name: franca_session
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Franca Session
       responses:
         '200':
           content:
@@ -845,27 +672,12 @@ paths:
           description: Successful Response
         '401':
           description: Not signed in
-        '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
       summary: The devices the learner is signed in on
       tags:
       - identity
   /api/v1/sessions/sign-out-others:
     post:
       operationId: signOutOtherDevices
-      parameters:
-      - in: cookie
-        name: franca_session
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Franca Session
       responses:
         '200':
           content:
@@ -875,12 +687,6 @@ paths:
           description: Successful Response
         '401':
           description: Not signed in
-        '422':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-          description: Validation Error
       summary: Signs out every device of the learner except this one
       tags:
       - identity
@@ -894,14 +700,6 @@ paths:
         schema:
           title: Sessionid
           type: integer
-      - in: cookie
-        name: franca_session
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Franca Session
       responses:
         '204':
           description: Successful Response

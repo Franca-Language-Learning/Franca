@@ -6,7 +6,8 @@ import type { components, paths } from "./schema";
 export type Health = components["schemas"]["Health"];
 
 const BASE_URL = globalThis.location?.origin ?? "http://localhost";
-const ANTI_FORGERY_COOKIE = "franca_csrf";
+// Over https the cookie is called __Host-franca_csrf, so another computer in the same tailnet cannot set it.
+const ANTI_FORGERY_COOKIES = ["__Host-franca_csrf", "franca_csrf"];
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 function readCookie(name: string): string | undefined {
@@ -17,13 +18,21 @@ function readCookie(name: string): string | undefined {
     .find(([key]) => key === name)?.[1];
 }
 
+function antiForgeryToken(): string | undefined {
+  for (const name of ANTI_FORGERY_COOKIES) {
+    const value = readCookie(name);
+    if (value) return value;
+  }
+  return undefined;
+}
+
 /** A request that changes something carries the anti-forgery token from the franca_csrf cookie in the X-CSRF-Token
  * header (story E02-003). The server gives the cookie with any answer, so if the browser has none yet, the health
  * check is asked for first. */
 async function withAntiForgeryToken(request: Request): Promise<Request> {
   if (SAFE_METHODS.has(request.method)) return request;
-  if (!readCookie(ANTI_FORGERY_COOKIE)) await globalThis.fetch(new Request(new URL("/api/v1/health", BASE_URL)));
-  const token = readCookie(ANTI_FORGERY_COOKIE);
+  if (!antiForgeryToken()) await globalThis.fetch(new Request(new URL("/api/v1/health", BASE_URL)));
+  const token = antiForgeryToken();
   if (!token) return request;
   const headers = new Headers(request.headers);
   headers.set("X-CSRF-Token", token);

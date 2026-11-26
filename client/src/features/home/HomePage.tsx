@@ -8,7 +8,14 @@ export function HomePage() {
   const health = useQuery({ queryKey: ["health"], queryFn: ({ signal }) => getHealth(signal) });
   const me = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => getMe(signal) });
   const queryClient = useQueryClient();
-  const leave = useMutation({ mutationFn: signOut, onSuccess: () => queryClient.setQueryData(["me"], null) });
+  // After signing out, nothing of the learner's is kept in the page: the cache is emptied and "me" is set to nobody.
+  const leave = useMutation({
+    mutationFn: signOut,
+    onSuccess: () => {
+      queryClient.clear();
+      queryClient.setQueryData(["me"], null);
+    },
+  });
 
   return (
     <main>

@@ -225,6 +225,22 @@ def learner_for_session(connection: Connection, token: str, now: datetime) -> Se
     return SessionCheck(learner, extended=True, signed_in_at=row.created_at)
 
 
+def session_id_for_token(connection: Connection, token: str, now: datetime) -> int | None:
+    """The id of the open session with this token, or None."""
+    found = connection.execute(
+        text("SELECT auth_session_id FROM identity_auth_session WHERE token_hash = :hash AND revoked_at IS NULL AND expires_at > :now"),
+        {"hash": _token_hash(token), "now": iso(now)},
+    ).scalar_one_or_none()
+    return int(found) if found is not None else None
+
+
+def end_session_by_id(connection: Connection, session_id: int, now: datetime) -> None:
+    connection.execute(
+        text("UPDATE identity_auth_session SET revoked_at = :now WHERE auth_session_id = :id AND revoked_at IS NULL"),
+        {"now": iso(now), "id": session_id},
+    )
+
+
 def end_session(connection: Connection, token: str, now: datetime) -> None:
     connection.execute(
         text("UPDATE identity_auth_session SET revoked_at = :now WHERE token_hash = :hash AND revoked_at IS NULL"),
@@ -287,7 +303,7 @@ def end_learner_session(connection: Connection, learner: Learner, session_id: in
     ).rowcount
     if not ended:
         raise LookupError("No such session")
-    record_event(connection, learner.learner_id, "sign_out", now, {"scope": "one_device"})
+    record_event(connection, learner.learner_id, "sign_out", now, {"scope": "one_device", "session": str(session_id)})
 
 
 def end_other_sessions(connection: Connection, learner: Learner, *, current_token: str, now: datetime) -> int:
@@ -295,19 +311,25 @@ def end_other_sessions(connection: Connection, learner: Learner, *, current_toke
     ended = connection.execute(
         text(
             "UPDATE identity_auth_session SET revoked_at = :now "
-            "WHERE learner_id = :learner AND revoked_at IS NULL AND token_hash != :current"
+            "WHERE learner_id = :learner AND revoked_at IS NULL AND expires_at > :now AND token_hash != :current"
         ),
         {"now": iso(now), "learner": learner.learner_id, "current": _token_hash(current_token)},
     ).rowcount
-    record_event(connection, learner.learner_id, "sign_out", now, {"scope": "other_devices"})
+    if ended:
+        record_event(connection, learner.learner_id, "sign_out", now, {"scope": "other_devices", "sessions": str(ended)})
     return int(ended)
 
 
-def end_passkey_sessions(connection: Connection, credential_id: bytes, now: datetime) -> None:
-    """Ends the sessions that were started with this passkey, before the passkey is removed."""
-    connection.execute(
-        text("UPDATE identity_auth_session SET revoked_at = :now WHERE passkey_credential_id = :id AND revoked_at IS NULL"),
-        {"now": iso(now), "id": credential_id},
+def end_passkey_sessions(connection: Connection, credential_id: bytes, now: datetime) -> int:
+    """Ends the sessions that were started with this passkey, before the passkey is removed, and returns how many."""
+    return int(
+        connection.execute(
+            text(
+                "UPDATE identity_auth_session SET revoked_at = :now "
+                "WHERE passkey_credential_id = :id AND revoked_at IS NULL AND expires_at > :now"
+            ),
+            {"now": iso(now), "id": credential_id},
+        ).rowcount
     )
 
 

@@ -2,7 +2,7 @@
 
 Sign-in with Google uses OpenID Connect with PKCE through Authlib. Authlib checks the state, the nonce and the
 ID token's signature and expiry; the issuer and the audience are checked with the claims options below. The state of a sign-in in progress is kept in a short-lived signed
-cookie (franca_oauth); the sign-in session is a random token in the franca_session cookie, of which only a hash is
+cookie (franca_oauth); the sign-in session is a random token in the session cookie, of which only a hash is
 stored.
 """
 
@@ -12,7 +12,7 @@ from typing import Annotated, Any
 
 import httpx2
 from authlib.integrations.starlette_client import OAuth, OAuthError
-from fastapi import APIRouter, Cookie, Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from joserfc.errors import JoseError
 from pydantic import BaseModel, ConfigDict, Field
@@ -24,6 +24,10 @@ from franca import identity
 from franca.platform import Settings, iso, utc_now
 
 SESSION_COOKIE = "franca_session"
+# Over https the cookie names start with __Host-, so the browser accepts them only from this host, over https, for
+# the whole site. Other computers in the same tailnet share the site (tailXXXX.ts.net) and could otherwise set them.
+SECURE_PREFIX = "__Host-"
+PREVIOUS_SESSION_KEY = "previous_session"
 RECENT_SIGN_IN = timedelta(minutes=15)
 GOOGLE_ISSUER = "https://accounts.google.com"
 GOOGLE_DISCOVERY = f"{GOOGLE_ISSUER}/.well-known/openid-configuration"
@@ -100,9 +104,18 @@ def connection(request: Request) -> Iterator[Connection]:
 Db = Annotated[Connection, Depends(connection, scope="function")]
 
 
+def session_cookie_name(settings: Settings) -> str:
+    return SECURE_PREFIX + SESSION_COOKIE if settings.cookies_secure else SESSION_COOKIE
+
+
+def session_token(request: Request) -> str | None:
+    """The session token in the request's cookie, if there is one."""
+    return request.cookies.get(session_cookie_name(request.app.state.settings)) or None
+
+
 def set_session_cookie(response: Response, settings: Settings, token: str) -> None:
     response.set_cookie(
-        SESSION_COOKIE,
+        session_cookie_name(settings),
         token,
         max_age=identity.SESSION_DAYS * 24 * 3600,
         httponly=True,
@@ -113,15 +126,14 @@ def set_session_cookie(response: Response, settings: Settings, token: str) -> No
     )
 
 
-def current_session(
-    request: Request, response: Response, db: Db, franca_session: Annotated[str | None, Cookie()] = None
-) -> identity.SessionCheck:
-    check = identity.learner_for_session(db, franca_session, utc_now()) if franca_session else None
-    if check is None:
+def current_session(request: Request, response: Response, db: Db) -> identity.SessionCheck:
+    token = session_token(request)
+    check = identity.learner_for_session(db, token, utc_now()) if token else None
+    if check is None or token is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not signed in")
-    if check.extended and franca_session:
+    if check.extended:
         # The session was extended in the database, so the cookie in the browser is extended to match.
-        set_session_cookie(response, request.app.state.settings, franca_session)
+        set_session_cookie(response, request.app.state.settings, token)
     return check
 
 
@@ -135,6 +147,12 @@ def recently_signed_in(check: Annotated[identity.SessionCheck, Depends(current_s
     if check.signed_in_at < iso(utc_now() - RECENT_SIGN_IN):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "sign-in-again")
     return check.learner
+
+
+def _session_id_of(request: Request, token: str) -> int | None:
+    engine: Engine = request.app.state.engine
+    with engine.begin() as connection:
+        return identity.session_id_for_token(connection, token, utc_now())
 
 
 SignedIn = Annotated[identity.Learner, Depends(current_learner)]
@@ -159,6 +177,11 @@ def auth_router(settings: Settings, oauth: OAuth | None) -> APIRouter:
         if oauth is None:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Sign-in with Google is not configured")
         redirect_uri = f"{settings.public_url}/api/v1/auth/google/callback"
+        # Google sends the browser back from another site, so the Strict session cookie is not sent to the callback.
+        # The session that is open now is noted here, where the cookie is sent, and the callback ends it.
+        token = session_token(request)
+        if token:
+            request.session[PREVIOUS_SESSION_KEY] = await run_in_threadpool(_session_id_of, request, token)
         try:
             return await oauth.google.authorize_redirect(request, redirect_uri)
         except SIGN_IN_ERRORS:
@@ -172,7 +195,7 @@ def auth_router(settings: Settings, oauth: OAuth | None) -> APIRouter:
         response_class=RedirectResponse,
         responses={303: {"description": "To the home page, or to the sign-in page with the reason it failed"}},
     )
-    async def callback(request: Request, db: Db, franca_session: Annotated[str | None, Cookie()] = None) -> Any:
+    async def callback(request: Request, db: Db) -> Any:
         if oauth is None or settings.google is None:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Sign-in with Google is not configured")
         claims_options = {
@@ -200,19 +223,20 @@ def auth_router(settings: Settings, oauth: OAuth | None) -> APIRouter:
                 owner_email=settings.owner_email,
                 now=now,
             )
-            if franca_session:
-                identity.end_session(db, franca_session, now)  # an earlier session in this browser is closed
+            previous = request.session.pop(PREVIOUS_SESSION_KEY, None)
+            if isinstance(previous, int):
+                identity.end_session_by_id(db, previous, now)  # the earlier session in this browser is closed
             return identity.start_session(db, learner, request.headers.get("user-agent"), now)
 
         try:
-            session_token = await run_in_threadpool(finish)
+            new_token = await run_in_threadpool(finish)
         except identity.SignInRefused as refusal:
             return refused(refusal.reason.replace("_", "-"))
         except IntegrityError, OperationalError:
             # For example two first sign-ins of the owner at the same moment: the second one is refused.
             return refused("failed")
         response = RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
-        set_session_cookie(response, settings, session_token)
+        set_session_cookie(response, settings, new_token)
         return response
 
     @router.get(
@@ -228,11 +252,12 @@ def auth_router(settings: Settings, oauth: OAuth | None) -> APIRouter:
         status_code=status.HTTP_204_NO_CONTENT,
         response_class=Response,
     )
-    def sign_out(db: Db, franca_session: Annotated[str | None, Cookie()] = None) -> Response:
-        if franca_session:
-            identity.end_session(db, franca_session, utc_now())
+    def sign_out(request: Request, db: Db) -> Response:
+        token = session_token(request)
+        if token:
+            identity.end_session(db, token, utc_now())
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
-        response.delete_cookie(SESSION_COOKIE, path="/", secure=settings.cookies_secure, httponly=True, samesite="strict")
+        response.delete_cookie(session_cookie_name(settings), path="/", secure=settings.cookies_secure, httponly=True, samesite="strict")
         return response
 
     @router.post(

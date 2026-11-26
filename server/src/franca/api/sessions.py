@@ -1,12 +1,12 @@
 """Routes for the signed-in learner's devices (story E02-003): the list, and signing out one or all other devices."""
 
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import APIRouter, Cookie, HTTPException, Response, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from franca import identity
-from franca.api.auth import Db, SignedIn
+from franca.api.auth import Db, SignedIn, session_token
 from franca.platform import utc_now
 
 
@@ -67,8 +67,8 @@ def session_router() -> APIRouter:
         response_model=SessionList,
         responses=unauthorised,
     )
-    def sessions(db: Db, learner: SignedIn, franca_session: Annotated[str | None, Cookie()] = None) -> SessionList:
-        found = identity.list_sessions(db, learner, current_token=franca_session, now=utc_now())
+    def sessions(request: Request, db: Db, learner: SignedIn) -> SessionList:
+        found = identity.list_sessions(db, learner, current_token=session_token(request), now=utc_now())
         return SessionList(
             sessions=[
                 SessionOut(
@@ -105,7 +105,8 @@ def session_router() -> APIRouter:
         response_model=SignedOut,
         responses=unauthorised,
     )
-    def sign_out_others(db: Db, learner: SignedIn, franca_session: Annotated[str | None, Cookie()] = None) -> SignedOut:
-        return SignedOut(signedOut=identity.end_other_sessions(db, learner, current_token=franca_session or "", now=utc_now()))
+    def sign_out_others(request: Request, db: Db, learner: SignedIn) -> SignedOut:
+        # SignedIn has checked that the request has a valid session token.
+        return SignedOut(signedOut=identity.end_other_sessions(db, learner, current_token=session_token(request) or "", now=utc_now()))
 
     return router
