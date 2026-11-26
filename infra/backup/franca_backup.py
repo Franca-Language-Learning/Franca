@@ -241,7 +241,7 @@ class Monitor:
                 headers={"Authorization": f"Bearer {token}"},
             )
             self.send(request)
-        except Exception as error:  # noqa: BLE001 - a report that cannot be sent never stops the backup
+        except Exception as error:  # noqa: BLE001 - the backup goes on when a report cannot be sent
             print(json.dumps({"result": "report-not-sent", "message": str(error)}), flush=True)
 
 
@@ -384,9 +384,9 @@ class Backup:
 
     def report_state(self, now: datetime) -> None:
         """Reports the state of the backup and of the restore test to health monitoring. A state is good while the last
-        run succeeded and the last success is recent enough (STALE_AFTER). The service reports after each run and every
-        hour, so a restart of the status container, which forgets when the last report came, does not hide a missed
-        run."""
+        run succeeded and the last success is recent enough (STALE_AFTER). The state is reported after each run and every
+        hour. Gatus forgets the time of the last report when the status container restarts, so without these reports a
+        missed run would not be noticed."""
         if self.monitor is None:
             return
         for name, (key, success, stamp, what) in MONITORED.items():

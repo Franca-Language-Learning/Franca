@@ -94,12 +94,12 @@ The `status` container runs Gatus, an open-source health checker, in the `monito
 |---|---|---|
 | The app answers its health check | Every minute | After three failures in a row |
 | The web server (Caddy) answers | Every minute | After three failures in a row |
-| HTTPS on the Tailscale name works, and the certificate has more than 14 days left | Every minute, once the PC has a Tailscale name | After three failures in a row |
-| The tailscale container is running and signed in to the tailnet | Every minute, once the PC has a Tailscale name | After three failures in a row |
+| HTTPS on the Tailscale name works, and the certificate has more than 14 days left | Every minute, with the private network on | After three failures in a row |
+| The tailscale container is running and signed in to the tailnet | Every minute, with the private network on | After three failures in a row |
 | The last nightly update succeeded, less than 26 hours ago | Reported by the updater after each run and every hour | At once |
 | The last nightly backup succeeded, less than 26 hours ago | Reported by the backup after each run and every hour | At once |
 | The last restore test passed, less than 32 days ago | Reported by the backup after each run and every hour | At once |
-| The updater and the backup are running | No report for two hours | At once |
+| The updater and the backup are running | Reported every hour | When no report comes for two hours |
 
 A second message is sent when a problem is over. The age of the last success is worked out by the updater and the backup, because Gatus forgets the time of the last report when it restarts. Inside the bundle, the Tailscale name is an alias for Caddy, so the HTTPS check is made against Caddy's real certificate. The tailscale container's health port is opened on its address in the bundle's network. Connections from the tailnet arrive at the container's loopback address, where nothing listens on that port, so the port cannot be reached from the tailnet.
 
@@ -107,7 +107,7 @@ The updater and the backup report each run with the token in the `status_push_to
 
 The dashboard is at http://127.0.0.1:8081 on the PC (`FRANCA_STATUS_PORT`). The history of the checks is kept in the `status-data` volume. When a release has a new status image and the `monitoring` profile is on, the updater starts it after the app is healthy and waits for its health check, as for the tailscale image.
 
-These are not watched yet. The socket proxy is used by the updater alone, so a fault there shows as a failed update. When the status container itself, Docker or the PC stops, no alert can be sent from the PC. An outside check for that is planned with story E01-012. The Tailscale check shows whether the container is running and signed in, and not whether the tailnet can reach it from outside.
+Some faults are not watched yet. The socket proxy is used by the updater alone, so a fault there shows as a failed update. When the status container itself, Docker or the PC stops, no alert can be sent from the PC. An outside check for that is planned with story E01-012. The Tailscale check shows whether the container is running and signed in. It does not show whether the PC can be reached from other devices on the tailnet.
 
 `docs/health-alerts.md` has the owner's steps for the ntfy app.
 

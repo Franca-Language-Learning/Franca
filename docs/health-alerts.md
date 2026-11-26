@@ -30,4 +30,4 @@ Franca is checked every minute, and again after the nightly update and backup (s
 
 ## When no alert can be sent
 
-6. If the PC is switched off or Docker has stopped, no alert can be sent from the PC. An outside check for that is planned with the story that keeps Franca running on the PC around the clock (E01-012).
+6. If the PC is switched off or Docker has stopped, no alert can be sent from the PC. A check from outside the PC is planned for later (story E01-012).

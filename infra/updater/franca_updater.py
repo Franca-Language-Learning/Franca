@@ -454,7 +454,7 @@ class Monitor:
                 headers={"Authorization": f"Bearer {token}"},
             )
             self.send(request)
-        except Exception as error:  # noqa: BLE001 - a report that cannot be sent never stops the updater
+        except Exception as error:  # noqa: BLE001 - the updater goes on when a report cannot be sent
             print(json.dumps({"result": "report-not-sent", "message": str(error)}), flush=True)
 
 
@@ -596,8 +596,8 @@ class Updater:
 
     def report_state(self, now: datetime) -> None:
         """Reports the updater's state to health monitoring: good while the last run succeeded and the last success is
-        less than 26 hours old. It is reported after each run and every hour, so a restart of the status container,
-        which forgets when the last report came, does not hide a missed run."""
+        less than 26 hours old. It is reported after each run and every hour. Gatus forgets the time of the last report
+        when the status container restarts, so without these reports a missed run would not be noticed."""
         if self.monitor is None:
             return
         state = self.status.read()

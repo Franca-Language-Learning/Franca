@@ -2,7 +2,8 @@
 #
 # Gatus replaces ${NAME} with environment variables before it reads this file. The status container's start script
 # (infra/status/entrypoint.sh) reads NTFY_TOPIC and STATUS_PUSH_TOKEN from the secret files and works out
-# FRANCA_TAILNET_CHECKS, which is true once the installer has written the PC's Tailscale name.
+# FRANCA_TAILNET_CHECKS, which is true when the tailnet profile is on and the installer has written the PC's
+# Tailscale name.
 #
 # The app and the web server are checked every minute, and an alert is sent after three failures in a row. The updater
 # and the backup report their state to the external endpoints after each run and every hour. The state is a failure
