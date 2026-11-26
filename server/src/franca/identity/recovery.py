@@ -4,10 +4,18 @@ the Google account cannot be used.
 The codes are shown once, when they are made. Only Argon2id hashes are stored. Making new codes removes the old
 ones. A learner signs in with their e-mail address and a code. After five wrong codes in 15 minutes, further tries
 for that learner are refused until 15 minutes have passed since the first of them.
+
+A sign-in has three steps, so that the slow Argon2id checks run while no database transaction is open (SQLite has
+one writer at a time, and every request would wait for it):
+1. find_recovery_codes() reads the learner and their unused codes in a short transaction;
+2. match_recovery_code() checks the typed code with no transaction open;
+3. finish_recovery_sign_in() records the result in a second short transaction.
+Each try checks the same number of hashes, whether the address is known or not and wherever the code is in the
+list, so the time taken does not tell whether an address has an account.
 """
 
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from argon2 import PasswordHasher
@@ -77,12 +85,23 @@ def recovery_code_status(connection: Connection, learner: Learner) -> RecoveryCo
     return RecoveryCodeStatus(unused=int(row.unused or 0), created_at=row.created_at)
 
 
+@dataclass(frozen=True, slots=True)
+class RecoveryCandidate:
+    """The learner with the typed address and their unused codes, or nobody (learner is None)."""
+
+    learner: Learner | None = None
+    status: str = "active"
+    codes: list[tuple[int, str]] = field(default_factory=list)  # (recovery_code_id, code_hash)
+
+
 def _learner_by_email(connection: Connection, email: str) -> tuple[Learner, str] | None:
+    """The learner whose Google address is this one. If several have it, an active one is chosen first."""
     wanted = normalise_email(email)
     rows = connection.execute(
         text(
             "SELECT e.email, l.learner_id, l.uuid, l.display_name, l.role, l.status FROM identity_external_identity e "
-            "JOIN identity_learner l USING (learner_id) WHERE e.provider = 'google'"
+            "JOIN identity_learner l USING (learner_id) WHERE e.provider = 'google' "
+            "ORDER BY l.status = 'active' DESC, e.last_used_at DESC"
         )
     )
     for row in rows:
@@ -103,45 +122,61 @@ def _recent_failures(connection: Connection, learner_id: int, now: datetime) -> 
     )
 
 
-def sign_in_with_recovery_code(connection: Connection, email: str, code: str, now: datetime) -> Learner:
-    """Raises RecoveryCodeNotAccepted, TooManyAttempts or SignInRefused("disabled"). A wrong code is written to the
-    audit log, so the caller commits the transaction also when this raises RecoveryCodeNotAccepted."""
-    cleaned = _clean(code)
+def find_recovery_codes(connection: Connection, email: str, now: datetime) -> RecoveryCandidate:
+    """Step 1. Raises TooManyAttempts after five wrong codes for this learner in 15 minutes."""
     found = _learner_by_email(connection, email)
     if found is None:
-        try:
-            HASHER.verify(_DUMMY_HASH, cleaned)
-        except VerificationError:
-            pass
-        raise RecoveryCodeNotAccepted()
+        return RecoveryCandidate()
     learner, status = found
     if _recent_failures(connection, learner.learner_id, now) >= MAX_FAILURES:
         raise TooManyAttempts()
-
     rows = connection.execute(
         text("SELECT recovery_code_id, code_hash FROM identity_recovery_code WHERE learner_id = :learner AND used_at IS NULL"),
         {"learner": learner.learner_id},
-    ).all()
+    )
+    return RecoveryCandidate(learner, status, [(row.recovery_code_id, row.code_hash) for row in rows])
+
+
+def match_recovery_code(candidate: RecoveryCandidate, code: str) -> int | None:
+    """Step 2: the id of the code that matches, or None. CODE_COUNT hashes are checked every time."""
+    cleaned = _clean(code)
+    padded = candidate.codes[:CODE_COUNT] + [(-1, _DUMMY_HASH)] * (CODE_COUNT - len(candidate.codes[:CODE_COUNT]))
     match = None
-    for row in rows:
+    for code_id, code_hash in padded:
         try:
-            HASHER.verify(row.code_hash, cleaned)
-            match = row.recovery_code_id
-            break
+            if HASHER.verify(code_hash, cleaned) and code_id >= 0 and match is None:
+                match = code_id
         except VerificationError, InvalidHashError:
             continue
+    return match
+
+
+def finish_recovery_sign_in(connection: Connection, candidate: RecoveryCandidate, match: int | None, now: datetime) -> Learner:
+    """Step 3. Raises RecoveryCodeNotAccepted, TooManyAttempts or SignInRefused("disabled"). A wrong code is written
+    to the audit log, so the caller commits the transaction also when this raises RecoveryCodeNotAccepted."""
+    learner = candidate.learner
+    if learner is None:
+        raise RecoveryCodeNotAccepted()
+    # Checked again: other tries may have been counted while the codes were being checked.
+    if _recent_failures(connection, learner.learner_id, now) >= MAX_FAILURES:
+        raise TooManyAttempts()
     if match is None:
         record_event(connection, learner.learner_id, "sign_in_failed", now, {"method": "recovery_code"})
         raise RecoveryCodeNotAccepted()
-    if status != "active":
+    if candidate.status != "active":
         raise SignInRefused("disabled")
-
     used = connection.execute(
         text("UPDATE identity_recovery_code SET used_at = :now WHERE recovery_code_id = :id AND used_at IS NULL"),
         {"now": iso(now), "id": match},
     ).rowcount
     if not used:
-        raise RecoveryCodeNotAccepted()  # used by another sign-in at the same moment
+        raise RecoveryCodeNotAccepted()  # used by another sign-in in the meantime, or replaced by new codes
     record_event(connection, learner.learner_id, "recovery_code_used", now)
     record_event(connection, learner.learner_id, "sign_in", now, {"method": "recovery_code"})
     return learner
+
+
+def sign_in_with_recovery_code(connection: Connection, email: str, code: str, now: datetime) -> Learner:
+    """The three steps on one connection, for callers that do not mind holding the transaction (tests, scripts)."""
+    candidate = find_recovery_codes(connection, email, now)
+    return finish_recovery_sign_in(connection, candidate, match_recovery_code(candidate, code), now)

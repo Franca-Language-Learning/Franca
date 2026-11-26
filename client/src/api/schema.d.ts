@@ -620,6 +620,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description The request was not sent as JSON */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -629,7 +636,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description Five wrong codes in 15 minutes; try again later */
+            /** @description Too many wrong codes for this address, or too many tries from this computer, in 15 minutes */
             429: {
                 headers: {
                     [name: string]: unknown;

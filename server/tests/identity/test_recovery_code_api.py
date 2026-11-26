@@ -94,3 +94,21 @@ def test_an_unknown_address_is_refused_like_a_wrong_code(client: TestClient) -> 
 def test_a_code_that_is_too_long_is_refused_before_it_is_checked(client: TestClient) -> None:
     response = client.post("/api/v1/auth/recovery-code", json={"email": EMAIL, "code": "A" * 200})
     assert response.status_code == 422
+
+
+def test_one_computer_gets_ten_tries_in_15_minutes_whatever_the_address(client: TestClient) -> None:
+    for n in range(10):
+        response = client.post("/api/v1/auth/recovery-code", json={"email": f"guess{n}@example.org", "code": "AAAAA-AAAAA"})
+        assert response.status_code == 401
+    response = client.post("/api/v1/auth/recovery-code", json={"email": "guess@example.org", "code": "AAAAA-AAAAA"})
+    assert response.status_code == 429
+    assert response.json() == {"detail": "too-many-attempts"}
+
+
+def test_a_sign_in_that_is_not_sent_as_json_is_refused(client: TestClient) -> None:
+    # A form or a beacon from another site cannot send JSON without the browser asking first (CORS), so this stops
+    # another site from signing the browser in to someone else's account.
+    response = client.post(
+        "/api/v1/auth/recovery-code", content=b'{"email": "a@example.org", "code": "AAAAA-AAAAA"}', headers={"content-type": "text/plain"}
+    )
+    assert response.status_code == 415

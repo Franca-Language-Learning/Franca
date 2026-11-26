@@ -31,7 +31,12 @@ function NewCodes({ codes }: { codes: string[] }) {
         ))}
       </ol>
       <Button onPress={copy}>Copy the codes</Button>
-      {copied === true && <p role="status">The codes were copied.</p>}
+      {copied === true && (
+        <p role="status">
+          The codes have been copied. Paste them into your password manager. Then copy something else, so that the codes
+          are not left on the clipboard.
+        </p>
+      )}
       {copied === false && <p role="alert">The codes could not be copied. Write them down instead.</p>}
     </section>
   );

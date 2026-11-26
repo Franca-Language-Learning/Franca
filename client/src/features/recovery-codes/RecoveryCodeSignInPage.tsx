@@ -43,7 +43,8 @@ export function RecoveryCodeSignInPage() {
         </TextField>
         <TextField value={code} onChange={setCode} isRequired autoComplete="one-time-code" maxLength={40}>
           <Label>Recovery code</Label>
-          <Input />
+          {/* No spelling check: some browsers send the text of a field to an online spelling service. */}
+          <Input spellCheck={false} autoCorrect="off" autoCapitalize="characters" />
           <Text slot="description">A code looks like ABCDE-FGHJK.</Text>
           <FieldError>Type one of your recovery codes.</FieldError>
         </TextField>

@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import Connection, text
 
 from franca import identity
+from franca.identity import recovery
 
 NOW = datetime(2026, 12, 1, 9, 0, tzinfo=UTC)
 EMAIL = "owner@example.org"
@@ -103,3 +104,53 @@ def test_a_disabled_learner_cannot_use_a_code(connection: Connection) -> None:
     with pytest.raises(identity.SignInRefused) as refused:
         identity.sign_in_with_recovery_code(connection, "learner@example.org", code, NOW)
     assert refused.value.reason == "disabled"
+
+
+class CountingHasher:
+    """Counts the Argon2id checks, so the tests can see that each try does the same work."""
+
+    def __init__(self, real: object) -> None:
+        self.real = real
+        self.checks = 0
+
+    def verify(self, hash_: str, password: str) -> bool:
+        self.checks += 1
+        return self.real.verify(hash_, password)  # type: ignore[attr-defined, no-any-return]
+
+    def hash(self, password: str) -> str:
+        return self.real.hash(password)  # type: ignore[attr-defined, no-any-return]
+
+
+@pytest.mark.parametrize("case", ["unknown address", "no codes", "right code", "wrong code"])
+def test_each_try_does_the_same_work_so_the_time_does_not_tell_whether_an_address_is_known(
+    connection: Connection, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    learner = owner(connection)
+    codes = [] if case == "no codes" else identity.replace_recovery_codes(connection, learner, NOW)
+    counter = CountingHasher(recovery.HASHER)
+    monkeypatch.setattr(recovery, "HASHER", counter)
+    email = "nobody@example.org" if case == "unknown address" else EMAIL
+    code = codes[0] if case == "right code" else "AAAAA-AAAAA"
+
+    try:
+        identity.sign_in_with_recovery_code(connection, email, code, NOW)
+    except identity.RecoveryCodeNotAccepted:
+        pass
+
+    assert counter.checks == identity.CODE_COUNT
+
+
+def test_when_two_accounts_have_the_same_address_the_active_one_is_used(connection: Connection) -> None:
+    first = owner(connection)
+    identity.invite(connection, first, "shared@example.org", NOW)
+    old = identity.sign_in_with_google(
+        connection, subject="g-old", email="shared@example.org", email_verified=True, name="Old", owner_email=EMAIL, now=NOW
+    )
+    connection.execute(text("UPDATE identity_learner SET status = 'disabled' WHERE learner_id = :id"), {"id": old.learner_id})
+    identity.invite(connection, first, "shared@example.org", NOW)
+    new = identity.sign_in_with_google(
+        connection, subject="g-new", email="Shared@example.org", email_verified=True, name="New", owner_email=EMAIL, now=NOW
+    )
+    code = identity.replace_recovery_codes(connection, new, NOW)[0]
+
+    assert identity.sign_in_with_recovery_code(connection, "shared@example.org", code, NOW) == new

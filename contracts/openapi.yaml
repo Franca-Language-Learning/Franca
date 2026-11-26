@@ -408,6 +408,8 @@ paths:
         '401':
           description: The address or the code is wrong, the code was used already,
             or the account is disabled
+        '415':
+          description: The request was not sent as JSON
         '422':
           content:
             application/json:
@@ -415,7 +417,8 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
         '429':
-          description: Five wrong codes in 15 minutes; try again later
+          description: Too many wrong codes for this address, or too many tries from
+            this computer, in 15 minutes
       summary: Signs in with an e-mail address and a recovery code
       tags:
       - identity

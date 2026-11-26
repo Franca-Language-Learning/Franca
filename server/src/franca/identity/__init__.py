@@ -15,6 +15,7 @@ from franca.identity.accounts import (
     invite,
     learner_for_session,
     list_invitations,
+    normalise_email,
     sign_in_with_google,
     start_session,
 )
@@ -35,15 +36,26 @@ from franca.identity.passkeys import (
 )
 from franca.identity.recovery import (
     CODE_COUNT,
+    MAX_FAILURES,
+    RecoveryCandidate,
     RecoveryCodeNotAccepted,
     RecoveryCodeStatus,
     TooManyAttempts,
+    find_recovery_codes,
+    finish_recovery_sign_in,
+    match_recovery_code,
     recovery_code_status,
     replace_recovery_codes,
     sign_in_with_recovery_code,
 )
 
 __all__ = [
+    "MAX_FAILURES",
+    "normalise_email",
+    "match_recovery_code",
+    "finish_recovery_sign_in",
+    "find_recovery_codes",
+    "RecoveryCandidate",
     "sign_in_with_recovery_code",
     "replace_recovery_codes",
     "recovery_code_status",
