@@ -141,12 +141,6 @@ def test_a_failed_restic_backup_is_reported(tmp_path: Path) -> None:
     assert "backup failed" in status(tmp_path, "backup.json")["message"]
 
 
-def test_a_missing_database_is_reported(tmp_path: Path) -> None:
-    backup, _restic = make(tmp_path)
-    (tmp_path / "data" / "franca.db").unlink()
-    assert backup.back_up(NOW) == "backup-failed"
-
-
 def test_the_staging_copy_is_removed_afterwards(tmp_path: Path) -> None:
     backup, _restic = make(tmp_path)
     backup.back_up(NOW)
@@ -438,3 +432,26 @@ def test_a_report_is_a_post_with_the_token(tmp_path: Path) -> None:
     assert sent[0].get_method() == "POST"
     assert sent[0].full_url == "http://status:8080/api/v1/endpoints/nightly_backup/external?success=true"
     assert sent[0].get_header("Authorization") == "Bearer " + "t" * 40
+
+
+# --- a new installation
+
+
+def test_before_the_app_has_made_its_database_the_first_backup_waits(tmp_path: Path) -> None:
+    backup, restic = make(tmp_path)
+    (tmp_path / "data" / "franca.db").unlink()
+
+    result = backup.back_up(NOW)
+
+    assert result == "waiting-for-database"
+    assert restic.commands == []
+    assert not (tmp_path / "status" / "backup.json").exists()
+    assert backup.healthy(NOW)
+
+
+def test_a_database_that_goes_missing_after_a_backup_is_a_failure(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    backup.back_up(NOW)
+    (tmp_path / "data" / "franca.db").unlink()
+
+    assert backup.back_up(NOW) == "backup-failed"

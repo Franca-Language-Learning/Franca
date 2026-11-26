@@ -41,7 +41,7 @@ dev = [
 package = false
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "../contracts/db/tests", "../tools/tests", "../infra/updater/tests", "../infra/backup/tests", "../infra/tests"]
+testpaths = ["tests", "../contracts/db/tests", "../tools/tests", "../infra/updater/tests", "../infra/backup/tests", "../infra/tests", "../installer/linux/tests"]
 addopts = "-q --strict-markers"
 pythonpath = ["src"]
 
@@ -49,6 +49,8 @@ pythonpath = ["src"]
 line-length = 140
 target-version = "py314"
 src = ["src", "tests"]
+# The installer runs with the python3 of Debian 13 (3.13) in the Franca WSL system, and imports the updater's code.
+per-file-target-version = { "../installer/linux/*.py" = "py313", "../infra/updater/franca_updater.py" = "py313" }
 
 [tool.ruff.lint]
 # E/F/W: errors and pyflakes; I: import order; B: bugbear; S: security (bandit rules); UP: modern syntax.
@@ -67,6 +69,9 @@ ignore = ["E501"]
 "../infra/backup/tests/**" = ["S101", "S603", "S607"]
 "../infra/tests/**" = ["S603", "S607", "S608"]
 "../infra/tests/test_*.py" = ["S101"]
+# The installer runs apt, docker and curl by name, with arguments it builds itself.
+"../installer/linux/**" = ["S603", "S607"]
+"../installer/linux/tests/**" = ["S101", "S105", "S106", "S603", "S607"]
 
 [tool.mypy]
 python_version = "3.14"
