@@ -49,7 +49,7 @@ services:
         condition: service_healthy
     environment:
       # The PC's name on the tailnet, such as franca.tail1234.ts.net. The installer writes it to .env. Until then a
-      # name that is never used stands in, so that Caddy starts.
+      # placeholder name is used, so that Caddy can start.
       FRANCA_TAILSCALE_NAME: ${FRANCA_TAILSCALE_NAME:-tailscale-name-not-set.ts.net}
     ports:
       # Loopback only, for checks on the PC itself. Phones and laptops reach Franca over the tailnet, through the
@@ -74,7 +74,7 @@ services:
     profiles: [tailnet]
     environment:
       TS_AUTHKEY: file:/run/secrets/tailscale_authkey
-      # The key is used to join once. Later starts use the saved state, so a used or expired key does not matter.
+      # The key is used to join once. At later starts the saved state is used, so a used or expired key does not matter.
       TS_AUTH_ONCE: "true"
       TS_HOSTNAME: ${FRANCA_TAILSCALE_HOSTNAME:-franca}
       TS_STATE_DIR: /var/lib/tailscale

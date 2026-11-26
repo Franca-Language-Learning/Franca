@@ -2,11 +2,11 @@
 #
 # Port 8443: HTTPS on the PC's Tailscale name (FRANCA_TAILSCALE_NAME). The tailscale container passes connections to
 # port 443 on that name here, still encrypted. For a name that ends in .ts.net, Caddy gets the certificate from
-# tailscaled through its socket and never asks a certificate authority itself.
+# tailscaled through tailscaled's socket, and does not ask a certificate authority itself.
 # Port 8080: plain HTTP for checks on the PC itself. It is published on the PC's loopback only.
 {
 	admin off
-	# There is no port 80 to redirect from, and the container may not listen on low ports.
+	# There is no port 80 to redirect from, and the container runs as non-root and cannot listen on ports below 1024.
 	auto_https disable_redirects
 }
 
