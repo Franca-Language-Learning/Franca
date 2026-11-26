@@ -227,6 +227,17 @@ def test_fingerprints_are_made_from_a_content_folder(tmp_path: Path) -> None:
     assert fp.of_file(lesson.read_bytes()) in values
 
 
+def test_planner_settings_and_keys_are_not_fingerprinted(tmp_path: Path) -> None:
+    # The fixture pack has the real planner settings, so that the tests use them. The key file is not content.
+    settings = tmp_path / "packs" / "nl-be" / "course-config.yaml"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(f"warmup:\n  bridge_min: 3   # {LONG_LINE}\n", encoding="utf-8")
+    key = tmp_path / "secrets" / "fingerprint-key"
+    key.parent.mkdir()
+    key.write_text("a" * 64 + "\n", encoding="utf-8")
+    assert guard.make_fingerprints(tmp_path, KEY) == set()
+
+
 def test_fingerprints_without_a_key_stop_the_guard(tmp_path: Path) -> None:
     file = tmp_path / "prints.txt"
     file.write_text("# header\nline:0123456789abcdef01234567\n")

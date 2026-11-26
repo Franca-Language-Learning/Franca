@@ -42,6 +42,9 @@ KEY_FILE = Path.home() / ".config" / "franca" / "fingerprint-key"
 MAX_BYTES = 2 * 1024 * 1024
 MIN_LINE_CHARS = 40
 MIN_FILE_BYTES = 64  # smaller files (empty files, one-line stubs) are too common to fingerprint
+# Files in the private repository that are not fingerprinted. The fixture pack has the real planner settings, so that
+# the tests use them, and the keys in secrets/ are not content.
+NOT_FINGERPRINTED = ("course-config.yaml", "secrets/*")
 ZERO_SHA = "0" * 40
 GITLINK_MODE = "160000"
 MARKER = "franca:" + "private"  # files in the private repository have this marker; in two parts so this file has not
@@ -284,7 +287,10 @@ def make_fingerprints(content_root: Path, key: bytes) -> set[str]:
     prints = Fingerprints(key=key, values=frozenset())
     values: set[str] = set()
     for file in sorted(content_root.rglob("*")):
-        if not file.is_file() or ".git" in file.relative_to(content_root).parts:
+        relative = file.relative_to(content_root)
+        if not file.is_file() or ".git" in relative.parts:
+            continue
+        if any(fnmatch.fnmatch(relative.as_posix(), pattern) or fnmatch.fnmatch(file.name, pattern) for pattern in NOT_FINGERPRINTED):
             continue
         data = file.read_bytes()
         if len(data) >= MIN_FILE_BYTES:
