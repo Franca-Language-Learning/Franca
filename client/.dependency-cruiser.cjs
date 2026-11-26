@@ -10,14 +10,14 @@ module.exports = {
   forbidden: [
     {
       name: "no-circular",
-      comment: "Circular imports make the order of loading matter and hide design problems.",
+      comment: "With circular imports, the order of loading matters and design problems are harder to see.",
       severity: "error",
       from: {},
       to: { circular: true },
     },
     {
       name: "feature-index-only",
-      comment: "A feature imports another feature through its index file only.",
+      comment: "A feature may import another feature only through that feature's index file.",
       severity: "error",
       from: { path: "^src/features/([^/]+)/" },
       to: {
