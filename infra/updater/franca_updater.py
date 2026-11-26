@@ -1,5 +1,5 @@
-"""Franca's updater (story E01-007): it installs a new release each night and goes back to the old one if the new one
-does not start.
+"""Franca's updater (story E01-007). A new release is installed each night, and the old release is put back if the new
+one does not start.
 
 Each run:
 1. The latest release is read from GitHub: its version and the digests of its images.
@@ -8,16 +8,18 @@ Each run:
    Franca's repository, for this version's tag, through GitHub's OpenID Connect issuer.
 4. The images are pulled by digest.
 5. The app is stopped and a copy of the database is taken (a snapshot).
-6. The new images are written to the bundle's .env file and the services are started. The app brings the database
-   up to date (the migrations) when it starts.
-7. The health check has to answer with the new version within the time allowed.
+6. The references to the new images are written to the bundle's .env file and the services are started. The app
+   brings the database up to date (the migrations) when it starts.
+7. The app has to answer the health check with the new version number within the time allowed.
 8. If anything after step 5 fails, the app is stopped, the snapshot is put back, the old .env is written again and
-   the old version is started. The result is written to the status file in each case, for the owner and for the
-   health monitoring (story E01-010).
+   the old version is started.
 
-The updater reaches Docker through a socket proxy that allows containers, images, networks and volumes but not
-exec, build or swarm calls (infra/compose.yaml). It uses only the Python standard library, the docker CLI with the
-compose plugin, and cosign.
+The result is written to the status file whether the update worked or not, for the owner and for the health
+monitoring (story E01-010).
+
+The updater reaches Docker through a socket proxy (infra/compose.yaml). Calls about containers, images, networks and
+volumes are let through. Exec, build, swarm, plugin, secret and system calls are blocked. The updater uses only the
+Python standard library, the docker CLI with the compose plugin, and cosign.
 """
 
 from __future__ import annotations

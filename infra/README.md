@@ -27,19 +27,19 @@ Franca is then at http://127.0.0.1:8080, on this computer only. It becomes reach
 
 ## Updates
 
-Each night at 02:30 UTC (`FRANCA_UPDATE_AT_UTC`), the updater looks for a new release of Franca on GitHub and installs it:
+Each night at 02:30 UTC, the updater looks for a new release of Franca on GitHub and installs it. The time can be changed with `FRANCA_UPDATE_AT_UTC` in `.env`.
 
 1. A release that is not newer than the installed version is not installed.
-2. The signature of each image is checked with cosign. It has to come from the release workflow of Franca's repository, for that version's tag.
-3. The images are downloaded, the app is stopped and a copy of the database is taken (in the app's volume, under `snapshots`; the last five are kept).
-4. The new images are written to `.env` and the app and Caddy are started. The app brings the database up to date when it starts.
+2. The signature of each image is checked with cosign. The signature has to come from the release workflow of Franca's repository, for that version's tag. If a check fails, the release is not installed and the running version is left as it is.
+3. The images are downloaded and the app is stopped. A copy of the database is saved in the `snapshots` folder of the app's volume, and the last five copies are kept.
+4. The references to the new images are written to `.env`, and the app and Caddy are started. The app brings the database up to date when it starts.
 5. If the new version does not answer the health check within three minutes, the old version and the copy of the database are put back.
 
 The result is in the `updater-status` volume, in `updater.json`. The health monitoring (story E01-010) will send an alert when an update fails or is rolled back.
 
-The updater reaches Docker only through the socket proxy. The proxy allows calls about containers, images, networks and volumes, and starting and stopping containers. It refuses exec, build, swarm, plugin, secret and system calls. The proxy cannot tell a harmless container from a dangerous one, so someone who controls the updater could still start a container with access to the PC; this is why the updater's image is signed and checked like the others.
+The updater reaches Docker only through the socket proxy. Calls about containers, images, networks and volumes, and calls to start and stop containers, are let through the proxy. Exec, build, swarm, plugin, secret and system calls are blocked. There is no check on what a new container can reach, so someone who took control of the updater could still start a container with access to the PC. For that reason the updater's image is signed and checked in the same way as the app's images.
 
-The installer switches the updater on with `COMPOSE_PROFILES=updates` in `.env`, and writes the bundle folder into `FRANCA_BUNDLE_DIR`, so that the updater sees the bundle at the same path as Docker does.
+The installer switches the updater on with `COMPOSE_PROFILES=updates` in `.env`, and writes the path of the bundle folder to `FRANCA_BUNDLE_DIR`, so that the updater sees the bundle at the same path as Docker does.
 
 ## Containers in later stories
 
