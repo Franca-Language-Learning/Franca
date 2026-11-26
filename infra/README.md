@@ -39,7 +39,7 @@ The result is in the `updater-status` volume, in `updater.json`. The health moni
 
 The updater reaches Docker only through the socket proxy. Calls about containers, images, networks and volumes, and calls to start and stop containers, are let through the proxy. Exec, build, swarm, plugin, secret and system calls are blocked. There is no check on what a new container can reach, so someone who took control of the updater could still start a container with access to the PC. For that reason the updater's image is signed and checked in the same way as the app's images.
 
-The installer switches the updater on with `COMPOSE_PROFILES=updates` in `.env`, and writes the path of the bundle folder to `FRANCA_BUNDLE_DIR`, so that the updater sees the bundle at the same path as Docker does.
+The installer switches the updater on with `COMPOSE_PROFILES=updates` in `.env`, and writes the path of the bundle folder to `FRANCA_BUNDLE_DIR`, so that the updater sees the bundle at the same path as Docker does. The updater runs as user 10003 and writes `.env`, so that user has to be able to write to the bundle folder. On the Windows PC, the folder has to be given as a path that Docker's Linux containers can use; the installer (story E01-011) chooses that path and is tested on the PC.
 
 ## Containers in later stories
 

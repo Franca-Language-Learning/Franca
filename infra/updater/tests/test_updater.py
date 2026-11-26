@@ -378,3 +378,104 @@ def test_old_snapshots_are_removed_and_the_last_five_kept(tmp_path: Path) -> Non
 def test_the_next_run_is_at_the_time_of_day_given() -> None:
     assert fu.next_run(datetime(2026, 12, 7, 1, 0, tzinfo=UTC), "02:30") == datetime(2026, 12, 7, 2, 30, tzinfo=UTC)
     assert fu.next_run(datetime(2026, 12, 7, 2, 30, tzinfo=UTC), "02:30") == datetime(2026, 12, 8, 2, 30, tzinfo=UTC)
+
+
+# --- after the security review
+
+
+class BrokenEnv(fu.EnvFile):
+    """An .env file that cannot be written, as on a disk with the wrong owner."""
+
+    def write(self, values: object) -> None:  # type: ignore[override]
+        raise PermissionError("[Errno 13] Permission denied: '.env.new'")
+
+
+def test_an_unexpected_error_after_the_app_is_stopped_still_leads_to_a_rollback(tmp_path: Path) -> None:
+    updater, log, _verifier = make(tmp_path, NEW, healthy=("1.0.0",))
+    updater.env = BrokenEnv(tmp_path / ".env")
+
+    assert updater.run_once(NOW) == "rolled-back"
+
+    assert log[-1] == "up app caddy"
+    assert "Permission denied" in status(tmp_path)["message"]
+
+
+def test_a_command_that_hangs_leads_to_a_rollback(tmp_path: Path) -> None:
+    updater, log, _verifier = make(tmp_path, NEW, healthy=("1.0.0",))
+
+    class HangingCompose(FakeCompose):
+        def up(self, *services: str) -> None:
+            if "hung once" not in self.log:
+                self.log.append("hung once")
+                raise subprocess.TimeoutExpired(["docker", "compose", "up"], 900)
+            super().up(*services)
+
+    updater.compose = HangingCompose(log)
+    assert updater.run_once(NOW) == "rolled-back"
+    assert log[-1] == "up app caddy"
+
+
+def test_a_release_older_than_the_newest_ever_installed_is_refused_even_if_env_says_otherwise(tmp_path: Path) -> None:
+    updater, log, _verifier = make(tmp_path, NEW)
+    updater.high_water = fu.HighWaterMark(tmp_path / "status" / "newest-installed")
+    updater.high_water.raise_to(fu.Version(1, 2, 0))
+
+    assert updater.run_once(NOW) == "up-to-date"
+    assert log == []
+
+
+def test_installing_raises_the_newest_ever_installed(tmp_path: Path) -> None:
+    updater, _log, _verifier = make(tmp_path, NEW)
+    updater.high_water = fu.HighWaterMark(tmp_path / "status" / "newest-installed")
+    assert updater.run_once(NOW) == "installed"
+    assert updater.high_water.read() == fu.Version(1, 1, 0)
+
+
+def test_a_quoted_version_in_env_is_read(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text('FRANCA_VERSION="1.1.0"\n', encoding="utf-8")
+    assert fu.EnvFile(tmp_path / ".env").read() == {"FRANCA_VERSION": "1.1.0"}
+
+
+def test_a_development_build_that_is_rolled_back_to_is_recognised(tmp_path: Path) -> None:
+    updater, _log, _verifier = make(tmp_path, NEW, healthy=(None, "0.1.0-dev"))
+    (tmp_path / ".env").write_text("FRANCA_VERSION=0.1.0-dev\n", encoding="utf-8")
+    assert updater.run_once(NOW) == "rolled-back"
+
+
+@pytest.mark.parametrize("problem", ["placeholder", "no compose.yaml", "no .env"])
+def test_a_wrong_bundle_folder_is_reported_and_nothing_is_done(tmp_path: Path, problem: str) -> None:
+    updater, log, verifier = make(tmp_path, NEW)
+    (tmp_path / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    updater.bundle = Path(fu.PLACEHOLDER_BUNDLE_DIR) if problem == "placeholder" else tmp_path
+    if problem == "no compose.yaml":
+        (tmp_path / "compose.yaml").unlink()
+    if problem == "no .env":
+        (tmp_path / ".env").unlink()
+
+    assert updater.run_once(NOW) == "misconfigured"
+    assert log == [] and verifier.checked == []
+
+
+def test_a_right_bundle_folder_passes_the_check(tmp_path: Path) -> None:
+    updater, _log, _verifier = make(tmp_path, NEW)
+    (tmp_path / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    updater.bundle = tmp_path
+    assert updater.run_once(NOW) == "installed"
+
+
+@pytest.mark.parametrize(("given", "used"), [("03:15", "03:15"), ("3:15", "02:30"), ("24:00", "02:30"), ("soon", "02:30")])
+def test_an_update_time_that_cannot_be_read_is_replaced_by_the_default(given: str, used: str) -> None:
+    assert fu.update_time(given) == used
+
+
+def test_a_failed_restore_copy_leaves_the_database_as_it_was(tmp_path: Path) -> None:
+    import sqlite3
+
+    live = tmp_path / "franca.db"
+    with sqlite3.connect(live) as connection:
+        connection.execute("CREATE TABLE t (x)")
+    missing_snapshot = tmp_path / "snapshots" / "not-there.db"
+    with pytest.raises(FileNotFoundError):
+        exec(fu._with_arguments(fu.RESTORE_SCRIPT, str(missing_snapshot), str(live)), {})  # noqa: S102
+    with sqlite3.connect(live) as connection:
+        assert connection.execute("SELECT name FROM sqlite_master").fetchall() == [("t",)]

@@ -9,9 +9,12 @@ database snapshot is taken and put back in a one-off app container, and the heal
 The rehearsal:
 1. starts version 1.0.0 and writes a row to the database;
 2. updates to 1.1.0, which has to answer the health check, and keeps the row;
-3. tries 1.2.0, which writes a row and then fails to start. The updater has to go back to 1.1.0 and put back the
-   database as it was before 1.2.0, so that row is gone;
-4. is offered 1.0.0 again, which is older and is not installed.
+3. tries 1.2.0, which adds a column to a table (as a migration would), writes a row and then fails to start. The
+   updater has to go back to 1.1.0 and put back the database as it was before 1.2.0, so the row and the column are
+   gone;
+4. is offered 1.0.0 again, which is older and is not installed;
+5. runs the updater's own container through the socket proxy: it can list the bundle's containers, and the proxy
+   blocks docker exec.
 """
 
 import os
@@ -29,6 +32,7 @@ import franca_updater as fu  # noqa: E402
 
 PROJECT = f"franca-rehearsal-{os.getpid()}"
 CADDY = "franca/caddy:rehearsal"
+UPDATER = "franca/updater:rehearsal"
 
 
 def app_image(version: str) -> str:
@@ -58,12 +62,13 @@ def build_images() -> None:
             ".",
         )
     sh("docker", "build", "--quiet", "-f", "infra/images/caddy.Dockerfile", "-t", CADDY, ".")
-    # Version 1.2.0 changes the database and then stops, as a broken release might.
+    # Version 1.2.0 changes the schema and the data, and then stops, as a broken release might.
     broken = f"""FROM {app_image("1.1.0")}
 ENV FRANCA_VERSION=1.2.0
-CMD ["python", "-c", "import sqlite3, sys; c = sqlite3.connect('/data/franca.db'); c.execute(\\"INSERT INTO rehearsal VALUES ('written by 1.2.0')\\"); c.commit(); sys.exit(1)"]
+CMD ["python", "-c", "import sqlite3, sys; c = sqlite3.connect('/data/franca.db'); c.execute('ALTER TABLE rehearsal ADD COLUMN added_by_120 TEXT'); c.execute(\\"INSERT INTO rehearsal (note) VALUES ('written by 1.2.0')\\"); c.commit(); sys.exit(1)"]
 """
     sh("docker", "build", "--quiet", "-t", app_image("1.2.0"), "-", stdin=broken)
+    sh("docker", "build", "--quiet", "-f", "infra/images/updater.Dockerfile", "-t", UPDATER, ".")
 
 
 def free_port() -> int:
@@ -100,6 +105,17 @@ def rows(compose: fu.Compose) -> list[str]:
     return [row for row in result.stdout.strip().split("|") if row]
 
 
+def columns(compose: fu.Compose) -> list[str]:
+    script = "import sqlite3; print('|'.join(r[1] for r in sqlite3.connect('/data/franca.db').execute('PRAGMA table_info(rehearsal)')))"
+    result = compose.run(compose._compose("run", "--rm", "--no-deps", "--entrypoint", "python", "app", "-c", script))
+    return result.stdout.strip().split("|")
+
+
+def through_proxy(compose: fu.Compose, script: str) -> subprocess.CompletedProcess[str]:
+    """Runs a shell script in the updater's container, which reaches Docker only through the socket proxy."""
+    return compose.run(compose._compose("--profile", "updates", "run", "--rm", "--no-deps", "--entrypoint", "sh", "updater", "-c", script))
+
+
 def add_row(compose: fu.Compose, note: str) -> None:
     script = (
         "import sqlite3; c = sqlite3.connect('/data/franca.db'); c.execute('CREATE TABLE IF NOT EXISTS rehearsal (note TEXT)'); "
@@ -120,6 +136,8 @@ def main() -> int:
     failures: list[str] = []
     with tempfile.TemporaryDirectory() as folder:
         bundle = Path(folder)
+        # The updater's container runs as user 10003 and reads the bundle folder.
+        bundle.chmod(0o755)
         (bundle / "compose.yaml").write_text((ROOT / "infra" / "compose.yaml").read_text(encoding="utf-8"), encoding="utf-8")
         secrets = bundle / "secrets"
         secrets.mkdir()
@@ -136,8 +154,12 @@ def main() -> int:
                 "FRANCA_CADDY_IMAGE": CADDY,
                 "FRANCA_PORT": str(port),
                 "FRANCA_SECRETS_DIR": str(secrets),
+                "FRANCA_UPDATER_IMAGE": UPDATER,
+                "FRANCA_BUNDLE_DIR": str(bundle),
+                "COMPOSE_PROJECT_NAME": PROJECT,
             }
         )
+        (bundle / ".env").chmod(0o644)
         compose = LocalCompose(bundle, project_name=PROJECT)
 
         def run_updater(offer: str) -> str:
@@ -170,10 +192,20 @@ def main() -> int:
                 "the database is as it was before 1.2.0: the row written by 1.2.0 is gone",
                 failures,
             )
+            check(columns(compose) == ["note"], "the column added by 1.2.0 is gone", failures)
             check(env.read()["FRANCA_APP_IMAGE"] == app_image("1.1.0"), ".env names the 1.1.0 image again", failures)
 
             check(run_updater("1.0.0") == "up-to-date", "the older 1.0.0 is not installed", failures)
             check(probe() == "1.1.0", "1.1.0 is still running", failures)
+
+            sh(*compose._compose("--profile", "updates", "up", "--detach", "--no-build", "socket-proxy"))
+            listed = through_proxy(compose, 'docker compose --project-directory "$FRANCA_BUNDLE_DIR" ps --quiet app')
+            check(
+                listed.returncode == 0 and bool(listed.stdout.strip()), "the updater lists the app's container through the proxy", failures
+            )
+            app_id = listed.stdout.strip().splitlines()[-1] if listed.stdout.strip() else "none"
+            refused = through_proxy(compose, f"docker exec {app_id} true")
+            check(refused.returncode != 0, "the proxy blocks docker exec", failures)
         finally:
             if failures:
                 print(sh(*compose._compose("logs", "--no-color", "--tail", "60")))

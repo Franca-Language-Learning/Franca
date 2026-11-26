@@ -48,6 +48,7 @@ IMAGE_KEYS = {"app": "FRANCA_APP_IMAGE", "caddy": "FRANCA_CADDY_IMAGE", "updater
 REQUIRED_IMAGES = frozenset({"app", "caddy"})
 VERSION_KEY = "FRANCA_VERSION"
 SNAPSHOTS_KEPT = 5
+PLACEHOLDER_BUNDLE_DIR = "/franca-bundle-not-set"
 
 
 class UpdateError(Exception):
@@ -198,7 +199,7 @@ class EnvFile:
             for line in self.path.read_text(encoding="utf-8").splitlines():
                 if "=" in line and not line.lstrip().startswith("#"):
                     key, value = line.split("=", 1)
-                    values[key.strip()] = value.strip()
+                    values[key.strip()] = value.strip().strip("\"'")
         return values
 
     def text(self) -> str:
@@ -256,23 +257,38 @@ class Compose:
         _check(self.run(self._compose("run", "--rm", "--no-deps", "--entrypoint", "python", "app", "-c", script)), "The database step")
 
 
+# Run in a one-off app container while the app is stopped. The snapshot needs twice the database's size free, so a full
+# disk is found before anything changes; a snapshot left half written is removed.
 SNAPSHOT_SCRIPT = """
-import pathlib, sqlite3, sys
+import pathlib, shutil, sqlite3, sys
 source, target = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 target.parent.mkdir(parents=True, exist_ok=True)
-with sqlite3.connect(source) as live, sqlite3.connect(target) as copy:
-    live.backup(copy)
+needed = 2 * sum(p.stat().st_size for p in source.parent.glob(source.name + '*'))
+if shutil.disk_usage(target.parent).free < needed:
+    sys.exit(f'Not enough free disk space for a snapshot: {{needed}} bytes needed')
+try:
+    with sqlite3.connect(source) as live, sqlite3.connect(target) as copy:
+        live.backup(copy)
+except BaseException:
+    target.unlink(missing_ok=True)
+    raise
 snapshots = sorted(target.parent.glob('franca-*.db'))
 for old in snapshots[:-{kept}]:
     old.unlink()
 """
 
+# The snapshot is copied beside the database and then put in its place in one step, so a crash or a full disk during
+# the copy leaves the database as it was.
 RESTORE_SCRIPT = """
-import pathlib, shutil, sys
+import os, pathlib, shutil, sys
 snapshot, live = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+incoming = live.with_name(live.name + '.restore')
+shutil.copyfile(snapshot, incoming)
+with open(incoming, 'rb') as copied:
+    os.fsync(copied.fileno())
+os.replace(incoming, live)
 for extra in (live.with_name(live.name + '-wal'), live.with_name(live.name + '-shm')):
     extra.unlink(missing_ok=True)
-shutil.copyfile(snapshot, live)
 """
 
 
@@ -346,6 +362,36 @@ class StatusFile:
         os.replace(temporary, self.path)
 
 
+@dataclass(slots=True)
+class HighWaterMark:
+    """The newest version ever installed. It only goes up, so a damaged or edited .env cannot make an older release
+    look newer than the installed one."""
+
+    path: Path
+
+    def read(self) -> Version | None:
+        try:
+            return Version.parse(self.path.read_text(encoding="utf-8"))
+        except OSError, UpdateError:
+            return None
+
+    def raise_to(self, version: Version) -> None:
+        current = self.read()
+        if current is None or version > current:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.path.with_name(self.path.name + ".new")
+            temporary.write_text(f"{version}\n", encoding="utf-8")
+            os.replace(temporary, self.path)
+
+
+def check_bundle(folder: Path) -> None:
+    """The updater works on the bundle folder. A missing or wrong folder is found here, before anything changes."""
+    if str(folder) == PLACEHOLDER_BUNDLE_DIR or not (folder / "compose.yaml").is_file() or not (folder / ".env").is_file():
+        raise UpdateError(f"The bundle folder {folder} has no compose.yaml and .env; FRANCA_BUNDLE_DIR in .env names the wrong folder")
+    if not os.access(folder, os.W_OK):
+        raise UpdateError(f"The updater cannot write to the bundle folder {folder}")
+
+
 # --- one run
 
 
@@ -358,71 +404,109 @@ class Updater:
     database: Database
     probe: Probe
     status: StatusFile
+    high_water: HighWaterMark | None = None
+    bundle: Path | None = None
     health_timeout: float = 180
     sleep: Callable[[float], None] = field(default=time.sleep)
 
     def run_once(self, now: datetime) -> str:
-        """Checks for a release and installs it. Returns the result, which is also written to the status file."""
+        """Checks for a release and installs it. Returns the result, which is also written to the status file.
+
+        Every error after the app is stopped leads to the old version being started again, whatever kind of error it
+        is, so the app is not left stopped."""
         checked = now.astimezone(UTC).isoformat(timespec="seconds")
-        old_text = self.env.text()
-        old = self.env.read()
+        try:
+            if self.bundle is not None:
+                check_bundle(self.bundle)
+            old_text = self.env.text()
+            old = self.env.read()
+        except (UpdateError, OSError) as error:
+            return self._report("misconfigured", checked, "unknown", None, str(error))
+        old_version = old.get(VERSION_KEY, "")
         # A development build (such as 0.1.0-dev) counts as older than any release.
-        installed = Version.parse(old[VERSION_KEY]) if VERSION_PATTERN.match(old.get(VERSION_KEY, "")) else Version(0, 0, 0)
+        installed = Version.parse(old_version) if VERSION_PATTERN.match(old_version) else Version(0, 0, 0)
+        newest_ever = max(installed, (self.high_water.read() if self.high_water else None) or installed)
         try:
             release = self.releases.latest()
-        except UpdateError as error:
-            return self._report("check-failed", checked, installed, None, str(error))
-        if release.version <= installed:
-            return self._report("up-to-date", checked, installed, release.version, "No newer release")
+        except Exception as error:  # noqa: BLE001 - any failure to read the release changes nothing
+            return self._report("check-failed", checked, old_version, None, str(error))
+        if release.version <= newest_ever:
+            return self._report("up-to-date", checked, old_version, release.version, "No newer release")
         try:
             for image in release.images.values():
                 self.verifier.verify(image, release.version)
             for image in release.images.values():
                 self.compose.pull(image)
-        except UpdateError as error:
-            return self._report("not-installed", checked, installed, release.version, str(error))
+        except Exception as error:  # noqa: BLE001 - nothing has been stopped yet
+            return self._report("not-installed", checked, old_version, release.version, str(error))
 
         try:
             self.compose.stop("app")
             snapshot = self.database.snapshot(f"{now.astimezone(UTC):%Y%m%dT%H%M%SZ}-before-{release.version}")
-        except UpdateError as error:
-            return self._restart_unchanged(checked, installed, release.version, str(error))
+        except Exception as error:  # noqa: BLE001 - see the docstring
+            return self._restart_unchanged(checked, old_version, release.version, str(error))
         try:
             new = dict(old) | {VERSION_KEY: str(release.version)} | {IMAGE_KEYS[s]: image for s, image in release.images.items()}
             self.env.write(new)
             self.compose.up("app", "caddy")
             wait_for_version(self.probe, str(release.version), self.health_timeout, self.sleep)
-        except UpdateError as error:
-            return self._roll_back(checked, installed, release.version, old_text, snapshot, str(error))
-        return self._report("installed", checked, release.version, release.version, f"Installed {release.version}; snapshot {snapshot}")
+        except Exception as error:  # noqa: BLE001 - see the docstring
+            return self._roll_back(checked, old_version, release.version, old_text, snapshot, str(error))
+        if self.high_water is not None:
+            self.high_water.raise_to(release.version)
+        return self._report(
+            "installed", checked, str(release.version), release.version, f"Installed {release.version}; snapshot {snapshot}"
+        )
 
-    def _restart_unchanged(self, checked: str, installed: Version, failed: Version, reason: str) -> str:
+    def _restart_unchanged(self, checked: str, old_version: str, failed: Version, reason: str) -> str:
         """Nothing was changed yet; the installed version is started again."""
         try:
             self.compose.up("app", "caddy")
-            wait_for_version(self.probe, str(installed), self.health_timeout, self.sleep)
-        except UpdateError as error:
-            return self._report("rollback-failed", checked, installed, failed, f"{reason}. Starting {installed} again failed too: {error}")
-        return self._report("not-installed", checked, installed, failed, reason)
+            wait_for_version(self.probe, old_version, self.health_timeout, self.sleep)
+        except Exception as error:  # noqa: BLE001 - reported for the owner
+            return self._report(
+                "rollback-failed", checked, old_version, failed, f"{reason}. Starting {old_version} again failed too: {error}"
+            )
+        return self._report("not-installed", checked, old_version, failed, reason)
 
-    def _roll_back(self, checked: str, installed: Version, failed: Version, old_text: str, snapshot: str, reason: str) -> str:
+    def _roll_back(self, checked: str, old_version: str, failed: Version, old_text: str, snapshot: str, reason: str) -> str:
         try:
             self.compose.stop("app")
             self.env.put_back(old_text)
             self.database.restore(snapshot)
             self.compose.up("app", "caddy")
-            wait_for_version(self.probe, str(installed), self.health_timeout, self.sleep)
-        except UpdateError as error:
-            return self._report("rollback-failed", checked, installed, failed, f"{reason}. Going back to {installed} failed too: {error}")
-        return self._report("rolled-back", checked, installed, failed, f"{reason}. Version {installed} and its database were put back")
+            wait_for_version(self.probe, old_version, self.health_timeout, self.sleep)
+        except Exception as error:  # noqa: BLE001 - reported for the owner
+            return self._report(
+                "rollback-failed", checked, old_version, failed, f"{reason}. Going back to {old_version} failed too: {error}"
+            )
+        return self._report("rolled-back", checked, old_version, failed, f"{reason}. Version {old_version} and its database were put back")
 
-    def _report(self, result: str, checked: str, installed: Version, latest: Version | None, message: str) -> str:
-        self.status.write(result=result, checkedAt=checked, installed=str(installed), latest=str(latest or ""), message=message)
-        print(json.dumps({"result": result, "installed": str(installed), "latest": str(latest or ""), "message": message}), flush=True)
+    def _report(self, result: str, checked: str, installed: str, latest: Version | None, message: str) -> str:
+        line = {"result": result, "checkedAt": checked, "installed": installed, "latest": str(latest or ""), "message": message}
+        print(json.dumps(line), flush=True)
+        try:
+            self.status.write(**line)
+        except OSError as error:
+            print(json.dumps({"result": "status-not-written", "message": str(error)}), flush=True)
         return result
 
 
 # --- the service
+
+
+DEFAULT_UPDATE_TIME = "02:30"
+
+
+def update_time(text: str) -> str:
+    """The time of day for updates, HH:MM in UTC. A time that cannot be read is replaced by 02:30, with a message."""
+    found = re.fullmatch(r"([01]\d|2[0-3]):([0-5]\d)", text.strip())
+    if found:
+        return text.strip()
+    print(
+        json.dumps({"result": "warning", "message": f"FRANCA_UPDATE_AT_UTC={text!r} is not HH:MM; using {DEFAULT_UPDATE_TIME}"}), flush=True
+    )
+    return DEFAULT_UPDATE_TIME
 
 
 def next_run(now: datetime, at: str) -> datetime:
@@ -443,6 +527,8 @@ def from_environment(environ: Mapping[str, str]) -> Updater:
         database=Database(compose),
         probe=health_probe(environ.get("FRANCA_HEALTH_URL", "http://app:8000/api/v1/health")),
         status=StatusFile(Path(environ.get("FRANCA_UPDATER_STATUS", "/status/updater.json"))),
+        high_water=HighWaterMark(Path(environ.get("FRANCA_UPDATER_HIGH_WATER", "/status/newest-installed"))),
+        bundle=project,
     )
 
 
@@ -451,11 +537,14 @@ def main(argv: Sequence[str] = sys.argv[1:], environ: Mapping[str, str] = os.env
     if "--once" in argv:
         result = updater.run_once(datetime.now(UTC))
         return 0 if result in {"installed", "up-to-date"} else 1
-    at = environ.get("FRANCA_UPDATE_AT_UTC", "02:30")
+    at = update_time(environ.get("FRANCA_UPDATE_AT_UTC", DEFAULT_UPDATE_TIME))
     while True:
         wake = next_run(datetime.now(UTC), at)
         time.sleep(max(0.0, (wake - datetime.now(UTC)).total_seconds()))
-        updater.run_once(datetime.now(UTC))
+        try:
+            updater.run_once(datetime.now(UTC))
+        except Exception as error:  # noqa: BLE001 - the updater keeps running and tries again the next night
+            print(json.dumps({"result": "error", "message": repr(error)}), flush=True)
 
 
 if __name__ == "__main__":
