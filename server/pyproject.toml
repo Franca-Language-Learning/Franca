@@ -13,6 +13,9 @@ dependencies = [
     "uvicorn>=0.32",
     "sqlalchemy>=2.1.9",
     "alembic>=1.20.1",
+    "authlib>=1.9.9",
+    "itsdangerous>=2.2.0",
+    "joserfc>=1.8.0",
 ]
 
 [dependency-groups]
@@ -60,6 +63,11 @@ python_version = "3.14"
 strict = true
 packages = ["franca"]
 mypy_path = "src"
+
+[[tool.mypy.overrides]]
+# Authlib has no type information.
+module = ["authlib.*"]
+ignore_missing_imports = true
 
 # Module boundaries (story E01-003). The HTTP layer sits above the twelve modules, and the modules sit above
 # franca.platform (settings, database access, logging). Modules may import each other's package root only;

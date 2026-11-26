@@ -16,3 +16,13 @@ export async function getHealth(signal?: AbortSignal): Promise<Health> {
   if (!data) throw new Error(`The health check returned ${response.status}`);
   return data;
 }
+
+export type Me = components["schemas"]["Me"];
+
+/** The signed-in learner, or null when nobody is signed in on this device. */
+export async function getMe(signal?: AbortSignal): Promise<Me | null> {
+  const { data, response } = await api.GET("/api/v1/me", { signal });
+  if (response.status === 401) return null;
+  if (!data) throw new Error(`The request for the signed-in learner returned ${response.status}`);
+  return data;
+}

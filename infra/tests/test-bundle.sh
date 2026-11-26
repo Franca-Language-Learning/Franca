@@ -7,12 +7,20 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 export COMPOSE_PROJECT_NAME="franca-test-$$"
 export FRANCA_PORT="${FRANCA_PORT:-18080}"
+# Secrets for the test: an empty Google client secret (sign-in is then not configured) and a random session secret.
+FRANCA_SECRETS_DIR="$(mktemp -d)"
+export FRANCA_SECRETS_DIR
+: > "$FRANCA_SECRETS_DIR/google_client_secret"
+head -c 32 /dev/urandom | base64 > "$FRANCA_SECRETS_DIR/session_secret"
 compose=(docker compose -f infra/compose.yaml)
 failures=0
 
 fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
 pass() { echo "ok:   $*"; }
-cleanup() { "${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true; }
+cleanup() {
+    "${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+    rm -rf "$FRANCA_SECRETS_DIR"
+}
 trap cleanup EXIT
 
 "${compose[@]}" up --detach --build --wait --wait-timeout 120
@@ -28,6 +36,9 @@ if "${compose[@]}" exec -T app python -c "import sqlite3; c = sqlite3.connect('/
 else
     fail "the database in the app's volume has no schema"
 fi
+
+if [[ "$(curl -s -o /dev/null -w '%{http_code}' "$base/api/v1/me")" == "401" ]]; then pass "the API refuses /me without a session"; else fail "the API does not refuse /me without a session"; fi
+if [[ "$(curl -s -o /dev/null -w '%{http_code}' "$base/api/v1/auth/google/start")" == "503" ]]; then pass "sign-in says it is not configured without a client secret"; else fail "sign-in without a client secret does not answer 503"; fi
 
 for service in app caddy; do
     id="$("${compose[@]}" ps --quiet "$service")"
