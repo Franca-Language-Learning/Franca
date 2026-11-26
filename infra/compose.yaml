@@ -19,6 +19,8 @@ services:
       args:
         FRANCA_VERSION: ${FRANCA_VERSION:-0.1.0-dev}
     image: franca/app:${FRANCA_VERSION:-0.1.0-dev}
+    # A small init process passes stop signals on, also while the migration runs before the service starts.
+    init: true
     volumes:
       - app-data:/data
     networks: [internal]

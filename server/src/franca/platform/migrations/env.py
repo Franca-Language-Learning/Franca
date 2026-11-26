@@ -6,7 +6,7 @@ from sqlalchemy import Engine
 config = context.config
 engine = config.attributes.get("engine") or config.attributes.get("connection")
 if engine is None:
-    raise RuntimeError("Run migrations through franca.platform.db.upgrade, which gives Alembic the engine")
+    raise RuntimeError("Run migrations with franca.platform.db.upgrade. The engine is passed to Alembic there.")
 
 if isinstance(engine, Engine):
     with engine.connect() as connection:
