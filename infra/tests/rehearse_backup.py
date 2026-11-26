@@ -57,12 +57,12 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as folder:
         bundle = Path(folder)
         (bundle / "compose.yaml").write_text((ROOT / "infra" / "compose.yaml").read_text(encoding="utf-8"), encoding="utf-8")
-        secrets = bundle / "secrets"
-        secrets.mkdir()
+        key_folder = bundle / "secrets"
+        key_folder.mkdir()
         for name in ("google_client_secret", "session_secret", "backup_password", "tailscale_authkey"):
             empty = name in {"google_client_secret", "tailscale_authkey"}
-            (secrets / name).write_text("" if empty else os.urandom(32).hex(), encoding="utf-8")
-            (secrets / name).chmod(0o644)
+            (key_folder / name).write_text("" if empty else os.urandom(32).hex(), encoding="utf-8")
+            (key_folder / name).chmod(0o644)
         backups = bundle / "disk-j"
         backups.mkdir()
         backups.chmod(0o777)  # the backup container's user (10001) writes here, as it will on disk J:
@@ -76,7 +76,7 @@ def main() -> int:
                     f"FRANCA_CADDY_IMAGE={CADDY}",
                     f"FRANCA_BACKUP_IMAGE={BACKUP}",
                     f"FRANCA_PORT={port}",
-                    f"FRANCA_SECRETS_DIR={secrets}",
+                    f"FRANCA_SECRETS_DIR={key_folder}",
                     f"FRANCA_BACKUP_DIR={backups}",
                     "COMPOSE_PROFILES=backups",
                 ]

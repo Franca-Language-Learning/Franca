@@ -144,11 +144,11 @@ def main() -> int:
         (bundle / "compose.override.yaml").write_text(OVERRIDE, encoding="utf-8")
         (bundle / "headscale").mkdir()
         (bundle / "headscale" / "config.yaml").write_text(HEADSCALE_CONFIG, encoding="utf-8")
-        secrets = bundle / "secrets"
-        secrets.mkdir()
+        key_folder = bundle / "secrets"
+        key_folder.mkdir()
         for name in ("google_client_secret", "session_secret", "backup_password", "tailscale_authkey"):
             empty = name in {"google_client_secret", "tailscale_authkey"}
-            (secrets / name).write_text("" if empty else os.urandom(32).hex(), encoding="utf-8")
+            (key_folder / name).write_text("" if empty else os.urandom(32).hex(), encoding="utf-8")
         (bundle / ".env").write_text(
             "\n".join(
                 [
@@ -157,7 +157,7 @@ def main() -> int:
                     f"FRANCA_CADDY_IMAGE={CADDY}",
                     f"FRANCA_TAILSCALE_IMAGE={TAILSCALE}",
                     f"FRANCA_PORT={free_port()}",
-                    f"FRANCA_SECRETS_DIR={secrets}",
+                    f"FRANCA_SECRETS_DIR={key_folder}",
                     "COMPOSE_PROFILES=tailnet",
                 ]
             )
@@ -186,8 +186,8 @@ def main() -> int:
                 headscale("preauthkeys", "create", "--user", user_id, "--reusable", "--expiration", "1h", "--output", "json")
             )
             # The key goes in the secret file, as the installer will write the owner's key on the PC.
-            (secrets / "tailscale_authkey").write_text(created["key"], encoding="utf-8")
-            for secret in secrets.iterdir():
+            (key_folder / "tailscale_authkey").write_text(created["key"], encoding="utf-8")
+            for secret in key_folder.iterdir():
                 secret.chmod(0o644)
 
             started = sh(*compose, "up", "--detach", "--no-build", "--wait", "--wait-timeout", "180", check=False)

@@ -139,13 +139,13 @@ def main() -> int:
         # The updater's container runs as user 10003 and reads the bundle folder.
         bundle.chmod(0o755)
         (bundle / "compose.yaml").write_text((ROOT / "infra" / "compose.yaml").read_text(encoding="utf-8"), encoding="utf-8")
-        secrets = bundle / "secrets"
-        secrets.mkdir()
-        (secrets / "google_client_secret").write_text("", encoding="utf-8")
-        (secrets / "session_secret").write_text(os.urandom(32).hex(), encoding="utf-8")
-        (secrets / "backup_password").write_text(os.urandom(32).hex(), encoding="utf-8")
-        (secrets / "tailscale_authkey").write_text("", encoding="utf-8")  # the tailnet profile is not used here
-        for secret in secrets.iterdir():
+        key_folder = bundle / "secrets"
+        key_folder.mkdir()
+        (key_folder / "google_client_secret").write_text("", encoding="utf-8")
+        (key_folder / "session_secret").write_text(os.urandom(32).hex(), encoding="utf-8")
+        (key_folder / "backup_password").write_text(os.urandom(32).hex(), encoding="utf-8")
+        (key_folder / "tailscale_authkey").write_text("", encoding="utf-8")  # the tailnet profile is not used here
+        for secret in key_folder.iterdir():
             secret.chmod(0o644)
         port = free_port()
         env = fu.EnvFile(bundle / ".env")
@@ -155,7 +155,7 @@ def main() -> int:
                 "FRANCA_APP_IMAGE": app_image("1.0.0"),
                 "FRANCA_CADDY_IMAGE": CADDY,
                 "FRANCA_PORT": str(port),
-                "FRANCA_SECRETS_DIR": str(secrets),
+                "FRANCA_SECRETS_DIR": str(key_folder),
                 "FRANCA_UPDATER_IMAGE": UPDATER,
                 "FRANCA_BUNDLE_DIR": str(bundle),
                 "COMPOSE_PROJECT_NAME": PROJECT,
