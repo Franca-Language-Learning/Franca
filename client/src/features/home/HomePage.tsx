@@ -33,7 +33,7 @@ export function HomePage() {
             </li>
           </ul>
           <Button onPress={() => leave.mutate()} isDisabled={leave.isPending}>
-            Sign out
+            Sign out on this device
           </Button>
           {leave.isError && <p role="alert">Signing out did not work. Please try again.</p>}
         </>

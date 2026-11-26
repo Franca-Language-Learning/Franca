@@ -24,11 +24,11 @@ function DeviceItem({ session }: { session: Session }) {
         Signed in on {WHEN.format(new Date(session.signedInAt))}. Last used on {WHEN.format(new Date(session.lastUsedAt))}.
       </p>
       {!session.current && (
-        <Button onPress={() => signOut.mutate()} isDisabled={signOut.isPending} aria-label={`Sign out ${name}`}>
+        <Button onPress={() => signOut.mutate()} isDisabled={signOut.isPending} aria-label={`Sign out on ${name}`}>
           Sign out
         </Button>
       )}
-      {signOut.isError && <p role="alert">This device could not be signed out. Please try again.</p>}
+      {signOut.isError && <p role="alert">Signing out on that device did not work. Please try again.</p>}
     </li>
   );
 }
@@ -51,7 +51,7 @@ export function DevicesPage() {
       <main>
         <h1>Your devices</h1>
         <p>
-          You are not signed in. <Link to="/sign-in">Sign in</Link> first, then open Your devices on the home page.
+          You are not signed in. <Link to="/sign-in">Sign in</Link> first, then open “Your devices” on the home page.
         </p>
       </main>
     );
@@ -61,7 +61,7 @@ export function DevicesPage() {
   return (
     <main>
       <h1>Your devices</h1>
-      <p>These are the browsers where you are signed in to Franca. If you do not recognise one, sign it out.</p>
+      <p>These are the devices where you are signed in to Franca. A device with two browsers is listed twice. If you do not recognise a device, use its Sign out button.</p>
       {sessions.isPending && <p role="status">Loading…</p>}
       {sessions.isError && <p role="alert">Your devices could not be loaded. Reload this page to try again.</p>}
       {sessions.data && (
@@ -84,8 +84,8 @@ export function DevicesPage() {
         ) : (
           <Button onPress={() => setConfirming(true)}>Sign out on all other devices…</Button>
         ))}
-      {signOutOthers.isSuccess && <p role="status">The other devices were signed out.</p>}
-      {signOutOthers.isError && <p role="alert">The other devices could not be signed out. Please try again.</p>}
+      {signOutOthers.isSuccess && <p role="status">You are now signed out on all other devices.</p>}
+      {signOutOthers.isError && <p role="alert">Signing out on other devices did not work. Please try again.</p>}
 
       <p>
         <Link to="/">Back to the home page</Link>

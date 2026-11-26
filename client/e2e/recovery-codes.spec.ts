@@ -32,7 +32,7 @@ test("the owner makes recovery codes and signs in with one", async ({ page, cont
   expect(results.violations).toEqual([]);
 
   await page.goto("/");
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: "Sign out on this device" }).click();
   await expect(page.getByRole("link", { name: "Sign in" })).toBeVisible();
   await page.goto("/sign-in");
   await page.getByRole("link", { name: "sign in with a recovery code" }).click();

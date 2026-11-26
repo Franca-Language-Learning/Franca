@@ -49,7 +49,7 @@ test("the owner adds a passkey and then signs in with it", async ({ page, contex
   expect(results.violations).toEqual([]);
 
   await page.goto("/");
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: "Sign out on this device" }).click();
   await expect(page.getByRole("link", { name: "Sign in" })).toBeVisible();
   await page.goto("/sign-in");
   await page.getByRole("button", { name: "Sign in with a passkey" }).click();

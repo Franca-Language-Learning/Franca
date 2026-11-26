@@ -60,7 +60,7 @@ export function RecoveryCodesPage() {
       <main>
         <h1>Recovery codes</h1>
         <p>
-          You are not signed in. <Link to="/sign-in">Sign in</Link> first, then open Your recovery codes on the home page.
+          You are not signed in. <Link to="/sign-in">Sign in</Link> first, then open “Your recovery codes” on the home page.
         </p>
       </main>
     );
@@ -107,7 +107,7 @@ export function RecoveryCodesPage() {
         (make.error instanceof ApiError && make.error.detail === "sign-in-again" ? (
           <p role="alert">
             You signed in more than 15 minutes ago, so you need to sign in again before you can make new codes.{" "}
-            <Link to="/sign-in">Sign in again</Link>, then open Your recovery codes on the home page.
+            <Link to="/sign-in">Sign in again</Link>, then open “Your recovery codes” on the home page.
           </p>
         ) : (
           <p role="alert">New codes could not be made. Please try again.</p>

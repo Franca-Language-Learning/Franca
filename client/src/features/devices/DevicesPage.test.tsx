@@ -16,7 +16,7 @@ describe("devices page", () => {
     render(<AppRoot initialPath="/devices" />);
     expect(await screen.findByRole("heading", { level: 2, name: "Computer: Chrome on Windows (this device)" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Phone: Safari on iPhone" })).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: /^Sign out (Computer|Phone|Tablet)/ })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /^Sign out on (Computer|Phone|Tablet)/ })).toHaveLength(1);
   });
 
   it("signs out another device", async () => {
@@ -31,7 +31,7 @@ describe("devices page", () => {
       }),
     );
     render(<AppRoot initialPath="/devices" />);
-    await userEvent.click(await screen.findByRole("button", { name: "Sign out Phone: Safari on iPhone" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Sign out on Phone: Safari on iPhone" }));
     await screen.findByRole("heading", { level: 2, name: "Computer: Chrome on Windows (this device)" });
     expect(screen.queryByText(/Safari on iPhone/)).toBeNull();
     expect(ended).toBe("9");
@@ -50,7 +50,7 @@ describe("devices page", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Sign out on all other devices…" }));
     expect(screen.getByText(/You will need to sign in again on the 2 other devices/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Sign out on all other devices" }));
-    expect(await screen.findByRole("status")).toHaveTextContent("The other devices were signed out.");
+    expect(await screen.findByRole("status")).toHaveTextContent("You are now signed out on all other devices.");
   });
 
   it("offers nothing to sign out when this is the only device", async () => {
@@ -82,7 +82,7 @@ describe("signing out on this device", () => {
     render(<AppRoot initialPath="/" />);
     const nav = (await screen.findByRole("link", { name: "Your devices" })).closest("ul") as HTMLElement;
     expect(within(nav).getAllByRole("link")).toHaveLength(3);
-    await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    await userEvent.click(screen.getByRole("button", { name: "Sign out on this device" }));
     expect(await screen.findByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/sign-in");
   });
 });
