@@ -1,0 +1,13 @@
+# Settings for Grype, the vulnerability scanner in the ci and release workflows. Grype reads this file from the
+# repository root.
+#
+# A finding is ignored here only when it does not apply to Franca and no fixed release can be installed yet.
+# Each rule names the package version, so it stops applying when the package is updated. See
+# docs/package-updates.md.
+ignore:
+  # Python 3.14.10 enforces the FIPS hash rules wrongly when OpenSSL runs in FIPS mode. Franca does not run
+  # OpenSSL in FIPS mode. The fix is in Python 3.14.11, which is not released yet (26 November 2026).
+  - vulnerability: CVE-2026-119170
+    package:
+      name: python
+      version: 3.14.10

@@ -12,6 +12,7 @@ import {
 } from "@tanstack/react-router";
 import { useState } from "react";
 import { HomePage } from "./features/home";
+import { SignInPage } from "./features/sign-in";
 
 function NotFound() {
   return (
@@ -26,7 +27,16 @@ function NotFound() {
 
 const rootRoute = createRootRoute({ component: Outlet, notFoundComponent: NotFound });
 const homeRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: HomePage });
-const routeTree = rootRoute.addChildren([homeRoute]);
+const signInRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/sign-in",
+  validateSearch: (search: Record<string, unknown>): { error?: string } =>
+    typeof search.error === "string" ? { error: search.error } : {},
+  component: function SignInRouteComponent() {
+    return <SignInPage error={signInRoute.useSearch().error} />;
+  },
+});
+const routeTree = rootRoute.addChildren([homeRoute, signInRoute]);
 
 function makeRouter(initialPath?: string) {
   const history = initialPath ? createMemoryHistory({ initialEntries: [initialPath] }) : createBrowserHistory();

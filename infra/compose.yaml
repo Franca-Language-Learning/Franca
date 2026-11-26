@@ -19,6 +19,15 @@ services:
       args:
         FRANCA_VERSION: ${FRANCA_VERSION:-0.1.0-dev}
     image: franca/app:${FRANCA_VERSION:-0.1.0-dev}
+    # A small init process passes stop signals on, also while the migration runs before the service starts.
+    init: true
+    environment:
+      FRANCA_PUBLIC_URL: ${FRANCA_PUBLIC_URL:-http://localhost:8080}
+      FRANCA_OWNER_EMAIL: ${FRANCA_OWNER_EMAIL:-}
+      FRANCA_GOOGLE_CLIENT_ID: ${FRANCA_GOOGLE_CLIENT_ID:-}
+      FRANCA_GOOGLE_CLIENT_SECRET_FILE: /run/secrets/google_client_secret
+      FRANCA_SESSION_SECRET_FILE: /run/secrets/session_secret
+    secrets: [google_client_secret, session_secret]
     volumes:
       - app-data:/data
     networks: [internal]
@@ -39,6 +48,13 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     networks: [internal]
+
+# Secrets are files in the secrets folder on the PC (FRANCA_SECRETS_DIR). The installer writes them (story E01-011).
+secrets:
+  google_client_secret:
+    file: ${FRANCA_SECRETS_DIR:-./secrets}/google_client_secret
+  session_secret:
+    file: ${FRANCA_SECRETS_DIR:-./secrets}/session_secret
 
 volumes:
   app-data:

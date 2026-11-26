@@ -21,7 +21,9 @@ export default defineConfig({
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: [
     {
-      command: "cd ../server && PYTHONPATH=src uv run uvicorn franca.api:create_app --factory --host 127.0.0.1 --port 8000",
+      // A new database for each run, in the server folder (database files are ignored by Git).
+      command:
+        "cd ../server && rm -f e2e.db && export PYTHONPATH=src FRANCA_DATABASE_PATH=e2e.db && uv run python -m franca.platform.migrate && uv run uvicorn franca.api:create_app --factory --host 127.0.0.1 --port 8000",
       url: "http://127.0.0.1:8000/api/v1/health",
       reuseExistingServer: !process.env.CI,
     },
