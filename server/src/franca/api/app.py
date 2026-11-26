@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.exc import OperationalError
 from starlette.middleware.sessions import SessionMiddleware
 
-from franca.api import auth, passkeys
+from franca.api import auth, passkeys, recovery
 from franca.platform import Settings, load_settings, make_engine
 
 API_PREFIX = "/api/v1"
@@ -78,4 +78,5 @@ def create_app(settings: Settings | None = None, *, google_transport: Any = None
     app.include_router(health_router(settings), prefix=API_PREFIX)
     app.include_router(auth.install(app, settings, make_engine(settings.database_path), google_transport), prefix=API_PREFIX)
     app.include_router(passkeys.passkey_router(settings), prefix=API_PREFIX)
+    app.include_router(recovery.recovery_router(settings), prefix=API_PREFIX)
     return app

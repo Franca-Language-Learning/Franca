@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { PasskeySignIn } from "../passkeys";
 /** The sign-in page. A learner signs in with Google, or with a passkey added earlier. Franca stores no password. */
 
@@ -22,6 +23,10 @@ export function SignInPage({ error }: { error?: string }) {
         <a href="/api/v1/auth/google/start">Sign in with Google</a>
       </p>
       <PasskeySignIn />
+      <p>
+        If you lose your phone or cannot use your Google account, you can{" "}
+        <Link to="/sign-in/recovery-code">sign in with a recovery code</Link>.
+      </p>
     </main>
   );
 }

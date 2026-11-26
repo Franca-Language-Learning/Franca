@@ -13,6 +13,7 @@ import {
 import { useState } from "react";
 import { HomePage } from "./features/home";
 import { PasskeysPage } from "./features/passkeys";
+import { RecoveryCodeSignInPage, RecoveryCodesPage } from "./features/recovery-codes";
 import { SignInPage } from "./features/sign-in";
 
 function NotFound() {
@@ -38,7 +39,9 @@ const signInRoute = createRoute({
   },
 });
 const passkeysRoute = createRoute({ getParentRoute: () => rootRoute, path: "/passkeys", component: PasskeysPage });
-const routeTree = rootRoute.addChildren([homeRoute, signInRoute, passkeysRoute]);
+const recoveryCodesRoute = createRoute({ getParentRoute: () => rootRoute, path: "/recovery-codes", component: RecoveryCodesPage });
+const recoverySignInRoute = createRoute({ getParentRoute: () => rootRoute, path: "/sign-in/recovery-code", component: RecoveryCodeSignInPage });
+const routeTree = rootRoute.addChildren([homeRoute, signInRoute, passkeysRoute, recoveryCodesRoute, recoverySignInRoute]);
 
 function makeRouter(initialPath?: string) {
   const history = initialPath ? createMemoryHistory({ initialEntries: [initialPath] }) : createBrowserHistory();
