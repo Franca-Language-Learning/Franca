@@ -46,7 +46,7 @@ jobs:
         working-directory: server
         run: |
           uv run mypy
-          uv run mypy --strict ../tools/content_guard.py ../infra/updater/franca_updater.py ../infra/backup/franca_backup.py ../infra/tests/rehearse_update.py ../infra/tests/rehearse_backup.py ../infra/tests/rehearse_tailnet.py ../infra/tests/rehearse_status.py ../installer/linux/franca_install.py ../infra/tests/rehearse_install.py
+          uv run mypy --strict ../tools/content_guard.py ../tools/check_pins.py ../infra/updater/franca_updater.py ../infra/backup/franca_backup.py ../infra/tests/rehearse_update.py ../infra/tests/rehearse_backup.py ../infra/tests/rehearse_tailnet.py ../infra/tests/rehearse_status.py ../installer/linux/franca_install.py ../infra/tests/rehearse_install.py
       - name: Module boundaries
         working-directory: server
         env:
@@ -114,6 +114,10 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+    env:
+      # Chromium comes from Playwright's image, named by digest, so the browser is pinned like the other images.
+      # Renovate updates the image together with @playwright/test, because the two versions have to match.
+      PLAYWRIGHT_IMAGE: "mcr.microsoft.com/playwright:v1.65.1-noble"  # renovate: image
     steps:
       - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
@@ -133,11 +137,24 @@ jobs:
         run: |
           uv sync --locked
           pnpm install --frozen-lockfile
-      - name: Install Playwright's Chromium
-        run: pnpm --filter @franca/client exec playwright install --with-deps chromium
+      # The browser runs in Playwright's container and is reached on port 3000. The container shares the runner's
+      # network, so the browser reaches the test servers on localhost. The checkout is mounted read-only at the same
+      # path, so the container runs the locked Playwright from node_modules.
+      - name: Start Chromium in Playwright's container
+        run: |
+          docker run --detach --name playwright --init --network host --user pwuser \
+            --volume "$PWD:$PWD:ro" --workdir "$PWD/client" "$PLAYWRIGHT_IMAGE" \
+            node_modules/.bin/playwright run-server --port 3000 --host 127.0.0.1
+          for _ in $(seq 60); do
+            if curl --silent --output /dev/null http://127.0.0.1:3000/; then exit 0; fi
+            sleep 1
+          done
+          docker logs playwright
+          exit 1
       - name: Browser tests
         env:
           CI: "true"
+          PW_TEST_CONNECT_WS_ENDPOINT: ws://127.0.0.1:3000/
         run: pnpm --filter @franca/client e2e
       - name: Keep the test report for 7 days
         if: failure()
@@ -160,6 +177,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The same check runs with the server's tests. Here Docker can reach the registries, so the digest of an image
+      # that has none is printed for the person who fixes it.
+      - name: Check that images and sources are pinned
+        run: python3 -I tools/check_pins.py --resolve
       - name: Build, start and check the bundle
         run: infra/tests/test-bundle.sh
       # The rehearsal runs the updater's code on the runner, with the same Python as the updater's image.

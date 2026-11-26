@@ -77,6 +77,24 @@
         "docker"
       ],
       "pinDigests": true
+    },
+    {
+      "description": "Chromium for the browser tests comes from Playwright's image, which has to match the version of @playwright/test, so the two are updated together.",
+      "matchPackageNames": [
+        "@playwright/test",
+        "mcr.microsoft.com/playwright"
+      ],
+      "groupName": "Playwright"
+    },
+    {
+      "description": "Source code built in the Dockerfiles waits for a review, because the build flags in the same stage can name the version.",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchDatasources": [
+        "github-tags"
+      ],
+      "automerge": false
     }
   ],
   "customManagers": [
@@ -102,6 +120,29 @@
       ],
       "datasourceTemplate": "docker",
       "autoReplaceStringTemplate": "= \"{{depName}}:{{newValue}}{{#if newDigest}}@{{newDigest}}{{/if}}\"  # renovate: image"
+    },
+    {
+      "customType": "regex",
+      "description": "Images named in the workflows, marked with a renovate comment.",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/.+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        ": \"(?<depName>[a-z0-9./-]+):(?<currentValue>[^\"@\\s]+)(?:@(?<currentDigest>sha256:[a-f0-9]{64}))?\"  # renovate: image"
+      ],
+      "datasourceTemplate": "docker",
+      "autoReplaceStringTemplate": ": \"{{depName}}:{{newValue}}{{#if newDigest}}@{{newDigest}}{{/if}}\"  # renovate: image"
+    },
+    {
+      "customType": "regex",
+      "description": "Source code cloned in the Dockerfiles: the release tag and the commit it is checked against.",
+      "managerFilePatterns": [
+        "/^infra/images/.+Dockerfile$/"
+      ],
+      "matchStrings": [
+        "--branch (?<currentValue>\\S+) https://github\\.com/(?<depName>[\\w.-]+/[\\w.-]+)[^\\n]*\\n(?:[^\\n]*\\n)?\\s*&& test \"\\$\\(git rev-parse HEAD\\)\" = (?<currentDigest>[a-f0-9]{40})"
+      ],
+      "datasourceTemplate": "github-tags"
     }
   ]
 }
