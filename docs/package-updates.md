@@ -29,6 +29,31 @@ The uv version is pinned in `required-version` in `pyproject.toml` and in the `v
 
 ## Container images
 
-The pipeline builds both container images and scans them with Grype. A finding with a severity of high or critical stops the pipeline when a fixed version exists. The final stage of each image installs the operating system's security updates, so most findings in Debian or Alpine packages are fixed by building the images again. Renovate updates the base images.
+The container images are built and scanned with Grype in the pipeline. A finding with a severity of high or critical stops the pipeline when a fixed version exists. The final stage of each image installs the operating system's security updates, so most findings in Debian or Alpine packages are fixed by building the images again. Renovate updates the base images.
 
 When a finding does not apply to Franca and the fix is not released yet, it can be ignored in `.grype.yaml`, with a comment that says why it does not apply. A rule names the package version, so it stops applying when the package is updated. Remove a rule when the fixed version is in the image.
+
+## Images, source code and the browser named by digest
+
+A tag such as `python:3.14.10-slim-trixie` or `v0.19.1` can be moved to other content after it is published. So the images and source code that Franca is built from are named by digest or commit as well:
+
+| What | How it is pinned | Updated by Renovate through |
+|---|---|---|
+| Base images in `infra/images/*.Dockerfile` | `image:tag@sha256:...` | The Dockerfile manager |
+| Helper images in `infra/compose.yaml` | `image:tag@sha256:...` | The Compose manager |
+| Images in the rehearsal scripts and workflows | `image:tag@sha256:...` with a `# renovate: image` comment | The custom managers in `.github/renovate.json` |
+| Source code cloned in the Dockerfiles | The release tag, and a check of the commit it points to | The custom manager for cloned sources. These updates wait for a review |
+| Chromium for the browser tests | Playwright's image, by digest | Grouped with `@playwright/test`, because the versions have to match |
+| GitHub Actions | The full commit SHA, with the tag in a comment | The GitHub Actions manager |
+
+Franca's own images are named by digest in the release file that the installer and the updater read.
+
+There are no model files yet. The speech models (epic E09) will be pinned by hash in the same way.
+
+`tools/check_pins.py` is run with the server's tests and in the Container bundle job, and fails when an image has no digest or a cloned source has no commit check. Renovate adds the digest when it updates an image. To add one by hand, run this on a computer where Docker can reach the registries, and copy the digests it prints into the files:
+
+```sh
+python3 -I tools/check_pins.py --resolve
+```
+
+The Container bundle job runs the same command, so the digests can also be read from its log.

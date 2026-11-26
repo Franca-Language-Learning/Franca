@@ -1,8 +1,8 @@
 # The application service (container "app"), story E01-005. Built from the repository root:
 #   docker build -f infra/images/app.Dockerfile .
-# Base images are named by tag here; Renovate adds and updates their digests.
+# Base images are named by tag and digest, and Renovate updates both (a tag without a digest is refused by tools/check_pins.py).
 
-FROM python:3.14.10-slim-trixie AS build
+FROM python:3.14.10-slim-trixie@sha256:22eafb370920ad8b429e0aec3fff433e0669968519f5d60469d83729c138b28b AS build
 COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never UV_PROJECT_ENVIRONMENT=/app/.venv
 WORKDIR /src
@@ -13,7 +13,7 @@ RUN uv sync --locked --no-dev --package franca-server
 # The build stops if a package installs a file that Python would run at start-up (stories E01-004 and E01-013).
 RUN tools/check-startup-files.sh /app/.venv
 
-FROM python:3.14.10-slim-trixie
+FROM python:3.14.10-slim-trixie@sha256:22eafb370920ad8b429e0aec3fff433e0669968519f5d60469d83729c138b28b
 ARG FRANCA_VERSION=0.1.0-dev
 # Security fixes from Debian that came out after the base image was built are installed here. The vulnerability scan
 # in the pipeline fails on a high or critical finding that has a fix.

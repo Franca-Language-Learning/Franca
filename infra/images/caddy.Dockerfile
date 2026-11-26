@@ -1,8 +1,8 @@
 # The web server (container "caddy"), story E01-005: serves the client and forwards /api to the app.
 # Built from the repository root:  docker build -f infra/images/caddy.Dockerfile .
-# Base images are named by tag here; Renovate adds and updates their digests.
+# Base images are named by tag and digest, and Renovate updates both (a tag without a digest is refused by tools/check_pins.py).
 
-FROM node:22.23.4-alpine AS client
+FROM node:22.23.4-alpine@sha256:0e1754758c2df4cfa3e68d59e2e1b7374bb7fd9ea6328eaaacf15cc934af8202 AS client
 RUN npm install --global pnpm@12.22.0
 WORKDIR /src
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -15,7 +15,7 @@ RUN pnpm --filter @franca/client build
 # Caddy 2.11.9 is built here with newer versions of two of its libraries, which fix GO-2026-6865 (compress)
 # and GO-2026-6860 (x/net). Remove this stage and the COPY of /usr/bin/caddy below when a Caddy release
 # has these versions or newer.
-FROM caddy:2.11.9-builder-alpine AS caddy
+FROM caddy:2.11.9-builder-alpine@sha256:86e132d1d6db8850352b2dbc15f82a4cb25363ac305ee41e11405873e5931f37 AS caddy
 RUN xcaddy build v2.11.9 \
         --output /usr/bin/caddy \
         --replace github.com/klauspost/compress=github.com/klauspost/compress@v1.20.2 \
@@ -25,7 +25,7 @@ RUN xcaddy build v2.11.9 \
     && setcap -r /usr/bin/caddy \
     && test -z "$(getcap /usr/bin/caddy)"
 
-FROM caddy:2.11.9-alpine
+FROM caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
 COPY --from=caddy /usr/bin/caddy /usr/bin/caddy
 # Security fixes from Alpine that came out after the base image was built are installed here.
 RUN apk upgrade --no-cache

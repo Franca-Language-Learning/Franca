@@ -117,7 +117,7 @@ jobs:
     env:
       # Chromium comes from Playwright's image, named by digest, so the browser is pinned like the other images.
       # Renovate updates the image together with @playwright/test, because the two versions have to match.
-      PLAYWRIGHT_IMAGE: "mcr.microsoft.com/playwright:v1.65.1-noble"  # renovate: image
+      PLAYWRIGHT_IMAGE: "mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579"  # renovate: image
     steps:
       - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:

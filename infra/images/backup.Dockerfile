@@ -1,11 +1,11 @@
 # The backup (container "backup"), story E01-008. Built from the repository root:
 #   docker build -f infra/images/backup.Dockerfile .
-# Base images are named by tag here; Renovate adds and updates their digests.
+# Base images are named by tag and digest, and Renovate updates both (a tag without a digest is refused by tools/check_pins.py).
 
 # restic is built from its 0.19.1 release with Go 1.27.4 and newer versions of five of its libraries (compress, x/net
 # x/text, grpc and go-jose), because the published binary has versions with known vulnerabilities. Remove this stage
 # when a restic release has these versions or newer.
-FROM golang:1.27.4-trixie AS restic
+FROM golang:1.27.4-trixie@sha256:430985542100b871e108ccc00e8dcc5eef08ca14ee5825e98ebf563d8ffec4ee AS restic
 ENV CGO_ENABLED=0 GOFLAGS=-trimpath
 # The tag is checked against its commit, so a moved tag is noticed.
 RUN git clone --quiet --depth 1 --branch v0.19.1 https://github.com/restic/restic /src/restic \
@@ -15,7 +15,7 @@ RUN git clone --quiet --depth 1 --branch v0.19.1 https://github.com/restic/resti
         google.golang.org/grpc@v1.83.2 github.com/go-jose/go-jose/v4@v4.1.6 \
     && go build -ldflags "-s -w -X main.version=0.19.1" -o /out/restic ./cmd/restic
 
-FROM python:3.14.10-slim-trixie
+FROM python:3.14.10-slim-trixie@sha256:22eafb370920ad8b429e0aec3fff433e0669968519f5d60469d83729c138b28b
 ARG FRANCA_VERSION=0.1.0-dev
 # Security fixes from Debian that came out after the base image was built are installed here.
 RUN apt-get update \

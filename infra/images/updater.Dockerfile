@@ -1,13 +1,13 @@
 # The updater (container "updater"), story E01-007. Built from the repository root:
 #   docker build -f infra/images/updater.Dockerfile .
-# Base images are named by tag here; Renovate adds and updates their digests.
+# Base images are named by tag and digest, and Renovate updates both (a tag without a digest is refused by tools/check_pins.py).
 
-FROM docker:29.10.0-cli AS docker-cli
+FROM docker:29.10.0-cli@sha256:34507eb5069d8be82c95dd3b6987d4250fd5fee49b82e2509b7d7a7030740d6d AS docker-cli
 
 # The published compose and cosign binaries were built with Go 1.27.1 and older versions of the compress library,
 # which have known vulnerabilities (GO-2026-6603 and others; GO-2026-6865). They are built here from the same
 # releases with Go 1.27.4 and compress 1.20.2. Remove this stage when the published binaries have these versions.
-FROM golang:1.27.4-trixie AS tools
+FROM golang:1.27.4-trixie@sha256:430985542100b871e108ccc00e8dcc5eef08ca14ee5825e98ebf563d8ffec4ee AS tools
 ENV CGO_ENABLED=0 GOFLAGS=-trimpath
 # Each tag is checked against its commit, so a moved tag is noticed.
 RUN git clone --quiet --depth 1 --branch v5.8.0 https://github.com/docker/compose /src/compose \
@@ -21,7 +21,7 @@ RUN git clone --quiet --depth 1 --branch v3.1.4 https://github.com/sigstore/cosi
     && go get github.com/klauspost/compress@v1.20.2 \
     && go build -ldflags "-s -w" -o /out/cosign ./cmd/cosign
 
-FROM python:3.14.10-slim-trixie
+FROM python:3.14.10-slim-trixie@sha256:22eafb370920ad8b429e0aec3fff433e0669968519f5d60469d83729c138b28b
 ARG FRANCA_VERSION=0.1.0-dev
 # Security fixes from Debian that came out after the base image was built are installed here.
 RUN apt-get update \

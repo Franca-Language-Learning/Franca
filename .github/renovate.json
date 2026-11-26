@@ -111,7 +111,7 @@
     },
     {
       "customType": "regex",
-      "description": "Images pulled by the rehearsal scripts, marked with a renovate comment. Renovate adds their digests, as for the Dockerfiles.",
+      "description": "Images pulled by the rehearsal scripts, marked with a renovate comment and named by digest, as in the Dockerfiles.",
       "managerFilePatterns": [
         "/^infra/tests/.+\\.py$/"
       ],
