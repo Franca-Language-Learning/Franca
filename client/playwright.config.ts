@@ -1,6 +1,6 @@
-// Browser tests (story E01-001): the built client and the real server, run by Playwright.
+// Browser tests (story E01-001). Playwright runs them against the built client and the real server.
 // Run with  pnpm --filter @franca/client e2e
-// The pipeline installs Playwright's own Chromium. On a computer that has Chromium elsewhere, put its path in
+// The pipeline and scripts/setup install Playwright's Chromium. On a computer that has Chromium elsewhere, put its path in
 // FRANCA_CHROMIUM.
 import { defineConfig, devices } from "@playwright/test";
 

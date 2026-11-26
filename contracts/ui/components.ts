@@ -1,24 +1,25 @@
 /**
  * The component contract (story E01-002): the props of the shared interface components, agreed before the
- * interface lanes work in parallel. The components in client/src/components/ are built to these types
+ * interface lanes work in parallel. The components in client/src/components/ will be built to these types
  * (stories E13-002 to E13-004), and the design work uses the same names.
  *
  * Sources: design/interface-round-5.md (design language, EN marks, explanations inside a sentence) and
  * design/backend-and-technology-decisions.md (interface text, layout rules), in the project documents.
  *
- * Rules that every component follows, from the layout rules:
+ * These layout rules apply to all the components:
  * - Text containers have no fixed height, at most a minimum height.
  * - Children that hold text have min-width: 0 and overflow-wrap: anywhere, so long Dutch compounds wrap.
  * - Sizes are in rem and clamp(), and layout changes with container queries.
  * - A label, its control and its EN mark wrap as one unit.
- * - English up to 40% longer than the Dutch fits, which is tested with a stretched pseudo-language.
+ * - There is room for English up to 40% longer than the Dutch. This is tested with a pseudo-language that has
+ *   its text stretched by 40%.
  */
 
 import type { ReactNode } from "react";
 
 // --- Interface text
 
-/** A key in the message catalogues. Every visible string is a key, looked up in the course language and in English. */
+/** A key in the message catalogues. Every visible string comes from a key, looked up in the course language and in English. */
 export type MessageKey = string & { readonly __brand: "MessageKey" };
 
 /** Values for an ICU message (plurals, numbers, dates and names). */
@@ -35,13 +36,14 @@ export type TextKind = "label" | "sentence";
  * The learner's setting for EN marks (Settings, round 5 decision R7):
  * - everywhere: a mark on every element
  * - content-only: marks on lesson content, none on the interface
- * - nowhere: no marks; English is still shown when the header switch is on
+ * - nowhere: no marks; English is still shown when the English switch in the header is on
  */
 export type EnMarkSetting = "everywhere" | "content-only" | "nowhere";
 
 /**
  * normal: the mark is in the Tab order.
- * faded: for labels met on every screen (menu items, Begin, Open, Redo); faded to a third and out of the Tab order.
+ * faded: for labels that are on every screen (menu items, Begin, Open, Redo). The mark is at a third of its normal
+ * opacity and out of the Tab order.
  */
 export type EnMarkEmphasis = "normal" | "faded";
 
@@ -49,14 +51,14 @@ export interface TextProps {
   messageKey: MessageKey;
   values?: MessageValues;
   kind: TextKind;
-  /** Lesson content or interface text; the EnMarkSetting "content-only" uses this. Default: "interface". */
+  /** Whether the text is lesson content or interface text. The "content-only" EN mark setting depends on it. Default: "interface". */
   role?: "content" | "interface";
   enMark?: EnMarkEmphasis;
 }
 
-/** The header switches. They are per learner and kept between visits. */
+/** The switches in the header. They are per learner. */
 export interface HeaderSwitches {
-  /** English under every element. */
+  /** English for every element: in place of labels, under sentences. */
   showAllEnglish: boolean;
   /** The grammar breakdown under every sentence (the G switch). */
   showAllBreakdowns: boolean;
@@ -64,13 +66,19 @@ export interface HeaderSwitches {
 
 // --- Design language
 
-/** The kinds of language, each with its own colour: word blue, rule ochre, sound terracotta. English is one cool grey. */
+/**
+ * Colours for the kinds of language:
+ * - word: blue
+ * - rule: ochre
+ * - sound: terracotta
+ * - english: cool grey
+ */
 export type LanguageKind = "word" | "rule" | "sound" | "english";
 
 /**
  * Underlines and what they mean:
  * - link: ink, 1 px
- * - tappable-word: dotted blue; opens the word card
+ * - tappable-word: dotted blue, on a word that has a word card
  * - grammar-focus: ochre, 3 px
  * - sound-to-watch: dashed terracotta
  * - corrected: muted strikethrough on corrected learner text
@@ -86,7 +94,10 @@ export type Underline = "link" | "tappable-word" | "grammar-focus" | "sound-to-w
  */
 export type Surface = "paper" | "your-turn" | "rule-wash" | "reference";
 
-/** Red is not used for errors. A correct answer has an ink tick and the verdict word; a hint is a strip with an ochre left edge. */
+/**
+ * There is no error state, and red is not used. A correct answer has an ink tick and the verdict word. A hint is a
+ * strip with an ochre left edge.
+ */
 export type Feedback = "correct" | "hint";
 
 /** Spacing steps, from the design tokens (story E13-002). */
@@ -103,7 +114,12 @@ export interface ControlText {
 
 export interface ButtonProps {
   label: ControlText;
-  /** primary: at most one per screen, in the your-turn surface. outline: 3:1 line colour. quiet: no frame. */
+  /**
+   * primary: at most one per screen, in the your-turn surface.
+   * secondary: a filled button for the other actions.
+   * outline: a frame with at least 3:1 contrast against the background.
+   * quiet: no frame.
+   */
   variant: "primary" | "secondary" | "outline" | "quiet";
   onPress?: () => void;
   type?: "button" | "submit";
@@ -214,7 +230,7 @@ export interface ClusterProps {
   children: ReactNode;
 }
 
-/** Columns that are at least minColumn wide; there is one column when the container is narrower. */
+/** Columns at least minColumn wide. When two columns do not fit, there is one column. */
 export interface GridProps {
   gap: Space;
   minColumn: `${number}rem`;
@@ -224,14 +240,14 @@ export interface GridProps {
 /** A region with one of the surfaces. */
 export interface PanelProps {
   surface: Surface;
-  /** A heading for the region, so it is a landmark for screen readers. */
+  /** A heading for the region. It gives the region an accessible name, so screen readers list it as a landmark. */
   label?: ControlText;
   children: ReactNode;
 }
 
 // --- The components, by name
 
-/** The shared components and their props. A component in client/src/components/ is typed with its entry here. */
+/** The shared components and their props. A component in client/src/components/ will be typed with its entry here. */
 export interface Components {
   Text: TextProps;
   Button: ButtonProps;

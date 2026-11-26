@@ -18,7 +18,7 @@ test("the home page shows that the real server is running", async ({ page }) => 
   await expectNoAccessibilityViolations(page);
 });
 
-test("an unknown address shows a page-not-found message with a working link home", async ({ page }) => {
+test("an unknown address gets a page-not-found message with a working link home", async ({ page }) => {
   await page.goto("/no-such-page");
   await expect(page.getByRole("heading", { level: 1, name: "Page not found" })).toBeVisible();
   await expectNoAccessibilityViolations(page);
@@ -28,7 +28,7 @@ test("an unknown address shows a page-not-found message with a working link home
 });
 
 for (const width of [320, 768, 1440, 2560]) {
-  test(`nothing is wider than the window at ${width} px`, async ({ page }) => {
+  test(`the home page has no horizontal scroll at ${width} px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 800 });
     await page.goto("/");
     await expect(page.getByRole("status")).toHaveText(/server is running/);

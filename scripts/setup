@@ -11,7 +11,8 @@ uv sync --locked
 tools/check-startup-files.sh .venv
 
 pnpm install --frozen-lockfile
-# The browser tests need Chromium. If it is installed elsewhere, its path can be given in FRANCA_CHROMIUM instead.
+# The browser tests need Chromium. If Chromium is already on this computer, put its path in FRANCA_CHROMIUM and
+# this step is skipped.
 if [ -z "${FRANCA_CHROMIUM:-}" ]; then
     pnpm --filter @franca/client exec playwright install chromium
 fi
