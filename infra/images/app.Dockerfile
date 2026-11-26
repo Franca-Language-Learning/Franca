@@ -1,6 +1,6 @@
 # The application service (container "app"), story E01-005. Built from the repository root:
 #   docker build -f infra/images/app.Dockerfile .
-# Base images are named by tag and digest, and Renovate updates both (a tag without a digest is refused by tools/check_pins.py).
+# Base images are named by tag and digest, and Renovate updates both (a tag without a digest is reported by tools/check_pins.py, and the pipeline fails).
 
 FROM python:3.14.10-slim-trixie@sha256:22eafb370920ad8b429e0aec3fff433e0669968519f5d60469d83729c138b28b AS build
 COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /usr/local/bin/uv

@@ -58,9 +58,10 @@
       "groupName": "GitHub Actions"
     },
     {
-      "description": "A uv update can change _virtualenv.py, whose hash is in tools/startup-files-allowed.txt, so it waits for a review.",
+      "description": "A uv update can change _virtualenv.py, whose hash is in tools/startup-files-allowed.txt, so the uv program and the uv image are reviewed before they are merged.",
       "matchDepNames": [
-        "astral-sh/uv"
+        "astral-sh/uv",
+        "ghcr.io/astral-sh/uv"
       ],
       "automerge": false
     },
@@ -87,7 +88,7 @@
       "groupName": "Playwright"
     },
     {
-      "description": "Source code built in the Dockerfiles waits for a review, because the build flags in the same stage can name the version.",
+      "description": "Updates to source code built in the Dockerfiles are reviewed before they are merged, because the version is also written in the build flags of the same stage, and Renovate does not update those.",
       "matchManagers": [
         "custom.regex"
       ],
@@ -95,25 +96,59 @@
         "github-tags"
       ],
       "automerge": false
+    },
+    {
+      "description": "Registries other than Docker Hub give Renovate no release dates, so these images are not held back by the seven-day rule. mcr.microsoft.com/playwright waits for @playwright/test, because the two versions have to match.",
+      "matchPackageNames": [
+        "mcr.microsoft.com/playwright",
+        "lscr.io/linuxserver/socket-proxy",
+        "ghcr.io/astral-sh/uv"
+      ],
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
+    },
+    {
+      "description": "The Tailscale image and the Tailscale source built in the same Dockerfile are updated together, and reviewed.",
+      "matchPackageNames": [
+        "tailscale/tailscale"
+      ],
+      "groupName": "Tailscale",
+      "automerge": false
+    },
+    {
+      "description": "The Caddy images and the Caddy version built with xcaddy are updated together, and reviewed.",
+      "matchPackageNames": [
+        "caddy",
+        "caddyserver/caddy"
+      ],
+      "groupName": "Caddy",
+      "automerge": false
+    },
+    {
+      "description": "The cosign that the installer downloads is checked against a hash, which a person updates.",
+      "matchPackageNames": [
+        "sigstore/cosign"
+      ],
+      "automerge": false
     }
   ],
   "customManagers": [
     {
       "customType": "regex",
-      "description": "The uv version pinned in pyproject.toml and the workflows.",
+      "description": "Versions marked with a renovate comment in pyproject.toml and the workflows: uv, and the Grype and Syft versions of the scan and SBOM actions.",
       "managerFilePatterns": [
         "/^\\.github/workflows/.+\\.ya?ml$/",
         "/^pyproject\\.toml$/"
       ],
       "matchStrings": [
-        "(?:version: |required-version = )\"(?:==)?(?<currentValue>[0-9][^\"]*)\" # renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)"
+        "(?:(?:grype-|syft-)?version: |required-version = )\"(?:==)?(?<currentValue>[0-9v][^\"]*)\" # renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)"
       ]
     },
     {
       "customType": "regex",
-      "description": "Images pulled by the rehearsal scripts, marked with a renovate comment and named by digest, as in the Dockerfiles.",
+      "description": "Images named in Python scripts, marked with a renovate comment and named by digest, as in the Dockerfiles.",
       "managerFilePatterns": [
-        "/^infra/tests/.+\\.py$/"
+        "/^infra/.+\\.py$/",
+        "/^installer/.+\\.py$/"
       ],
       "matchStrings": [
         "= \"(?<depName>[a-z0-9./-]+):(?<currentValue>[^\"@\\s]+)(?:@(?<currentDigest>sha256:[a-f0-9]{64}))?\"  # renovate: image"
@@ -143,6 +178,28 @@
         "--branch (?<currentValue>\\S+) https://github\\.com/(?<depName>[\\w.-]+/[\\w.-]+)[^\\n]*\\n(?:[^\\n]*\\n)?\\s*&& test \"\\$\\(git rev-parse HEAD\\)\" = (?<currentDigest>[a-f0-9]{40})"
       ],
       "datasourceTemplate": "github-tags"
+    },
+    {
+      "customType": "regex",
+      "description": "The Caddy version built with xcaddy, which has to match the Caddy images in the same Dockerfile.",
+      "managerFilePatterns": [
+        "/^infra/images/caddy\\.Dockerfile$/"
+      ],
+      "matchStrings": [
+        "xcaddy build (?<currentValue>v\\S+)"
+      ],
+      "depNameTemplate": "caddyserver/caddy",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "description": "Programs downloaded by the installer, marked with a renovate comment. Their hashes are updated by a person, so until then the update fails the cosign check in the Container bundle job.",
+      "managerFilePatterns": [
+        "/^installer/.+\\.py$/"
+      ],
+      "matchStrings": [
+        "/releases/download/(?<currentValue>v[^/]+)/[^\"]*\"  # renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)"
+      ]
     }
   ]
 }

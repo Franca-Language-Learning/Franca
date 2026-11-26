@@ -1,6 +1,6 @@
 # Health monitoring (container "status"), story E01-010. Built from the repository root:
 #   docker build -f infra/images/status.Dockerfile .
-# Base images are named by tag and digest, and Renovate updates both (a tag without a digest is refused by tools/check_pins.py).
+# Base images are named by tag and digest, and Renovate updates both (a tag without a digest is reported by tools/check_pins.py, and the pipeline fails).
 #
 # Gatus 5.38.0 is built from its source here, with newer versions of four of its libraries, in which known
 # vulnerabilities are fixed: compress (GO-2026-6865), x/net (GO-2026-6860), brotli (GO-2026-6888) and go-jose

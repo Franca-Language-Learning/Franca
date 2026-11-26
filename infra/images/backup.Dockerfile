@@ -1,6 +1,6 @@
 # The backup (container "backup"), story E01-008. Built from the repository root:
 #   docker build -f infra/images/backup.Dockerfile .
-# Base images are named by tag and digest, and Renovate updates both (a tag without a digest is refused by tools/check_pins.py).
+# Base images are named by tag and digest, and Renovate updates both (a tag without a digest is reported by tools/check_pins.py, and the pipeline fails).
 
 # restic is built from its 0.19.1 release with Go 1.27.4 and newer versions of five of its libraries (compress, x/net
 # x/text, grpc and go-jose), because the published binary has versions with known vulnerabilities. Remove this stage

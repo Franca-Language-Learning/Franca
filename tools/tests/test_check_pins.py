@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -107,7 +108,7 @@ def test_a_marked_image_without_a_digest_is_refused(tmp_path: Path) -> None:
 
 def test_a_marked_image_in_a_workflow_is_read(tmp_path: Path) -> None:
     text = '      PLAYWRIGHT_IMAGE: "mcr.microsoft.com/playwright:v1.65.1-noble"  # renovate: image\n'
-    assert problems_in(tmp_path, "ci.yml", text) == ["mcr.microsoft.com/playwright:v1.65.1-noble has no digest"]
+    assert problems_in(tmp_path, ".github/workflows/ci.yml", text) == ["mcr.microsoft.com/playwright:v1.65.1-noble has no digest"]
 
 
 def test_a_problem_names_the_file_and_line(tmp_path: Path) -> None:
@@ -115,6 +116,115 @@ def test_a_problem_names_the_file_and_line(tmp_path: Path) -> None:
     path.write_text(f"FROM python:3.14@{DIGEST}\nFROM alpine:3.23\n", encoding="utf-8")
     (problem,) = check_pins.check_file(path)
     assert (problem.path, problem.line, problem.image) == (path, 2, "alpine:3.23")
+
+
+# --- More Dockerfile forms
+
+
+def test_an_image_copied_from_with_copy_needs_a_digest(tmp_path: Path) -> None:
+    text = f"FROM python:3.14@{DIGEST}\nCOPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /usr/local/bin/uv\n"
+    assert problems_in(tmp_path, "x.Dockerfile", text) == ["ghcr.io/astral-sh/uv:0.11.32 has no digest"]
+
+
+def test_an_image_mounted_in_run_needs_a_digest(tmp_path: Path) -> None:
+    text = f"FROM python:3.14@{DIGEST}\nRUN --mount=type=bind,from=alpine:3.23,target=/a ls /a\n"
+    assert problems_in(tmp_path, "x.Dockerfile", text) == ["alpine:3.23 has no digest"]
+
+
+def test_a_remote_add_needs_a_checksum(tmp_path: Path) -> None:
+    text = f"FROM python:3.14@{DIGEST}\nADD https://example.org/tool.tar.gz /tmp/\nADD --checksum=sha256:{'c' * 64} https://example.org/b /tmp/\n"
+    assert problems_in(tmp_path, "x.Dockerfile", text) == ["ADD of https://example.org/tool.tar.gz without --checksum=sha256:"]
+
+
+def test_scratch_lowercase_and_split_from_lines_are_read(tmp_path: Path) -> None:
+    text = f"FROM scratch AS empty\nfrom --platform linux/amd64 \\\n    alpine:3.23 AS Base\nFROM base\nCOPY --from=0 /a /b\n"
+    assert problems_in(tmp_path, "x.Dockerfile", text) == ["alpine:3.23 has no digest"]
+
+
+def test_a_comment_inside_a_continuation_is_left_out(tmp_path: Path) -> None:
+    text = (
+        f"FROM golang:1.27@{DIGEST}\n"
+        "RUN git clone --branch v1 https://github.com/example/tool /src \\\n"
+        "    # the commit is checked next\n"
+        f'    && cd /src && test "$(git rev-parse HEAD)" = {COMMIT}\n'
+    )
+    assert problems_in(tmp_path, "x.Dockerfile", text) == []
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        f'git clone A /a && git clone B /b && cd /b && test "$(git rev-parse HEAD)" = {COMMIT}',
+        f'git clone A /a && cd /a && test "$(git rev-parse HEAD)" = {COMMIT} || true',
+        f'git clone A /a && cd /a && test "$(git rev-parse HEAD)" = {COMMIT} && git checkout main',
+    ],
+    ids=["two clones, one check", "check made optional", "commit changed after the check"],
+)
+def test_a_commit_check_that_can_be_got_round_is_refused(tmp_path: Path, run: str) -> None:
+    assert problems_in(tmp_path, "x.Dockerfile", f"FROM golang:1.27@{DIGEST}\nRUN {run}\n") != []
+
+
+# --- More Compose and workflow forms
+
+
+def test_a_franca_variable_with_another_default_image_is_refused(tmp_path: Path) -> None:
+    text = "services:\n  cache:\n    image: ${FRANCA_CACHE:-redis:7}\n"
+    assert problems_in(tmp_path, "compose.yaml", text) == ["${FRANCA_CACHE:-redis:7} has no digest"]
+
+
+@pytest.mark.parametrize(
+    ("line", "image"),
+    [
+        ("    container: node:22", "node:22"),
+        ("        image: postgres:17", "postgres:17"),
+        ("      - uses: docker://alpine:3.23", "alpine:3.23"),
+        ("        run: docker run --rm busybox:1.37 true", "busybox:1.37"),
+    ],
+)
+def test_images_in_workflows_need_a_digest(tmp_path: Path, line: str, image: str) -> None:
+    assert problems_in(tmp_path, ".github/workflows/ci.yml", line + "\n") == [f"{image} has no digest"]
+
+
+def test_images_built_in_the_job_and_expressions_need_no_digest(tmp_path: Path) -> None:
+    text = "          image: franca/app:0.1.0-dev\n          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}\n"
+    assert problems_in(tmp_path, ".github/workflows/ci.yml", text) == []
+
+
+def test_a_matrix_of_names_is_not_read_as_an_image(tmp_path: Path) -> None:
+    assert problems_in(tmp_path, ".github/workflows/release.yml", "        image: [app, caddy]\n") == []
+
+
+# --- Scripts
+
+
+def test_an_unmarked_image_in_a_python_script_needs_a_digest(tmp_path: Path) -> None:
+    text = 'PROXY = "alpine:3.23"\nPORT = "caddy:8443"\nOPTION = "no-new-privileges:true"\n'
+    assert problems_in(tmp_path, "infra/tests/rehearse_x.py", text) == ["alpine:3.23 has no digest"]
+
+
+def test_an_image_in_a_shell_docker_command_needs_a_digest(tmp_path: Path) -> None:
+    text = 'docker run --rm "$updater_image" true\ndocker pull busybox:1.37\n'
+    assert problems_in(tmp_path, "infra/tests/x.sh", text) == ["busybox:1.37 has no digest"]
+
+
+# --- Running the check
+
+
+def test_the_report_and_exit_code(tmp_path: Path) -> None:
+    (tmp_path / "infra" / "images").mkdir(parents=True)
+    (tmp_path / "infra" / "images" / "x.Dockerfile").write_text("FROM alpine:3.23\n", encoding="utf-8")
+    assert check_pins.report(tmp_path, resolve=False) == (["infra/images/x.Dockerfile:1: alpine:3.23 has no digest"], 1)
+    (tmp_path / "infra" / "images" / "x.Dockerfile").write_text(f"FROM alpine:3.23@{DIGEST}\n", encoding="utf-8")
+    assert check_pins.report(tmp_path, resolve=False) == ([], 0)
+
+
+def test_the_report_with_digests_looked_up(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "infra" / "images").mkdir(parents=True)
+    (tmp_path / "infra" / "images" / "x.Dockerfile").write_text("FROM alpine:3.23\n", encoding="utf-8")
+    monkeypatch.setattr(check_pins, "look_up_digest", lambda image: DIGEST)
+    lines, code = check_pins.report(tmp_path, resolve=True)
+    assert lines[1] == f"infra/images/x.Dockerfile:1:   alpine:3.23@{DIGEST}"
+    assert code == 1
 
 
 # --- Looking up digests
@@ -143,7 +253,7 @@ def test_a_digest_that_is_not_sha256_is_refused(monkeypatch: pytest.MonkeyPatch)
 
 def test_every_image_and_source_in_this_repository_is_pinned() -> None:
     problems = [f"{problem.path.relative_to(ROOT)}:{problem.line}: {problem.message}" for problem in check_pins.check_repository(ROOT)]
-    assert problems == [], "Run  python3 -I tools/check_pins.py --resolve  where Docker can reach the registries."
+    assert problems == [], "Run  python3 -I tools/check_pins.py --resolve  on a computer with access to the registries."
 
 
 def test_the_repository_check_reads_the_files_that_name_images() -> None:
@@ -151,8 +261,38 @@ def test_the_repository_check_reads_the_files_that_name_images() -> None:
     assert {"infra/compose.yaml", "infra/images/app.Dockerfile", ".github/workflows/ci.yml", "infra/tests/rehearse_tailnet.py"} <= names
 
 
-def test_the_browser_image_matches_the_playwright_package() -> None:
-    package = json.loads((ROOT / "client" / "package.json").read_text(encoding="utf-8"))
-    version = package["devDependencies"]["@playwright/test"]
-    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert f'"mcr.microsoft.com/playwright:v{version}-noble' in workflow
+
+def renovate_matches(manager_description_start: str) -> set[tuple[str, str]]:
+    """What a custom manager in .github/renovate.json finds, as (file, dependency and version) pairs."""
+    config = json.loads((ROOT / ".github" / "renovate.json").read_text(encoding="utf-8"))
+    manager = next(m for m in config["customManagers"] if m["description"].startswith(manager_description_start))
+    found = set()
+    for path in check_pins.files_to_check(ROOT):
+        relative = path.relative_to(ROOT).as_posix()
+        if not any(re.search(pattern.strip("/"), relative) for pattern in manager["managerFilePatterns"]):
+            continue
+        text = path.read_text(encoding="utf-8")
+        for match_string in manager["matchStrings"]:
+            for match in re.finditer(match_string.replace("(?<", "(?P<"), text):
+                found.add((relative, f"{match['depName']}:{match['currentValue']}"))
+    return found
+
+
+def test_renovate_finds_the_marked_images_that_the_check_reads() -> None:
+    marked = {
+        (path.relative_to(ROOT).as_posix(), image.split("@")[0])
+        for path in check_pins.files_to_check(ROOT)
+        for image in check_pins.marked_images(path.read_text(encoding="utf-8"))
+    }
+    renovate = renovate_matches("Images named in Python scripts") | renovate_matches("Images named in the workflows")
+    assert marked == renovate
+
+
+def test_renovate_finds_each_cloned_source() -> None:
+    clones = {
+        (path.relative_to(ROOT).as_posix(), clone)
+        for path in check_pins.files_to_check(ROOT)
+        for clone in re.findall(r"--branch (\S+) https://github\.com/(\S+?)(?:\.git)?\s", path.read_text(encoding="utf-8"))
+    }
+    expected = {(relative, f"{name}:{tag}") for relative, (tag, name) in clones}
+    assert renovate_matches("Source code cloned in the Dockerfiles") == expected

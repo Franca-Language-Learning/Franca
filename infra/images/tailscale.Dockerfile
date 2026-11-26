@@ -1,6 +1,6 @@
 # The private network (container "tailscale"), story E01-009. Built from the repository root:
 #   docker build -f infra/images/tailscale.Dockerfile .
-# The base image is named by tag and digest, and Renovate updates both (a tag without a digest is refused by tools/check_pins.py).
+# The base image is named by tag and digest, and Renovate updates both (a tag without a digest is reported by tools/check_pins.py, and the pipeline fails).
 #
 # This is Tailscale's image with a non-root user added. The folders Tailscale writes to are made for that user, and
 # port 443 is forwarded to Caddy (serve.json). Tailscale runs with userspace networking, which needs no capabilities
