@@ -5,10 +5,10 @@ import { ApiError, getPasskeySignInOptions, signInWithPasskey } from "../../api/
 import { PasskeyCancelled, passkeysSupported, signInOnDevice } from "./webauthn";
 
 function signInFailure(error: unknown): string {
-  if (error instanceof PasskeyCancelled) return "You did not sign in. The passkey window was closed or timed out.";
-  if (error instanceof ApiError && error.detail === "disabled") return "This account is switched off. Ask the owner to switch it on again.";
+  if (error instanceof PasskeyCancelled) return "You are not signed in, because the passkey window was closed or took too long. To try again, select Sign in with a passkey.";
+  if (error instanceof ApiError && error.detail === "disabled") return "Your account is switched off. Ask the person who runs Franca to switch it on again.";
   if (error instanceof ApiError && error.status === 401)
-    return "Franca does not know this passkey. Sign in with Google, then add the passkey again on the Passkeys page.";
+    return "This passkey is not linked to a Franca account. Sign in with Google, then add a new passkey on the Passkeys page.";
   return "Signing in with a passkey did not work. Please try again.";
 }
 
@@ -29,7 +29,7 @@ export function PasskeySignIn() {
       <Button onPress={() => signIn.mutate()} isDisabled={signIn.isPending}>
         Sign in with a passkey
       </Button>
-      {signIn.isPending && <p role="status">Follow the steps in your browser’s passkey window.</p>}
+      {signIn.isPending && <p role="status">Follow the steps in the passkey window.</p>}
       {signIn.isError && <p role="alert">{signInFailure(signIn.error)}</p>}
     </div>
   );

@@ -25,7 +25,7 @@ describe("home page", () => {
   it("tells the learner when the server cannot be reached", async () => {
     server.use(http.get("*/api/v1/health", () => HttpResponse.error()));
     render(<AppRoot initialPath="/" />);
-    expect(await screen.findByRole("alert")).toHaveTextContent("The Franca server is not responding.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("The Franca server cannot be reached.");
   });
 
   it("announces the status politely to screen readers while it checks", async () => {

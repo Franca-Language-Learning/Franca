@@ -37,7 +37,7 @@ describe("passkeys page", () => {
     render(<AppRoot initialPath="/passkeys" />);
     const item = (await screen.findByRole("heading", { level: 3, name: "Phone" })).closest("li") as HTMLElement;
     expect(item).toHaveTextContent("Added on 1 Dec 2026. Not used yet.");
-    expect(item).toHaveTextContent("synced to your other devices");
+    expect(item).toHaveTextContent("also available on your other devices");
   });
 
   it("says so when there are no passkeys", async () => {
@@ -81,7 +81,7 @@ describe("passkeys page", () => {
     );
     render(<AppRoot initialPath="/passkeys" />);
     await userEvent.click(await screen.findByRole("button", { name: "Add a passkey" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("No passkey was added.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("No passkey was added, because");
   });
 
   it("explains that this device has a passkey already", async () => {
@@ -92,7 +92,7 @@ describe("passkeys page", () => {
     );
     render(<AppRoot initialPath="/passkeys" />);
     await userEvent.click(await screen.findByRole("button", { name: "Add a passkey" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("This device has a passkey for your account already.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("There is already a passkey for your account on this device.");
   });
 
   it("removes a passkey after the learner confirms", async () => {
@@ -107,7 +107,7 @@ describe("passkeys page", () => {
       }),
     );
     render(<AppRoot initialPath="/passkeys" />);
-    await userEvent.click(await screen.findByRole("button", { name: "Remove Phone…" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Remove Phone" }));
     await userEvent.click(screen.getByRole("button", { name: "Remove Phone" }));
 
     expect(await screen.findByText("You have no passkeys yet.")).toBeInTheDocument();
@@ -117,9 +117,9 @@ describe("passkeys page", () => {
   it("keeps the passkey when the learner changes their mind", async () => {
     server.use(http.get("*/api/v1/passkeys", () => HttpResponse.json({ passkeys: [PHONE] })));
     render(<AppRoot initialPath="/passkeys" />);
-    await userEvent.click(await screen.findByRole("button", { name: "Remove Phone…" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Remove Phone" }));
     await userEvent.click(screen.getByRole("button", { name: "Keep it" }));
-    expect(screen.getByRole("button", { name: "Remove Phone…" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove Phone" })).toBeInTheDocument();
   });
 
   it("sends someone who is not signed in to the sign-in page", async () => {
@@ -132,7 +132,7 @@ describe("passkeys page", () => {
     removeFakeWebAuthn();
     server.use(http.get("*/api/v1/passkeys", () => HttpResponse.json({ passkeys: [] })));
     render(<AppRoot initialPath="/passkeys" />);
-    expect(await screen.findByText(/This browser cannot make passkeys/)).toBeInTheDocument();
+    expect(await screen.findByText(/This browser does not support passkeys/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add a passkey" })).toBeNull();
   });
 
@@ -140,7 +140,7 @@ describe("passkeys page", () => {
     server.use(http.get("*/api/v1/passkeys", () => HttpResponse.json({ passkeys: [PHONE] })));
     const { container } = render(<AppRoot initialPath="/passkeys" />);
     await screen.findByRole("heading", { level: 3, name: "Phone" });
-    await userEvent.click(within(container).getByRole("button", { name: "Remove Phone…" }));
+    await userEvent.click(within(container).getByRole("button", { name: "Remove Phone" }));
     const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
     expect(results.violations).toEqual([]);
   });
@@ -174,8 +174,8 @@ describe("signing in with a passkey", () => {
   });
 
   it.each([
-    [{ detail: "passkey-not-accepted" }, 401, "Franca does not know this passkey."],
-    [{ detail: "disabled" }, 401, "This account is switched off."],
+    [{ detail: "passkey-not-accepted" }, 401, "This passkey is not linked to a Franca account."],
+    [{ detail: "disabled" }, 401, "Your account is switched off."],
     [{ detail: "no-passkey-options" }, 400, "Signing in with a passkey did not work."],
   ])("explains a refusal (%j)", async (body, status, message) => {
     server.use(
@@ -192,7 +192,7 @@ describe("signing in with a passkey", () => {
     server.use(http.post("*/api/v1/auth/passkey/options", () => HttpResponse.json(signInOptions)));
     render(<AppRoot initialPath="/sign-in" />);
     await userEvent.click(await screen.findByRole("button", { name: "Sign in with a passkey" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("You did not sign in.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("You are not signed in, because the passkey window was closed");
   });
 
   it("is not offered in a browser without passkeys", async () => {

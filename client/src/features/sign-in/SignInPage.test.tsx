@@ -13,9 +13,9 @@ describe("sign-in page", () => {
   });
 
   it.each([
-    ["not-invited", "This Google account has no invitation to Franca."],
+    ["not-invited", "There is no invitation to Franca for this Google account."],
     ["email-not-verified", "Google has not verified the e-mail address of this account."],
-    ["disabled", "This account is switched off."],
+    ["disabled", "Your account is switched off."],
     ["failed", "Signing in with Google did not work."],
   ])("explains why a sign-in was refused (%s)", async (error, message) => {
     render(<AppRoot initialPath={`/sign-in?error=${error}`} />);

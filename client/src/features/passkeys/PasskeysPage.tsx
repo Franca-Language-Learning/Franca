@@ -19,9 +19,9 @@ function day(iso: string): string {
 }
 
 function addFailure(error: unknown): string {
-  if (error instanceof PasskeyCancelled) return "No passkey was added. The passkey window was closed or timed out.";
-  if (error instanceof PasskeyExists) return "This device has a passkey for your account already.";
-  if (error instanceof ApiError && error.status === 403) return "You have the most passkeys allowed. Remove one before you add another.";
+  if (error instanceof PasskeyCancelled) return "No passkey was added, because the passkey window was closed or took too long. To try again, select Add a passkey.";
+  if (error instanceof PasskeyExists) return "There is already a passkey for your account on this device. You can use it to sign in.";
+  if (error instanceof ApiError && error.status === 403) return "You have the maximum number of passkeys. Remove one before you add another.";
   return "The passkey could not be added. Please try again.";
 }
 
@@ -38,19 +38,19 @@ function PasskeyItem({ passkey }: { passkey: Passkey }) {
       <h3>{name}</h3>
       <p>
         Added on {day(passkey.createdAt)}. {passkey.lastUsedAt ? `Last used on ${day(passkey.lastUsedAt)}.` : "Not used yet."}
-        {passkey.synced && " It is synced to your other devices by your password manager or account."}
+        {passkey.synced && " It is also available on your other devices that use the same password manager or account."}
       </p>
       {remove.isError && <p role="alert">The passkey could not be removed. Please try again.</p>}
       {confirming ? (
         <p>
-          After you remove it, you cannot sign in with this passkey.{" "}
+          If you remove this passkey, you can no longer sign in with it. You can still sign in with Google.{" "}
           <Button onPress={() => remove.mutate()} isDisabled={remove.isPending}>
             Remove {name}
           </Button>{" "}
           <Button onPress={() => setConfirming(false)}>Keep it</Button>
         </p>
       ) : (
-        <Button onPress={() => setConfirming(true)} aria-label={`Remove ${name}…`}>
+        <Button onPress={() => setConfirming(true)} aria-label={`Remove ${name}`}>
           Remove…
         </Button>
       )}
@@ -90,8 +90,9 @@ export function PasskeysPage() {
     <main>
       <h1>Passkeys</h1>
       <p>
-        With a passkey you can sign in to Franca without Google. The passkey is kept by your phone, computer or password
-        manager, and you confirm it with your fingerprint, face or screen lock.
+        With a passkey you can sign in to Franca without Google. The passkey is stored on your phone or computer, or in
+        your password manager. When you sign in, you confirm it is you in the same way you unlock your device, for
+        example with your fingerprint or PIN.
       </p>
 
       <h2>Your passkeys</h2>
@@ -116,17 +117,17 @@ export function PasskeysPage() {
         >
           <TextField value={label} onChange={setLabel} maxLength={60}>
             <Label>Name for the passkey (you can leave this empty)</Label>
-            <Input placeholder="For example: Phone" />
+            <Input placeholder="For example: Work laptop" />
           </TextField>
           <Button type="submit" isDisabled={add.isPending}>
             Add a passkey
           </Button>
-          {add.isPending && <p role="status">Follow the steps in your browser’s passkey window.</p>}
+          {add.isPending && <p role="status">Follow the steps in the passkey window.</p>}
           {add.isSuccess && <p role="status">The passkey was added.</p>}
           {add.isError && <p role="alert">{addFailure(add.error)}</p>}
         </Form>
       ) : (
-        <p>This browser cannot make passkeys. Open this page in a recent version of Chrome, Edge, Firefox or Safari.</p>
+        <p>This browser does not support passkeys. Open this page in a recent version of Chrome, Edge, Firefox or Safari.</p>
       )}
 
       <p>
