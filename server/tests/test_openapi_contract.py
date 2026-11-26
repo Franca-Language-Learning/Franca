@@ -31,3 +31,21 @@ def test_every_operation_has_an_id_and_a_summary() -> None:
         for method, operation in operations.items():
             assert operation.get("operationId"), f"{method.upper()} {path} has no operationId"
             assert operation.get("summary"), f"{method.upper()} {path} has no summary"
+
+
+def test_every_json_response_has_an_example() -> None:
+    # The client's tests answer requests with these examples (client/src/mocks/handlers.ts).
+    spec = create_app().openapi()
+    schemas = spec.get("components", {}).get("schemas", {})
+    missing = []
+    for path, operations in spec["paths"].items():
+        for method, operation in operations.items():
+            for status, response in operation.get("responses", {}).items():
+                schema = response.get("content", {}).get("application/json", {}).get("schema")
+                if not status.startswith("2") or schema is None:
+                    continue
+                if "$ref" in schema:
+                    schema = schemas[schema["$ref"].rsplit("/", 1)[-1]]
+                if not schema.get("examples"):
+                    missing.append(f"{method.upper()} {path} {status}")
+    assert missing == []

@@ -2,6 +2,9 @@
 components:
   schemas:
     Health:
+      examples:
+      - status: ok
+        version: 0.1.0
       properties:
         status:
           title: Status
