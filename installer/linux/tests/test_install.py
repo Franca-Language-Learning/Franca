@@ -298,3 +298,10 @@ def test_the_files_run_with_debians_python(path: Path) -> None:
     # The Franca system is Debian 13, whose python3 is 3.13. The updater's image has 3.14, and the installer imports the
     # updater's code, so neither file may use syntax that is new in 3.14.
     ast.parse(path.read_text(encoding="utf-8"), feature_version=(3, 13))
+
+
+def test_programs_are_downloaded_up_to_their_own_size_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, int, str]] = []
+    monkeypatch.setattr(fi.fu, "http_fetch", lambda url, limit, accept: calls.append((url, limit, accept)) or b"")
+    fi.download_program(fi.COSIGN_URL)
+    assert calls == [(fi.COSIGN_URL, fi.PROGRAM_MAX_BYTES, "application/octet-stream")]

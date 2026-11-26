@@ -157,11 +157,27 @@ def test_a_comment_inside_a_continuation_is_left_out(tmp_path: Path) -> None:
         f'git clone A /a && git clone B /b && cd /b && test "$(git rev-parse HEAD)" = {COMMIT}',
         f'git clone A /a && cd /a && test "$(git rev-parse HEAD)" = {COMMIT} || true',
         f'git clone A /a && cd /a && test "$(git rev-parse HEAD)" = {COMMIT} && git checkout main',
+        f'git clone A /a && test "$(git rev-parse HEAD)" = {COMMIT} && git -C /a switch other',
     ],
-    ids=["two clones, one check", "check made optional", "commit changed after the check"],
+    ids=["two clones, one check", "check made optional", "commit changed after the check", "git -C after the check"],
 )
-def test_a_commit_check_that_can_be_got_round_is_refused(tmp_path: Path, run: str) -> None:
+def test_a_commit_check_that_can_be_bypassed_is_reported(tmp_path: Path, run: str) -> None:
     assert problems_in(tmp_path, "x.Dockerfile", f"FROM golang:1.27@{DIGEST}\nRUN {run}\n") != []
+
+
+def test_images_named_by_a_variable_or_as_franca_need_a_digest_in_a_dockerfile(tmp_path: Path) -> None:
+    text = "ARG B=alpine:3.23\nFROM ${B}\nFROM franca/evil:1\n"
+    assert problems_in(tmp_path, "x.Dockerfile", text) == ["${B} has no digest", "franca/evil:1 has no digest"]
+
+
+def test_from_with_a_platform_value_and_a_stage_is_read(tmp_path: Path) -> None:
+    text = f"FROM --platform=$BUILDPLATFORM golang:1.27@{DIGEST} AS build\nFROM build\n"
+    assert problems_in(tmp_path, "x.Dockerfile", text) == []
+
+
+def test_a_syntax_frontend_needs_a_digest(tmp_path: Path) -> None:
+    text = f"# syntax=docker/dockerfile:1.7\nFROM alpine:3.23@{DIGEST}\n"
+    assert problems_in(tmp_path, "x.Dockerfile", text) == ["docker/dockerfile:1.7 has no digest"]
 
 
 # --- More Compose and workflow forms
@@ -205,6 +221,27 @@ def test_an_unmarked_image_in_a_python_script_needs_a_digest(tmp_path: Path) -> 
 def test_an_image_in_a_shell_docker_command_needs_a_digest(tmp_path: Path) -> None:
     text = 'docker run --rm "$updater_image" true\ndocker pull busybox:1.37\n'
     assert problems_in(tmp_path, "infra/tests/x.sh", text) == ["busybox:1.37 has no digest"]
+
+
+@pytest.mark.parametrize(
+    ("command", "image"),
+    [
+        ("docker run --rm alpine true", "alpine"),
+        ("docker run --name proxy -v /a:/b redis:7", "redis:7"),
+        ("docker pull node:22", "node:22"),
+        ("docker run --rm \\\n    busybox:1.37 true", "busybox:1.37"),
+    ],
+    ids=["no tag", "options with values", "digits only", "continued line"],
+)
+def test_the_image_of_a_docker_command_is_its_first_argument(tmp_path: Path, command: str, image: str) -> None:
+    assert problems_in(tmp_path, "infra/tests/x.sh", command + "\n") == [f"{image} has no digest"]
+
+
+def test_a_pinned_image_without_the_exact_marker_is_reported(tmp_path: Path) -> None:
+    text = f"PHONE = 'tailscale/tailscale:v1@{DIGEST}' # renovate: image\n"
+    assert problems_in(tmp_path, "infra/tests/rehearse_x.py", text) == [
+        "tailscale/tailscale:v1 has a digest but no '  # renovate: image' marker"
+    ]
 
 
 # --- Running the check
@@ -283,7 +320,7 @@ def test_renovate_finds_the_marked_images_that_the_check_reads() -> None:
         for path in check_pins.files_to_check(ROOT)
         for image in check_pins.marked_images(path.read_text(encoding="utf-8"))
     }
-    renovate = renovate_matches("Images named in Python scripts") | renovate_matches("Images named in the workflows")
+    renovate = renovate_matches("Images in Python scripts") | renovate_matches("Images named in the workflows")
     assert marked == renovate
 
 
@@ -295,3 +332,6 @@ def test_renovate_finds_each_cloned_source() -> None:
     }
     expected = {(relative, f"{name}:{tag}") for relative, (tag, name) in clones}
     assert renovate_matches("Source code cloned in the Dockerfiles") == expected
+    dockerfiles = [path for path in check_pins.files_to_check(ROOT) if path.name.endswith("Dockerfile")]
+    all_clones = sum(len(check_pins.GIT_CLONE.findall(path.read_text(encoding="utf-8"))) for path in dockerfiles)
+    assert all_clones == len(expected), "a git clone that Renovate does not find (another host, or no --branch)"

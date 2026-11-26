@@ -33,7 +33,8 @@ jobs:
       attestations: write
     env:
       IMAGE: ghcr.io/franca-language-learning/franca-${{ matrix.image }}
-      # The builder that makes the signed images, named by digest. Buildx itself is the one on the runner.
+      # The BuildKit image in which the signed images are built, named by digest. Buildx itself is the version installed on
+      # the runner.
       BUILDKIT_IMAGE: "moby/buildkit:buildx-stable-1@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c"  # renovate: image
       VERSION: ${{ github.ref_name }}
     steps:

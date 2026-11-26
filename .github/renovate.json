@@ -58,7 +58,7 @@
       "groupName": "GitHub Actions"
     },
     {
-      "description": "A uv update can change _virtualenv.py, whose hash is in tools/startup-files-allowed.txt, so the uv program and the uv image are reviewed before they are merged.",
+      "description": "A uv update can change _virtualenv.py, whose hash is in tools/startup-files-allowed.txt, so updates to the uv program and the uv image are reviewed before they are merged.",
       "matchDepNames": [
         "astral-sh/uv",
         "ghcr.io/astral-sh/uv"
@@ -98,13 +98,14 @@
       "automerge": false
     },
     {
-      "description": "Registries other than Docker Hub give Renovate no release dates, so these images are not held back by the seven-day rule. mcr.microsoft.com/playwright waits for @playwright/test, because the two versions have to match.",
+      "description": "There are no release dates for Renovate on registries other than Docker Hub, so the seven-day rule is not applied to these images, and their updates are reviewed before they are merged. An update to mcr.microsoft.com/playwright cannot be merged before the matching @playwright/test update, because the two versions are compared in infra/tests/test_browser_image.py.",
       "matchPackageNames": [
         "mcr.microsoft.com/playwright",
         "lscr.io/linuxserver/socket-proxy",
         "ghcr.io/astral-sh/uv"
       ],
-      "minimumReleaseAgeBehaviour": "timestamp-optional"
+      "minimumReleaseAgeBehaviour": "timestamp-optional",
+      "automerge": false
     },
     {
       "description": "The Tailscale image and the Tailscale source built in the same Dockerfile are updated together, and reviewed.",
@@ -124,11 +125,18 @@
       "automerge": false
     },
     {
-      "description": "The cosign that the installer downloads is checked against a hash, which a person updates.",
+      "description": "The cosign program downloaded by the installer is checked against a hash, and the hash is updated by a person.",
       "matchPackageNames": [
         "sigstore/cosign"
       ],
       "automerge": false
+    },
+    {
+      "description": "Node.js in the pipeline (.nvmrc) and in caddy.Dockerfile are updated together.",
+      "matchDepNames": [
+        "node"
+      ],
+      "groupName": "Node.js"
     }
   ],
   "customManagers": [
@@ -145,7 +153,7 @@
     },
     {
       "customType": "regex",
-      "description": "Images named in Python scripts, marked with a renovate comment and named by digest, as in the Dockerfiles.",
+      "description": "Images in Python scripts, marked with a renovate comment and pinned by digest, as in the Dockerfiles.",
       "managerFilePatterns": [
         "/^infra/.+\\.py$/",
         "/^installer/.+\\.py$/"
@@ -193,7 +201,7 @@
     },
     {
       "customType": "regex",
-      "description": "Programs downloaded by the installer, marked with a renovate comment. Their hashes are updated by a person, so until then the update fails the cosign check in the Container bundle job.",
+      "description": "Programs downloaded by the installer, marked with a renovate comment. Their hashes are updated by a person. Until that is done, the cosign check in the Container bundle job fails on the update.",
       "managerFilePatterns": [
         "/^installer/.+\\.py$/"
       ],

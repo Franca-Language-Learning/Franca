@@ -1,6 +1,7 @@
 # The updater (container "updater"), story E01-007. Built from the repository root:
 #   docker build -f infra/images/updater.Dockerfile .
-# Base images are named by tag and digest, and Renovate updates both (a tag without a digest is reported by tools/check_pins.py, and the pipeline fails).
+# Base images are named by tag and digest, and Renovate updates both. A tag without a digest is reported by
+# tools/check_pins.py, and the pipeline fails.
 
 FROM docker:29.10.0-cli@sha256:34507eb5069d8be82c95dd3b6987d4250fd5fee49b82e2509b7d7a7030740d6d AS docker-cli
 

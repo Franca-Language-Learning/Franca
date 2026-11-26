@@ -35,7 +35,7 @@ When a finding does not apply to Franca and the fix is not released yet, it can 
 
 ## Images, source code, programs and the browser pinned by digest, commit or hash
 
-A tag such as `python:3.14.10-slim-trixie` or `v0.19.1` can be moved to other content after it is published. So the images, source code and programs that Franca is built from are named by digest, commit or hash as well:
+A tag such as `python:3.14.10-slim-trixie` or `v0.19.1` can be moved to other content after it is published. So the images, source code and programs that Franca is built with are pinned as shown here:
 
 | What | How it is pinned | Updated by Renovate through |
 |---|---|---|
@@ -44,21 +44,21 @@ A tag such as `python:3.14.10-slim-trixie` or `v0.19.1` can be moved to other co
 | Images in the scripts and workflows, including the BuildKit builder of the release | `image:tag@sha256:...` with a `# renovate: image` comment | The custom managers in `.github/renovate.json` |
 | Source code cloned in the Dockerfiles | The release tag, and a check of the commit it points to | The custom manager for cloned sources. These updates are reviewed before they are merged |
 | Chromium for the browser tests | Playwright's image, by digest | Grouped with `@playwright/test`, because the versions have to match |
-| pnpm | The version and its SHA-512 in `packageManager` in `package.json`, installed with Corepack | The npm manager |
-| Node.js in the pipeline | The version in `.nvmrc`, the same as the Node image in `caddy.Dockerfile` | The nvm and Dockerfile managers |
-| Grype and Syft in the scan and SBOM actions | The version, checked by the actions against the release checksums | The custom manager for marked versions |
+| pnpm | The version and its SHA-512 in `packageManager` in `package.json`. The hash is checked by Corepack in the pipeline and in `caddy.Dockerfile` | The npm manager |
+| Node.js in the pipeline | The version in `.nvmrc`, the same as the Node image in `caddy.Dockerfile`, and the two are updated together | The nvm and Dockerfile managers |
+| Grype and Syft in the scan and SBOM actions | The version. The download is checked against the checksum file of the same release, so it is not pinned by hash | The custom manager for marked versions |
 | cosign in the installer | The version in the address and the SHA-256 of the file | The custom manager for the installer's programs. The hash is updated by a person, and the download is checked against it in the Container bundle job |
 | GitHub Actions | The full commit SHA, with the tag in a comment | The GitHub Actions manager |
 
 Franca's own images are named by digest in the release file, which is read by the installer and the updater.
 
-Pester and PSScriptAnalyzer, which check the Windows installer in the pipeline, are installed from the PowerShell Gallery by version only. The gallery has no hashes to pin them by, and Renovate cannot update them.
+Pester and PSScriptAnalyzer, which are used to check the Windows installer in the pipeline, are installed from the PowerShell Gallery by version only. Install-Module has no option to check a hash, and Renovate cannot update them.
 
 There are no model files yet. The speech models (epic E09) will be pinned by hash in the same way.
 
-Images on registries other than Docker Hub (mcr.microsoft.com, lscr.io and ghcr.io) come with no release dates that Renovate can read, so the seven-day rule is not applied to them.
+Images on registries other than Docker Hub (mcr.microsoft.com, lscr.io and ghcr.io) come with no release dates that Renovate can read, so the seven-day rule is not applied to them. Updates to these images are reviewed before they are merged, and an update to the Playwright image is held until the matching @playwright/test update is ready.
 
-`tools/check_pins.py` is run with the server's tests and in the Container bundle job, and fails when an image has no digest or a cloned source has no commit check. Renovate adds the digest when it updates an image. To add one by hand, run this on a computer with Docker and access to the registries, and copy the digests that are printed into the files:
+`tools/check_pins.py` is run with the server's tests and in the Container bundle job, and fails when an image has no digest, a pinned image has no `# renovate: image` marker, or a cloned source has no commit check. Renovate adds the digest when it updates an image. To add one by hand, run this on a computer with Docker and access to the registries, and copy the digests that are printed into the files:
 
 ```sh
 python3 -I tools/check_pins.py --resolve

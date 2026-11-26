@@ -3,10 +3,11 @@
 A tag such as python:3.14.10-slim or v0.19.1 can be moved to other content after it is published. These are
 reported as problems:
 
-  Dockerfiles   an image in FROM, COPY --from= or RUN --mount=from= with no @sha256 digest, apart from scratch and
-                earlier stages of the same file; ADD of a remote file with no --checksum=sha256:; a git clone with no
+  Dockerfiles   an image in FROM, COPY --from=, RUN --mount=from= or a # syntax= line with no @sha256 digest, apart
+                from scratch and earlier stages of the same file; ADD of a remote file with no --checksum=sha256:; a git clone with no
                 test "$(git rev-parse HEAD)" = <commit> after it, or with a git checkout, fetch, reset or pull, or
-                an || after the check, in the same RUN instruction
+                an || after the check, in the same RUN instruction. The numbers of clones and of checks in an
+                instruction are compared; which check belongs to which clone is not worked out
   Compose       an image with no digest, apart from Franca's own images, which are named by digest in the .env file
                 that is written by the installer and the updater (${FRANCA_<NAME>_IMAGE:-franca/<name>:...})
   Workflows     an image in image:, container:, uses: docker:// or docker run/pull/create with no digest, apart
@@ -14,20 +15,22 @@ reported as problems:
   Scripts       an image in a string or a docker run/pull/create command with no digest
 
 An image named in a script or workflow is marked with  # renovate: image  so that Renovate can update its digest
-(.github/renovate.json). A test checks that the marked images and cloned sources found here are the ones that
-Renovate's managers find.
+(.github/renovate.json). An image with a digest but without that marker is reported too, because Renovate would not
+update it. There is a test that the marked images and cloned sources found here are the ones that Renovate's managers
+find.
 
   python3 -I tools/check_pins.py             check the repository
   python3 -I tools/check_pins.py --resolve   check, and print the digest of each image that has none
 
-Only the Python standard library is needed. Dockerfile heredocs and the escape directive are not read; an
-instruction that uses them is checked as plain text, so a problem in it is reported rather than missed.
+Only the Python standard library is needed. Dockerfile heredocs and the escape directive are not read. An
+instruction that uses them is checked as plain text, so a problem in it is still reported.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -38,29 +41,40 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 DIGEST_SUFFIX = re.compile(r"@sha256:[0-9a-f]{64}$")
-# An image reference: optional registry and path, a name and a tag. A tag of digits only is a port, and true or false
-# is an option such as no-new-privileges:true.
+# An image reference in a Python string: optional registry and path, a name and a tag. A tag of digits only is taken
+# to be a port (caddy:8443), so an image such as redis:7 is not found in a Python string. true and false are options,
+# as in no-new-privileges:true.
 IMAGE_REFERENCE = re.compile(
     r"^[a-z0-9][a-z0-9._-]*(?:/[a-z0-9._-]+)*:(?!(?:true|false)$)(?=[\w.-]*[A-Za-z_.-])[\w.-]+(?:@sha256:[0-9a-f]{64})?$"
 )
 FRANCA_IMAGE_VARIABLE = re.compile(r"^\$\{FRANCA_[A-Z]+_IMAGE:-franca/[a-z]+:\$\{FRANCA_VERSION:-[^}]+\}\}$")
 LOCAL_IMAGE_PREFIX = "franca/"
 
-FROM_LINE = re.compile(r"^FROM\s+(?:--\S+(?:\s+(?!AS\b)[^-\s]\S*)?\s+)*(?P<image>\S+)(?:\s+AS\s+(?P<stage>\S+))?", re.IGNORECASE)
+FROM_LINE = re.compile(
+    r"^FROM\s+(?:--[\w-]+=\S+\s+|--[\w-]+\s+(?!AS\b)[^-\s]\S*\s+)*(?P<image>\S+)(?:\s+AS\s+(?P<stage>\S+))?", re.IGNORECASE
+)
+SYNTAX_LINE = re.compile(r"^#\s*syntax\s*=\s*(?P<image>\S+)", re.IGNORECASE)
 COPY_FROM = re.compile(r"^COPY\b.*?--from=(?P<image>\S+)", re.IGNORECASE)
 MOUNT_FROM = re.compile(r"--mount=\S*?\bfrom=(?P<image>[^,\s]+)", re.IGNORECASE)
 REMOTE_ADD = re.compile(r"^ADD\b(?P<options>(?:\s+--\S+)*)\s+(?P<source>(?:https?|git)://\S+|\S+\.git(?:#\S*)?)", re.IGNORECASE)
 GIT_CLONE = re.compile(r"\bgit clone\b")
 COMMIT_CHECK = re.compile(r'test "\$\(git rev-parse HEAD\)" = [0-9a-f]{40}\b')
-AFTER_CHECK_NOT_ALLOWED = re.compile(r"\|\||\bgit (?:checkout|fetch|reset|pull)\b")
+AFTER_CHECK_NOT_ALLOWED = re.compile(r"\|\||\bgit(?:\s+-\S+(?:\s+[^-\s]\S*)?)*\s+(?:checkout|switch|fetch|reset|pull|am|apply)\b")
 
 COMPOSE_IMAGE = re.compile(r"^\s*image:\s*[\"']?(?P<image>[^\"'\s]+)")
 WORKFLOW_IMAGE = re.compile(r"^\s*(?:-\s+)?(?:image|container):\s*[\"']?(?P<image>[^\"'\s#\[{]+)[\"']?\s*(?:#.*)?$")
 DOCKER_USES = re.compile(r"\buses:\s*[\"']?docker://(?P<image>[^\"'\s]+)")
 DOCKER_COMMAND = re.compile(r"\bdocker\s+(?:run|pull|create)\b(?P<arguments>[^;&|\n]*)")
-# The forms Renovate's managers read (.github/renovate.json): = "image" in Python, : "image" in YAML.
+# Options of docker run, pull and create that take a value as the next word.
+DOCKER_OPTIONS_WITH_VALUES = {
+    "--name", "-v", "--volume", "-e", "--env", "--env-file", "--network", "--network-alias", "--user", "-u", "-w",
+    "--workdir", "--entrypoint", "-p", "--publish", "--shm-size", "--security-opt", "--cap-drop", "--cap-add",
+    "--mount", "--platform", "-l", "--label", "--tmpfs", "--add-host", "--ipc", "--pid", "--memory", "--cpus",
+}  # fmt: skip
+# The forms that are matched by Renovate's managers in .github/renovate.json: = "image" in Python, : "image" in YAML.
 MARKED_IMAGE = re.compile(r"(?:= |: )\"(?P<image>[^\"\s]+)\"  # renovate: image")
 PYTHON_STRING = re.compile(r"\"([^\"\s]+)\"|'([^'\s]+)'")
+QUOTED_PINNED_IMAGE = re.compile(r"[\"'](?P<image>[a-z0-9][^\"'\s]*@sha256:[0-9a-f]{64})[\"']")
 
 DOCKERFILES = ["**/Dockerfile", "**/*.Dockerfile", "**/Containerfile"]
 COMPOSE_FILES = ["**/compose*.yaml", "**/compose*.yml", "**/docker-compose*.yaml", "**/docker-compose*.yml"]
@@ -86,13 +100,24 @@ def _no_digest(path: Path, line: int, image: str) -> Problem:
 
 
 def _needs_digest(image: str) -> bool:
+    """For scripts and workflows: a variable is checked where it is defined, and franca/ images are built in the job."""
     return "$" not in image and not image.startswith(LOCAL_IMAGE_PREFIX) and not DIGEST_SUFFIX.search(image)
 
 
-def _instructions(text: str) -> Iterator[tuple[int, str]]:
-    """Dockerfile instructions with their continuation lines joined, and the line each one starts on.
+def _not_marked(path: Path, line: int, content: str) -> list[Problem]:
+    """Pinned images in quotes on a line without the exact marker that Renovate's managers need."""
+    if MARKED_IMAGE.search(content) or WORKFLOW_IMAGE.match(content):
+        return []
+    return [
+        Problem(path, line, f"{match['image'].split('@')[0]} has a digest but no '  # renovate: image' marker", match["image"])
+        for match in QUOTED_PINNED_IMAGE.finditer(content)
+    ]
 
-    Comment lines and blank lines inside a continuation are left out, as Docker leaves them out.
+
+def _instructions(text: str) -> Iterator[tuple[int, str]]:
+    """Instructions with their continuation lines joined, and the line each one starts on.
+
+    Comment lines and blank lines are left out, as they are in Docker.
     """
     start = 0
     parts: list[str] = []
@@ -132,9 +157,12 @@ def check_dockerfile(path: Path, text: str) -> list[Problem]:
         name = image.lower()
         if name in stages or name == "scratch" or name.isdigit():
             return
-        if _needs_digest(image):
+        if not DIGEST_SUFFIX.search(image):
             problems.append(_no_digest(path, line, image))
 
+    for line, content in enumerate(text.splitlines()[:5], start=1):
+        if match := SYNTAX_LINE.match(content.strip()):
+            check_image(line, match["image"])
     for line, instruction in _instructions(text):
         if match := FROM_LINE.match(instruction):
             check_image(line, match["image"])
@@ -161,30 +189,41 @@ def check_compose(path: Path, text: str) -> list[Problem]:
 
 
 def _images_in_docker_commands(content: str) -> Iterator[str]:
+    """The image of each docker run, pull or create: the first word that is not an option or an option's value."""
     for command in DOCKER_COMMAND.finditer(content):
-        for word in command["arguments"].split():
-            word = word.strip("\"'")
-            if IMAGE_REFERENCE.match(word):
-                yield word
+        words = iter(command["arguments"].split())
+        for word in words:
+            if word in DOCKER_OPTIONS_WITH_VALUES:
+                next(words, None)
+            elif not word.startswith("-"):
+                yield word.strip("\"'")
+                break
 
 
-def check_workflow(path: Path, text: str) -> list[Problem]:
+def _docker_command_problems(path: Path, text: str) -> list[Problem]:
     problems = []
-    for line, content in enumerate(text.splitlines(), start=1):
-        images = [match["image"] for match in (WORKFLOW_IMAGE.match(content), DOCKER_USES.search(content)) if match]
-        images += _images_in_docker_commands(content)
-        images += marked_images(content)
-        problems += [_no_digest(path, line, image) for image in dict.fromkeys(images) if _needs_digest(image)]
+    for line, instruction in _instructions(text):
+        problems += [_no_digest(path, line, image) for image in _images_in_docker_commands(instruction) if _needs_digest(image)]
     return problems
 
 
-def check_script(path: Path, text: str) -> list[Problem]:
-    problems = []
+def check_workflow(path: Path, text: str) -> list[Problem]:
+    problems = _docker_command_problems(path, text)
     for line, content in enumerate(text.splitlines(), start=1):
-        images = list(_images_in_docker_commands(content))
-        if path.suffix == ".py":
-            images += [a or b for a, b in PYTHON_STRING.findall(content) if IMAGE_REFERENCE.match(a or b)]
+        images = [match["image"] for match in (WORKFLOW_IMAGE.match(content), DOCKER_USES.search(content)) if match]
+        images += marked_images(content)
         problems += [_no_digest(path, line, image) for image in dict.fromkeys(images) if _needs_digest(image)]
+        problems += _not_marked(path, line, content)
+    return sorted(problems, key=lambda problem: problem.line)
+
+
+def check_script(path: Path, text: str) -> list[Problem]:
+    problems = _docker_command_problems(path, text) if path.suffix != ".py" else []
+    if path.suffix == ".py":
+        for line, content in enumerate(text.splitlines(), start=1):
+            images = [a or b for a, b in PYTHON_STRING.findall(content) if IMAGE_REFERENCE.match(a or b)]
+            problems += [_no_digest(path, line, image) for image in dict.fromkeys(images) if _needs_digest(image)]
+            problems += _not_marked(path, line, content)
     return problems
 
 
@@ -200,14 +239,28 @@ def check_file(path: Path) -> list[Problem]:
     return check_script(path, text)
 
 
-def _glob(root: Path, patterns: list[str]) -> set[Path]:
-    found = {path for pattern in patterns for path in root.glob(pattern) if path.is_file()}
-    return {path for path in found if not SKIPPED_FOLDERS & set(path.relative_to(root).parts)}
+def _glob_pattern(pattern: str) -> re.Pattern[str]:
+    """A glob pattern with ** for any number of folders, as a regular expression (Path.full_match needs Python 3.13)."""
+    parts = re.split(r"(\*\*/|\*)", pattern)
+    replacements = {"**/": "(?:.*/)?", "*": "[^/]*"}
+    return re.compile("".join(replacements.get(part, re.escape(part)) for part in parts))
 
 
 def files_to_check(root: Path) -> list[Path]:
-    """The files that can name images. Unit tests (test_*.py) are left out, because their images are made up."""
-    return sorted(path for path in _glob(root, DOCKERFILES + COMPOSE_FILES + WORKFLOWS + SCRIPTS) if not path.name.startswith("test_"))
+    """The files in which images can be named. Unit tests (test_*.py) are left out, because their images are made up.
+
+    The folders are walked once, and node_modules, .venv and the like are not entered.
+    """
+    patterns = [_glob_pattern(pattern) for pattern in DOCKERFILES + COMPOSE_FILES + WORKFLOWS + SCRIPTS]
+    found = []
+    for folder, subfolders, files in os.walk(root):
+        subfolders[:] = [name for name in subfolders if name not in SKIPPED_FOLDERS]
+        for name in files:
+            path = Path(folder, name)
+            relative = path.relative_to(root).as_posix()
+            if not name.startswith("test_") and any(pattern.fullmatch(relative) for pattern in patterns):
+                found.append(path)
+    return sorted(found)
 
 
 def check_repository(root: Path) -> list[Problem]:

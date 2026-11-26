@@ -1,6 +1,7 @@
 # The web server (container "caddy"), story E01-005: serves the client and forwards /api to the app.
 # Built from the repository root:  docker build -f infra/images/caddy.Dockerfile .
-# Base images are named by tag and digest, and Renovate updates both (a tag without a digest is reported by tools/check_pins.py, and the pipeline fails).
+# Base images are named by tag and digest, and Renovate updates both. A tag without a digest is reported by
+# tools/check_pins.py, and the pipeline fails.
 
 FROM node:22.23.4-alpine@sha256:0e1754758c2df4cfa3e68d59e2e1b7374bb7fd9ea6328eaaacf15cc934af8202 AS client
 WORKDIR /src

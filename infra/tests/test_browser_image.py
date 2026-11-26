@@ -1,6 +1,7 @@
 """In the pipeline, the browser tests are run against Chromium from Playwright's image (story E01-004).
 
-The image and @playwright/test have to be the same version, because the protocol between them changes with the version.
+The image and @playwright/test have to be the same version, because each Playwright version needs the browser builds made for it,
+and the image has the builds for its own version.
 """
 
 import json

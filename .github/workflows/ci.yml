@@ -89,10 +89,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
+      # pnpm is installed by Corepack, which checks it against the hash in package.json (packageManager).
+      - name: Install pnpm
+        run: corepack enable pnpm && corepack install
       - name: Install the locked packages
         run: pnpm install --frozen-lockfile
       - name: API types match the contract
@@ -129,10 +131,12 @@ jobs:
         with:
           version: "0.11.32" # renovate: datasource=github-releases depName=astral-sh/uv
           enable-cache: false
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
+      # pnpm is installed by Corepack, which checks it against the hash in package.json (packageManager).
+      - name: Install pnpm
+        run: corepack enable pnpm && corepack install
       - name: Install the locked packages
         run: |
           uv sync --locked
