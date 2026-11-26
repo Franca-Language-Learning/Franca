@@ -46,9 +46,15 @@ The installer switches the updater on with `COMPOSE_PROFILES=updates` in `.env`,
 
 ## Backups
 
-Each night at 03:30 UTC (an hour after the update check), a copy of the database is taken and added to an encrypted restic repository in `FRANCA_BACKUP_DIR`, a folder on a second disk in the PC (disk J:) until an off-site store is chosen. The time can be changed with `FRANCA_BACKUP_AT_UTC`. Old backups are thinned out: one a day for 14 days, one a week for 8 weeks and one a month for 12 months are kept. Once a month the latest backup is restored into a scratch folder and checked, and part of the repository's data is read back.
+At 03:30 UTC (an hour after the update check), a copy of the database is added to an encrypted restic repository in `FRANCA_BACKUP_DIR`. Until an off-site store is chosen, that folder is on a second disk in the PC (disk J:). The time can be changed with `FRANCA_BACKUP_AT_UTC`. Older backups are thinned out. These are kept:
 
-The backup password is the `backup_password` secret. The installer writes it and shows it to the owner once, to keep in a password manager; without it the backups cannot be read. `docs/restoring-a-backup.md` has the steps for a restore. The results are in the `backup-status` volume, in `backup.json` and `restore-test.json`.
+- one a day for 14 days
+- one a week for 8 weeks
+- one a month for 12 months
+
+Once a month the latest backup is restored into a scratch folder and checked, and part of the repository's data is read back.
+
+The backup password is the `backup_password` secret. The installer writes it and shows it to the owner once, to keep in a password manager; without it the backups cannot be read. `docs/restoring-a-backup.md` has the steps for a restore. The backup and restore-test results are in the `backup-status` volume, in `backup.json` and `restore-test.json`.
 
 The backup container runs as the app's user (10001), so the backup folder on disk J: has to be writable by that user.
 
