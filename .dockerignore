@@ -1,5 +1,5 @@
-# Only what the images need is sent to Docker. Private material is never in this repository, but the rules
-# keep local folders (environments, builds, caches) out of the images.
+# The files and folders listed here are not sent to Docker when the images are built. They are local
+# environments, build output, caches, test reports, the Git history, database files and .env files.
 **/node_modules
 **/.venv
 **/__pycache__

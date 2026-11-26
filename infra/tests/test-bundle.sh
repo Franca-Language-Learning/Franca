@@ -21,7 +21,7 @@ base="http://127.0.0.1:$FRANCA_PORT"
 if curl -fsS "$base/api/v1/health" | grep -q '"status":"ok"'; then pass "the API answers through Caddy"; else fail "the API does not answer through Caddy"; fi
 if curl -fsS "$base/" | grep -q '<div id="root">'; then pass "the client is served"; else fail "the client is not served"; fi
 if curl -fsS "$base/some/client/route" | grep -q '<div id="root">'; then pass "client routes fall back to index.html"; else fail "client routes do not fall back to index.html"; fi
-if curl -fsSI "$base/" | grep -qi '^x-content-type-options: nosniff'; then pass "security headers are sent"; else fail "security headers are missing"; fi
+if curl -fsSI "$base/" | grep -qi '^x-content-type-options: nosniff'; then pass "the nosniff security header is sent"; else fail "the nosniff security header is missing"; fi
 
 for service in app caddy; do
     id="$("${compose[@]}" ps --quiet "$service")"

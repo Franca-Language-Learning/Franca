@@ -1,5 +1,7 @@
 # Files for running Franca on the PC
 
+Franca runs as a set of containers, which are small separate programs that Docker starts together. In this folder the set is called the bundle.
+
 | File | What it is |
 |---|---|
 | `compose.yaml` | The container bundle. It has the `app` and `caddy` containers so far |
@@ -18,7 +20,7 @@ docker compose -f infra/compose.yaml up -d --build --wait
 
 Franca is then at http://127.0.0.1:8080, on this computer only. It becomes reachable from other devices over Tailscale in story E01-009.
 
-The other containers are added in their own stories:
+The other containers will be added in later stories:
 
 | Container | Story |
 |---|---|
@@ -29,4 +31,4 @@ The other containers are added in their own stories:
 | `status` | E01-010 |
 | `tailscale` | E01-009 |
 
-The installer for Windows (story E01-011) and the updater (story E01-007) are built on this bundle.
+The installer for Windows (story E01-011) and the updater (story E01-007) will use this bundle.

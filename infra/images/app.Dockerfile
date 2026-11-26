@@ -10,7 +10,7 @@ COPY pyproject.toml uv.lock ./
 COPY server/pyproject.toml server/
 COPY tools/check-startup-files.sh tools/startup-files-allowed.txt tools/
 RUN uv sync --locked --no-dev --package franca-server
-# The build stops if a package installed a file that Python would run at start-up (story E01-013).
+# The build stops if a package installs a file that Python would run at start-up (stories E01-004 and E01-013).
 RUN tools/check-startup-files.sh /app/.venv
 
 FROM python:3.14.6-slim-trixie

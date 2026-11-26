@@ -1,5 +1,5 @@
 # Franca's container bundle (story E01-005). Start it from the repository root with:
-#   docker compose -f infra/compose.yaml up -d --wait
+#   docker compose -f infra/compose.yaml up -d --build --wait
 # The other containers (worker, speech, languagetool, backup, status, tailscale) are added in their own stories.
 
 x-hardening: &hardening
