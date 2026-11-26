@@ -258,6 +258,11 @@ class Backup:
     def back_up(self, now: datetime) -> str:
         staging = self.work / "staging"
         last_success = self.status.read("backup.json").get("lastSucceededAt", "")
+        # On a new installation the backup container can start before the app has made its database. Until there has
+        # been a database to back up, a missing one means "not yet", and the service looks again ten minutes later.
+        if not last_success and not (self.data / DATABASE).exists():
+            print(json.dumps({"result": "waiting-for-database", "message": "The app has not made its database yet"}), flush=True)
+            return "waiting-for-database"
         try:
             if not (self.backups / DISK_MARKER).is_file():
                 raise BackupError(
