@@ -1,0 +1,110 @@
+# Health monitoring for the bundle (story E01-010), read by Gatus in the status container.
+#
+# Gatus replaces ${NAME} with environment variables before it reads this file. The status container's start script
+# (infra/status/entrypoint.sh) reads NTFY_TOPIC and STATUS_PUSH_TOKEN from the secret files and works out
+# FRANCA_TAILNET_CHECKS, which is true once the installer has written the PC's Tailscale name.
+#
+# The app and the web server are checked every minute, and an alert is sent after three failures in a row. The updater
+# and the backup report the result of each run to the external endpoints; a failed run, or no report within the
+# heartbeat interval, is an alert at once.
+
+web:
+  port: 8080
+
+ui:
+  title: Franca health
+  header: Franca health
+  dashboard-heading: Franca health
+
+storage:
+  type: sqlite
+  path: /data/status.db
+
+alerting:
+  ntfy:
+    url: ${FRANCA_NTFY_URL}
+    topic: ${NTFY_TOPIC}
+    priority: 4
+    click: https://${FRANCA_TAILSCALE_NAME}
+    default-alert:
+      failure-threshold: 3
+      success-threshold: 2
+      send-on-resolved: true
+
+endpoints:
+  - name: App
+    group: Franca
+    url: http://app:8000/api/v1/health
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].status == ok"
+    alerts:
+      - type: ntfy
+        description: The app does not answer its health check.
+
+  - name: Web server
+    group: Franca
+    url: http://caddy:8080/healthz
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+    alerts:
+      - type: ntfy
+        description: The web server (Caddy) does not answer.
+
+  # Inside the bundle, the Tailscale name leads to Caddy, so this request uses Caddy's real certificate.
+  - name: HTTPS on the Tailscale name
+    group: Franca
+    enabled: ${FRANCA_TAILNET_CHECKS}
+    url: https://${FRANCA_TAILSCALE_NAME}:8443/healthz
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+      # Tailscale renews the certificate when it has 30 days or less left, so 14 days left means renewal has failed.
+      - "[CERTIFICATE_EXPIRATION] > 336h"
+    alerts:
+      - type: ntfy
+        description: HTTPS on the Tailscale name does not work, or its certificate expires within 14 days.
+
+  - name: Tailscale
+    group: Franca
+    enabled: ${FRANCA_TAILNET_CHECKS}
+    url: http://tailscale:9002/healthz
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+    alerts:
+      - type: ntfy
+        description: The PC is not connected to the tailnet.
+
+external-endpoints:
+  - name: Update
+    group: Nightly
+    token: ${STATUS_PUSH_TOKEN}
+    heartbeat:
+      interval: 25h
+    alerts:
+      - type: ntfy
+        failure-threshold: 1
+        description: The nightly update failed, or did not report.
+
+  - name: Backup
+    group: Nightly
+    token: ${STATUS_PUSH_TOKEN}
+    heartbeat:
+      interval: 25h
+    alerts:
+      - type: ntfy
+        failure-threshold: 1
+        description: The nightly backup failed, or did not report.
+
+  - name: Restore test
+    group: Nightly
+    token: ${STATUS_PUSH_TOKEN}
+    heartbeat:
+      interval: 745h
+    alerts:
+      - type: ntfy
+        failure-threshold: 1
+        description: The monthly restore test failed, or did not report.

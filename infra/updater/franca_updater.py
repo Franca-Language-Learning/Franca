@@ -30,6 +30,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -41,21 +42,27 @@ REPOSITORY = "Franca-Language-Learning/Franca"
 RELEASE_WORKFLOW_IDENTITY = f"https://github.com/{REPOSITORY}/.github/workflows/release.yml@refs/tags/{{tag}}"
 OIDC_ISSUER = "https://token.actions.githubusercontent.com"
 IMAGE_PATTERN = re.compile(
-    r"^ghcr\.io/franca-language-learning/franca-(?P<service>app|caddy|updater|backup|tailscale)@sha256:[0-9a-f]{64}$"
+    r"^ghcr\.io/franca-language-learning/franca-(?P<service>app|caddy|updater|backup|tailscale|status)@sha256:[0-9a-f]{64}$"
 )
 VERSION_PATTERN = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 # The .env keys that name each image. A release has to have the app and caddy images; they are started at once. New
-# updater, backup and tailscale images are checked and written to .env too, and are used from the next start of the
-# bundle.
+# updater and backup images are checked and written to .env too, and are used from the next start of the bundle. New
+# tailscale and status images are started after the app is healthy (STARTED_AFTER_THE_APP).
 IMAGE_KEYS = {
     "app": "FRANCA_APP_IMAGE",
     "caddy": "FRANCA_CADDY_IMAGE",
     "updater": "FRANCA_UPDATER_IMAGE",
     "backup": "FRANCA_BACKUP_IMAGE",
     "tailscale": "FRANCA_TAILSCALE_IMAGE",
+    "status": "FRANCA_STATUS_IMAGE",
 }
 REQUIRED_IMAGES = frozenset({"app", "caddy"})
-TAILNET_PROFILE = "tailnet"  # the Compose profile of the private network (story E01-009)
+# The results that count as a successful run, and the key of the updater's external endpoint in the health monitoring.
+SUCCESSFUL_RESULTS = frozenset({"installed", "up-to-date"})
+MONITOR_KEY = "nightly_update"
+# The services whose new images are started straight after the app is healthy, each with the Compose profile that has
+# to be on: the private network (story E01-009), which faces the tailnet, and the health monitoring (story E01-010).
+STARTED_AFTER_THE_APP = {"tailscale": "tailnet", "status": "monitoring"}
 VERSION_KEY = "FRANCA_VERSION"
 SNAPSHOTS_KEPT = 5
 PLACEHOLDER_BUNDLE_DIR = "/franca-bundle-not-set"
@@ -402,6 +409,42 @@ def check_bundle(folder: Path) -> None:
         raise UpdateError(f"The updater cannot write to the bundle folder {folder}")
 
 
+# --- reports to the health monitoring (story E01-010)
+
+
+def _post(request: urllib.request.Request) -> None:
+    with urllib.request.urlopen(request, timeout=10):  # noqa: S310 - a fixed address inside the bundle
+        pass
+
+
+@dataclass(slots=True)
+class Monitor:
+    """Reports the result of each run to the health monitoring: an external endpoint in Gatus, which sends an alert
+    when a run fails or no report comes in for a day."""
+
+    url: str
+    token_file: Path
+    send: Callable[[urllib.request.Request], object] = field(default=_post)
+
+    def report(self, key: str, success: bool, message: str) -> None:
+        """Sends one result. Nothing is sent while there is no push token (the monitoring is not switched on), and a
+        report that cannot be sent is printed: the run's own result stands either way."""
+        try:
+            token = self.token_file.read_text(encoding="utf-8").strip() if self.token_file.is_file() else ""
+            if not token:
+                return
+            fields = {"success": "true"} if success else {"success": "false", "error": message[:500]}
+            query = urllib.parse.urlencode(fields)
+            request = urllib.request.Request(  # noqa: S310 - a fixed address inside the bundle
+                f"{self.url.rstrip('/')}/api/v1/endpoints/{key}/external?{query}",
+                method="POST",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            self.send(request)
+        except (OSError, ValueError) as error:
+            print(json.dumps({"result": "report-not-sent", "message": str(error)}), flush=True)
+
+
 # --- one run
 
 
@@ -418,6 +461,7 @@ class Updater:
     bundle: Path | None = None
     health_timeout: float = 180
     sleep: Callable[[float], None] = field(default=time.sleep)
+    monitor: Monitor | None = None
 
     def run_once(self, now: datetime) -> str:
         """Checks for a release and installs it. Returns the result, which is also written to the status file.
@@ -464,18 +508,36 @@ class Updater:
             return self._roll_back(checked, old_version, release.version, old_text, snapshot, str(error))
         if self.high_water is not None:
             self.high_water.raise_to(release.version)
-        message = f"Installed {release.version}; snapshot {snapshot}" + self._start_new_tailscale(old, new)
+        message = f"Installed {release.version}; snapshot {snapshot}" + self._start_new_images(old, new)
         return self._report("installed", checked, str(release.version), release.version, message)
 
-    def _start_new_tailscale(self, old: dict[str, str], new: dict[str, str]) -> str:
-        """Start a new tailscale image once the app is healthy, if the private network is on.
+    def _start_new_images(self, old: dict[str, str], new: dict[str, str]) -> str:
+        """Start the new tailscale and status images once the app is healthy, for the profiles that are on.
 
-        The tailscale container is exposed to the tailnet, so its update is not left for later. If the new image does
-        not start, the old one is put back and started. Returns a note for the status message, or an empty string."""
-        key = IMAGE_KEYS["tailscale"]
+        The tailscale container faces the tailnet, so its update is not left for the next start of the bundle. If a
+        new image does not start, the old one is put back and started. Returns notes for the status message, or an
+        empty string."""
         profiles = {profile.strip() for profile in old.get("COMPOSE_PROFILES", "").split(",")}
-        if TAILNET_PROFILE not in profiles or old.get(key) == new.get(key):
-            return ""
+        notes = ""
+        for service, profile in STARTED_AFTER_THE_APP.items():
+            key = IMAGE_KEYS[service]
+            if profile in profiles and old.get(key) != new.get(key):
+                notes += self._start_new_image(service, key, old, new)
+        return notes
+
+    def _start_new_image(self, service: str, key: str, old: dict[str, str], new: dict[str, str]) -> str:
+        try:
+            self.compose.up(service)
+        except Exception as error:  # noqa: BLE001 - the app update is kept and the old image is put back
+            current = self.env.read()
+            put_back = {name: value for name, value in current.items() if name != key} | ({key: old[key]} if key in old else {})
+            try:
+                self.env.write(put_back)
+                self.compose.up(service)
+            except Exception as again:  # noqa: BLE001 - reported for the owner
+                return f". The new {service} image did not start ({error}), and starting the old one failed too: {again}"
+            return f". The new {service} image did not start ({error}), so the old one was started again"
+        return ""
         try:
             self.compose.up("tailscale")
         except Exception as error:  # noqa: BLE001 - the app update is kept and the old tailscale image is put back
@@ -519,6 +581,8 @@ class Updater:
             self.status.write(**line)
         except OSError as error:
             print(json.dumps({"result": "status-not-written", "message": str(error)}), flush=True)
+        if self.monitor is not None:
+            self.monitor.report(MONITOR_KEY, result in SUCCESSFUL_RESULTS, message)
         return result
 
 
@@ -559,6 +623,7 @@ def from_environment(environ: Mapping[str, str]) -> Updater:
         status=StatusFile(Path(environ.get("FRANCA_UPDATER_STATUS", "/status/updater.json"))),
         high_water=HighWaterMark(Path(environ.get("FRANCA_UPDATER_HIGH_WATER", "/status/newest-installed"))),
         bundle=project,
+        monitor=Monitor(environ["FRANCA_STATUS_URL"], Path("/run/secrets/status_push_token")) if environ.get("FRANCA_STATUS_URL") else None,
     )
 
 
@@ -566,7 +631,7 @@ def main(argv: Sequence[str] = sys.argv[1:], environ: Mapping[str, str] = os.env
     updater = from_environment(environ)
     if "--once" in argv:
         result = updater.run_once(datetime.now(UTC))
-        return 0 if result in {"installed", "up-to-date"} else 1
+        return 0 if result in SUCCESSFUL_RESULTS else 1
     at = update_time(environ.get("FRANCA_UPDATE_AT_UTC", DEFAULT_UPDATE_TIME))
     while True:
         wake = next_run(datetime.now(UTC), at)

@@ -6,6 +6,7 @@ The rehearsal against real containers is infra/tests/rehearse-update.sh.
 import json
 import subprocess
 import sys
+import urllib.request
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -304,6 +305,20 @@ def test_a_tailscale_image_that_does_not_start_is_put_back_and_the_app_update_ke
     assert "tailscale" in status(tmp_path)["message"]
 
 
+STATUS = f"ghcr.io/franca-language-learning/franca-status@sha256:{'f' * 64}"
+
+
+def test_a_new_status_image_is_started_after_the_app_when_the_monitoring_is_on(tmp_path: Path) -> None:
+    release = fu.Release(fu.Version(1, 1, 0), {"app": APP, "caddy": CADDY, "tailscale": TAILSCALE, "status": STATUS})
+    updater, log, _verifier = make(tmp_path, release)
+    with_tailnet(tmp_path, profiles="updates,backups,tailnet,monitoring")
+
+    assert updater.run_once(NOW) == "installed"
+
+    assert log[-3:] == ["up app caddy", "up tailscale", "up status"]
+    assert fu.EnvFile(tmp_path / ".env").read()["FRANCA_STATUS_IMAGE"] == STATUS
+
+
 def test_the_same_release_is_not_installed_again(tmp_path: Path) -> None:
     updater, log, verifier = make(tmp_path, fu.Release(fu.Version(1, 0, 0), {"app": APP, "caddy": CADDY}))
     assert updater.run_once(NOW) == "up-to-date"
@@ -534,3 +549,75 @@ def test_a_failed_restore_copy_leaves_the_database_as_it_was(tmp_path: Path) -> 
         exec(fu._with_arguments(fu.RESTORE_SCRIPT, str(missing_snapshot), str(live)), {})  # noqa: S102
     with sqlite3.connect(live) as connection:
         assert connection.execute("SELECT name FROM sqlite_master").fetchall() == [("t",)]
+
+
+# --- reports to the health monitoring (story E01-010)
+
+
+class FakeMonitor(fu.Monitor):
+    def __init__(self) -> None:
+        self.reports: list[tuple[str, bool, str]] = []
+
+    def report(self, key: str, success: bool, message: str) -> None:
+        self.reports.append((key, success, message))
+
+
+@pytest.mark.parametrize(
+    ("release", "fail_on", "expected"),
+    [
+        (NEW, None, True),  # installed
+        (fu.Release(fu.Version(1, 0, 0), {"app": APP, "caddy": CADDY}), None, True),  # up to date
+        (NEW, {"up app caddy"}, False),  # rolled back
+    ],
+)
+def test_each_run_is_reported_to_the_health_monitoring(
+    tmp_path: Path, release: fu.Release, fail_on: set[str] | None, expected: bool
+) -> None:
+    updater, _log, _verifier = make(tmp_path, release, fail_on=fail_on)
+    monitor = FakeMonitor()
+    updater.monitor = monitor
+
+    updater.run_once(NOW)
+
+    assert len(monitor.reports) == 1
+    key, success, message = monitor.reports[0]
+    assert (key, success) == ("nightly_update", expected)
+    assert message == status(tmp_path)["message"]
+
+
+def test_a_report_is_a_post_with_the_token_and_the_reason(tmp_path: Path) -> None:
+    token = tmp_path / "status_push_token"
+    token.write_text("t" * 40 + "\n", encoding="utf-8")
+    sent: list[urllib.request.Request] = []
+    monitor = fu.Monitor("http://status:8080/", token, send=sent.append)
+
+    monitor.report("nightly_update", False, "Starting app failed & more")
+
+    request = sent[0]
+    assert request.get_method() == "POST"
+    assert request.full_url == (
+        "http://status:8080/api/v1/endpoints/nightly_update/external?success=false&error=Starting+app+failed+%26+more"
+    )
+    assert request.get_header("Authorization") == "Bearer " + "t" * 40
+
+
+def test_monitoring_that_cannot_be_reached_does_not_stop_the_updater(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    token = tmp_path / "status_push_token"
+    token.write_text("t" * 40, encoding="utf-8")
+
+    def unreachable(_request: urllib.request.Request) -> None:
+        raise OSError("connection refused")
+
+    fu.Monitor("http://status:8080", token, send=unreachable).report("nightly_update", True, "Installed")
+
+    assert "connection refused" in capsys.readouterr().out
+
+
+def test_without_a_push_token_nothing_is_reported(tmp_path: Path) -> None:
+    token = tmp_path / "status_push_token"
+    token.write_text("", encoding="utf-8")
+    sent: list[urllib.request.Request] = []
+
+    fu.Monitor("http://status:8080", token, send=sent.append).report("nightly_update", True, "Installed")
+
+    assert sent == []

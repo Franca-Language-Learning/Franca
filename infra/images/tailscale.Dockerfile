@@ -29,8 +29,10 @@ RUN apk upgrade --no-cache
 RUN addgroup -g 10004 -S tailscale && adduser -u 10004 -S -G tailscale -H tailscale \
     && install -d -o tailscale -g tailscale /var/lib/tailscale /var/run/tailscale
 COPY infra/tailscale/serve.json /etc/franca/serve.json
+COPY infra/tailscale/entrypoint.sh /usr/local/bin/franca-tailscale
 ENV TS_SERVE_CONFIG=/etc/franca/serve.json
 USER 10004:10004
 # The container counts as healthy once the node is signed in to the tailnet.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD ["sh", "-c", "tailscale status --peers=false --json | grep -q '\"BackendState\": \"Running\"'"]
+ENTRYPOINT ["/usr/local/bin/franca-tailscale"]

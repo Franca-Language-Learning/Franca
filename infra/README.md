@@ -13,11 +13,17 @@ Franca runs as a set of containers, which are small separate programs that Docke
 | `tests/test-bundle.sh` | Starts the bundle and checks it. The pipeline runs it on every pull request |
 | `images/backup.Dockerfile` | The image for the backup, with restic |
 | `images/tailscale.Dockerfile` | The image for the private network: Tailscale's image with a user other than root and the forwarding to Caddy |
+| `images/status.Dockerfile` | The image for the health monitoring: Gatus on Alpine, with its start script |
+| `status/gatus.yaml` | The checks, the reports from the nightly jobs and the alerts |
+| `status/entrypoint.sh` | The start script, which passes the alert topic and the push token from the secret files to Gatus |
+| `tailscale/entrypoint.sh` | The tailscale container's start script, which opens the health port on the bundle's network |
 | `tailscale/serve.json` | The forwarding of port 443 on the tailnet to Caddy's HTTPS port |
 | `backup/franca_backup.py` | The nightly backup and the monthly restore test (story E01-008) |
 | `tests/rehearse_backup.py` | A rehearsal of a backup, a restore test and a restore with real containers. The pipeline runs it after the update rehearsal |
 | `tests/rehearse_tailnet.py` | A rehearsal of the private network with real containers, with Headscale in place of Tailscale's control server. The pipeline runs it after the backup rehearsal |
 | `tests/test_tailnet_config.py` | Checks of the private-network settings in these files. They run with the server's tests |
+| `tests/rehearse_status.py` | A rehearsal of the health monitoring with real containers, with a stand-in for ntfy. The pipeline runs it after the tailnet rehearsal |
+| `tests/test_status_config.py` | Checks of the monitoring settings in these files. They run with the server's tests |
 | `tests/rehearse_update.py` | A rehearsal of an update and a rollback with real containers. The pipeline runs it after the bundle check |
 
 Secrets are files in a folder on the PC (`FRANCA_SECRETS_DIR`, by default `infra/secrets`): `google_client_secret` and `session_secret`. Docker passes them to the app container under `/run/secrets`, with the files' own permissions, so the app's user (number 10001) has to be able to read them. The installer writes them (story E01-011).
@@ -80,6 +86,28 @@ When a release has a new tailscale image and the `tailnet` profile is on, the up
 
 `docs/private-network.md` has the owner's steps in the Tailscale admin console.
 
+## Health monitoring
+
+The `status` container runs Gatus, an open-source health checker, in the `monitoring` profile. Alerts are sent to the owner's phone through ntfy, a free notification service, on a topic that only the owner knows.
+
+| Check | How often | Alert |
+|---|---|---|
+| The app answers its health check | Every minute | After three failures in a row |
+| The web server (Caddy) answers | Every minute | After three failures in a row |
+| HTTPS on the Tailscale name works, and the certificate has more than 14 days left | Every minute, once the PC has a Tailscale name | After three failures in a row |
+| The tailscale container is connected to the tailnet | Every minute, once the PC has a Tailscale name | After three failures in a row |
+| The nightly update reports a result | After each run | When it fails, or when there is no report for 25 hours |
+| The nightly backup reports a result | After each run | When it fails, or when there is no report for 25 hours |
+| The monthly restore test reports a result | After each test | When it fails, or when there is no report for 31 days |
+
+A second message is sent when a problem is over. Inside the bundle, the Tailscale name leads to Caddy, so the HTTPS check uses Caddy's real certificate. The tailscale container's health port is opened on its address in the bundle's network. Connections from the tailnet arrive at the container's loopback address, where nothing listens on that port.
+
+The updater and the backup report each run with the token in the `status_push_token` secret. While that file is empty, nothing is reported. The topic is in the `ntfy_topic` secret. Anyone who knows the topic can read the alerts, so the installer makes it long and random. The start script checks both values against a strict pattern before Gatus reads them, because Gatus puts them into its configuration as text.
+
+The dashboard is at http://127.0.0.1:8081 on the PC (`FRANCA_STATUS_PORT`). The history of the checks is kept in the `status-data` volume. When a release has a new status image and the `monitoring` profile is on, the updater starts it after the app is healthy, as for the tailscale image.
+
+`docs/health-alerts.md` has the owner's steps for the ntfy app.
+
 ## Containers in later stories
 
 The other containers will be added in later stories:
@@ -89,6 +117,5 @@ The other containers will be added in later stories:
 | `worker` | The first story with a background job (pack import, WP3) |
 | `speech` | E09-011 and the later speech stories |
 | `languagetool` | The answer-checking stories (WP4) |
-| `status` | E01-010 |
 
 The installer for Windows (story E01-011) will use this bundle.

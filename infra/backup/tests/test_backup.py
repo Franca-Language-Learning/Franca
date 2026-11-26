@@ -5,6 +5,7 @@ import json
 import sqlite3
 import subprocess
 import sys
+import urllib.request
 from collections.abc import Sequence
 from contextlib import closing
 from datetime import UTC, datetime
@@ -345,3 +346,61 @@ def test_the_health_check_follows_the_last_successful_backup(tmp_path: Path) -> 
     backup.back_up(NOW)
     assert backup.healthy(NOW.replace(day=8)) is True
     assert backup.healthy(NOW.replace(day=10)) is False
+
+
+# --- reports to the health monitoring (story E01-010)
+
+
+class FakeMonitor(fb.Monitor):
+    def __init__(self) -> None:
+        self.reports: list[tuple[str, bool, str]] = []
+
+    def report(self, key: str, success: bool, message: str) -> None:
+        self.reports.append((key, success, message))
+
+
+def test_a_backup_and_its_failure_are_reported(tmp_path: Path) -> None:
+    backup, restic = make(tmp_path)
+    monitor = FakeMonitor()
+    backup.monitor = monitor
+
+    backup.back_up(NOW)
+    restic.fail_on = "backup"
+    backup.back_up(NOW)
+
+    assert [(key, success) for key, success, _message in monitor.reports] == [("nightly_backup", True), ("nightly_backup", False)]
+    assert "backup failed" in monitor.reports[1][2]
+
+
+def test_a_restore_test_is_reported_under_its_own_key(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    backup.back_up(NOW)
+    monitor = FakeMonitor()
+    backup.monitor = monitor
+
+    backup.restore_test(NOW)
+
+    assert [(key, success) for key, success, _message in monitor.reports] == [("nightly_restore-test", True)]
+
+
+def test_a_restore_by_the_owner_is_not_reported(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    backup.back_up(NOW)
+    monitor = FakeMonitor()
+    backup.monitor = monitor
+
+    backup.restore_latest(NOW)
+
+    assert monitor.reports == []
+
+
+def test_a_report_is_a_post_with_the_token(tmp_path: Path) -> None:
+    token = tmp_path / "status_push_token"
+    token.write_text("t" * 40, encoding="utf-8")
+    sent: list[urllib.request.Request] = []
+
+    fb.Monitor("http://status:8080", token, send=sent.append).report("nightly_backup", True, "The database was backed up")
+
+    assert sent[0].get_method() == "POST"
+    assert sent[0].full_url == "http://status:8080/api/v1/endpoints/nightly_backup/external?success=true"
+    assert sent[0].get_header("Authorization") == "Bearer " + "t" * 40

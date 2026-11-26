@@ -29,6 +29,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Sequence
 from contextlib import closing
@@ -197,6 +198,48 @@ def health_check(url: str) -> Callable[[], bool]:
     return answers
 
 
+# --- reports to the health monitoring (story E01-010)
+
+# The status files whose results are reported, with the key of their external endpoint in Gatus and the result that
+# counts as a success. A restore by the owner (restore.json) is not reported.
+MONITORED = {
+    "backup.json": ("nightly_backup", "backed-up"),
+    "restore-test.json": ("nightly_restore-test", "restore-test-passed"),
+}
+
+
+def _post(request: urllib.request.Request) -> None:
+    with urllib.request.urlopen(request, timeout=10):  # noqa: S310 - a fixed address inside the bundle
+        pass
+
+
+@dataclass(slots=True)
+class Monitor:
+    """Reports the result of each run to the health monitoring: an external endpoint in Gatus, which sends an alert
+    when a run fails or no report comes in on time. The same as the updater's Monitor; the two images share no code."""
+
+    url: str
+    token_file: Path
+    send: Callable[[urllib.request.Request], object] = field(default=_post)
+
+    def report(self, key: str, success: bool, message: str) -> None:
+        """Sends one result. Nothing is sent while there is no push token (the monitoring is not switched on), and a
+        report that cannot be sent is printed: the run's own result stands either way."""
+        try:
+            token = self.token_file.read_text(encoding="utf-8").strip() if self.token_file.is_file() else ""
+            if not token:
+                return
+            fields = {"success": "true"} if success else {"success": "false", "error": message[:500]}
+            request = urllib.request.Request(  # noqa: S310 - a fixed address inside the bundle
+                f"{self.url.rstrip('/')}/api/v1/endpoints/{key}/external?{urllib.parse.urlencode(fields)}",
+                method="POST",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            self.send(request)
+        except (OSError, ValueError) as error:
+            print(json.dumps({"result": "report-not-sent", "message": str(error)}), flush=True)
+
+
 @dataclass(slots=True)
 class Backup:
     data: Path  # the app's data volume
@@ -205,6 +248,7 @@ class Backup:
     restic: Restic
     app_answers: Callable[[], bool] = field(default=lambda: False)
     backups: Path = Path("/backups")
+    monitor: Monitor | None = None
 
     def back_up(self, now: datetime) -> str:
         staging = self.work / "staging"
@@ -331,6 +375,9 @@ class Backup:
             self.status.write(name, **line)
         except OSError as error:
             print(json.dumps({"result": "status-not-written", "message": str(error)}), flush=True)
+        if self.monitor is not None and name in MONITORED:
+            key, success = MONITORED[name]
+            self.monitor.report(key, result == success, details.get("message", ""))
         return result
 
 
@@ -361,6 +408,7 @@ def from_environment(environ: dict[str, str] | os._Environ[str]) -> Backup:
         restic=Restic(),
         app_answers=health_check(environ.get("FRANCA_HEALTH_URL", "http://app:8000/api/v1/health")),
         backups=Path(environ.get("FRANCA_BACKUP_DIR_IN_CONTAINER", "/backups")),
+        monitor=Monitor(environ["FRANCA_STATUS_URL"], Path("/run/secrets/status_push_token")) if environ.get("FRANCA_STATUS_URL") else None,
     )
 
 

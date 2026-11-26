@@ -145,6 +145,8 @@ def main() -> int:
         (key_folder / "session_secret").write_text(os.urandom(32).hex(), encoding="utf-8")
         (key_folder / "backup_password").write_text(os.urandom(32).hex(), encoding="utf-8")
         (key_folder / "tailscale_authkey").write_text("", encoding="utf-8")  # the tailnet profile is not used here
+        (key_folder / "ntfy_topic").write_text("", encoding="utf-8")  # the monitoring profile is not used here
+        (key_folder / "status_push_token").write_text("", encoding="utf-8")  # so nothing is reported
         for secret in key_folder.iterdir():
             secret.chmod(0o644)
         port = free_port()

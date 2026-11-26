@@ -146,8 +146,8 @@ def main() -> int:
         (bundle / "headscale" / "config.yaml").write_text(HEADSCALE_CONFIG, encoding="utf-8")
         key_folder = bundle / "secrets"
         key_folder.mkdir()
-        for name in ("google_client_secret", "session_secret", "backup_password", "tailscale_authkey"):
-            empty = name in {"google_client_secret", "tailscale_authkey"}
+        for name in ("google_client_secret", "session_secret", "backup_password", "tailscale_authkey", "ntfy_topic", "status_push_token"):
+            empty = name in {"google_client_secret", "tailscale_authkey", "ntfy_topic", "status_push_token"}
             (key_folder / name).write_text("" if empty else os.urandom(32).hex(), encoding="utf-8")
         (bundle / ".env").write_text(
             "\n".join(
