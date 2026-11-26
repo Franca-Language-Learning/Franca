@@ -1,14 +1,19 @@
-# Release (story E01-006): builds the images from a version tag, pushes them to the GitHub container registry,
-# scans them, signs them with cosign and attaches an SBOM and build provenance. The updater installs only images
-# signed by this workflow for a version tag (story E01-007). docs/verifying-releases.md has the commands to check.
+# Release (story E01-006). A maintainer makes a release by pushing a version tag such as v0.1.0.
 #
-# A release is made by pushing a tag such as v0.1.0. The jobs run in the "release" environment, which accepts tags
-# starting with v only; the id-token permission (for keyless signing) is given in this workflow only.
+# 1. build: each image is built and pushed to the GitHub container registry by digest, with no version tag yet.
+#    It is scanned with Grype and an SBOM is made with Syft. This job has no id-token permission.
+# 2. sign: in the "release" environment, each image is signed with keyless cosign, build provenance and the SBOM
+#    are attached as signed attestations, and only then is the version tag added to the image.
+# 3. release: a GitHub release is published with the image digests and the SBOMs.
+#
+# The "release" environment is limited to version tags in the repository settings. This is the only workflow with
+# the id-token permission, which is needed for keyless signing. The updater installs only images signed by this
+# workflow for a version tag (story E01-007). docs/verifying-releases.md has the commands for checking a release.
 name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
 
 permissions: {}
 
@@ -16,24 +21,23 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
+
 jobs:
-  images:
-    name: Image ${{ matrix.image }}
+  build:
+    name: Build ${{ matrix.image }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    environment: release
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         image: [app, caddy]
     permissions:
       contents: read
       packages: write
-      id-token: write
-      attestations: write
     env:
       IMAGE: ghcr.io/franca-language-learning/franca-${{ matrix.image }}
-      VERSION: ${{ github.ref_name }}
     steps:
       - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
@@ -41,25 +45,29 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Version number without the v
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: echo "number=${TAG#v}" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push
+      - name: Build and push by digest
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: infra/images/${{ matrix.image }}.Dockerfile
-          build-args: FRANCA_VERSION=${{ env.VERSION }}
-          tags: ${{ env.IMAGE }}:${{ env.VERSION }}
-          push: true
-          # Provenance and the SBOM are attached below as signed attestations.
+          build-args: FRANCA_VERSION=${{ steps.version.outputs.number }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          # Provenance and the SBOM are attached as signed attestations in the sign job.
           provenance: false
           sbom: false
-      - name: Scan for known vulnerabilities (the image is not signed if this fails)
+      - name: Scan for known vulnerabilities (the image is not signed or tagged if this fails)
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
@@ -72,39 +80,80 @@ jobs:
           image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
           format: spdx-json
           output-file: sbom-${{ matrix.image }}.spdx.json
-          artifact-name: sbom-${{ matrix.image }}.spdx.json
-          upload-artifact-retention: 7
-      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
-      - name: Sign the image
-        env:
-          DIGEST: ${{ steps.build.outputs.digest }}
-        run: cosign sign --yes "$IMAGE@$DIGEST"
-      - name: Attach the build provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-name: ${{ env.IMAGE }}
-          subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: true
-      - name: Attach the SBOM
-        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
-        with:
-          subject-name: ${{ env.IMAGE }}
-          subject-digest: ${{ steps.build.outputs.digest }}
-          sbom-path: sbom-${{ matrix.image }}.spdx.json
-          push-to-registry: true
+          upload-artifact: false
+          upload-release-assets: false
       - name: Record the digest
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: echo "$IMAGE@$DIGEST" > "digest-${{ matrix.image }}.txt"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: digest-${{ matrix.image }}
-          path: digest-${{ matrix.image }}.txt
+          name: image-${{ matrix.image }}
+          path: |
+            digest-${{ matrix.image }}.txt
+            sbom-${{ matrix.image }}.spdx.json
           retention-days: 7
+
+  sign:
+    name: Sign ${{ matrix.image }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: release
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [app, caddy]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    env:
+      IMAGE: ghcr.io/franca-language-learning/franca-${{ matrix.image }}
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-${{ matrix.image }}
+      - name: Read the digest
+        id: digest
+        run: echo "digest=$(cut -d@ -f2 "digest-${{ matrix.image }}.txt")" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - name: Sign the image
+        env:
+          DIGEST: ${{ steps.digest.outputs.digest }}
+        run: cosign sign --yes "$IMAGE@$DIGEST"
+      - name: Attach the build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          push-to-registry: true
+      - name: Attach the SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          sbom-path: sbom-${{ matrix.image }}.spdx.json
+          push-to-registry: true
+      - name: Add the version tag to the signed image
+        env:
+          DIGEST: ${{ steps.digest.outputs.digest }}
+        run: docker buildx imagetools create --tag "$IMAGE:$VERSION" "$IMAGE@$DIGEST"
 
   release:
     name: GitHub release
-    needs: images
+    needs: sign
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: release
@@ -116,6 +165,7 @@ jobs:
           egress-policy: audit
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
+          pattern: image-*
           path: assets
           merge-multiple: true
       - name: Publish the release with the image digests and SBOMs
@@ -125,7 +175,7 @@ jobs:
           VERSION: ${{ github.ref_name }}
         run: |
           {
-            echo "Images (signed with cosign; see docs/verifying-releases.md):"
+            echo "Images, signed with cosign (see docs/verifying-releases.md):"
             echo
             sed 's/^/    /' assets/digest-*.txt
           } > notes.md
