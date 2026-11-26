@@ -1,6 +1,7 @@
-# The made-up pack "fx" for the public tests (story E03-001). It has an example of every pack file type. The text is
-# placeholder text; the real Dutch pack is kept in the private content repository.
+# The made-up pack "fx" for the public tests (story E03-001). There is an example of each type of pack file in this
+# folder. The text is placeholder text. The real Dutch pack is kept in the private content repository.
 language: fx
+version: 0.1.0
 name_en: Fixture language
 script: Latn
 direction: ltr
@@ -37,6 +38,11 @@ paradigm_cells:
     form_type: finite
     ud_feats: Number=Sing|Tense=Past
     label: {tl: fixture past singular, en: past singular}
+  - key: imperative
+    upos: VERB
+    form_type: imperative
+    ud_feats: Mood=Imp
+    label: {tl: fixture imperative, en: imperative}
 verb_classes:
   - key: irregular
     label: {tl: fixture irregular, en: irregular}
@@ -45,8 +51,8 @@ decks:
     title: {tl: Fixture shop, en: In the shop}
     items: [fx:lexeme:zakje, fx:chunk:nodig-hebben]
 goals:
-  - key: daily_life
-    name: {tl: Fixture daily life, en: Daily life}
+  - key: living
+    name: {tl: Fixture daily life, en: Daily life and services}
   - key: work
     name: {tl: Fixture work, en: Work}
     offered: false

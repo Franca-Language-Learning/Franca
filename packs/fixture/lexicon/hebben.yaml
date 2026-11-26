@@ -1,4 +1,4 @@
-# A fixture verb, with two features, an irregular past with two variants, a form that does not exist, and verb details.
+# A fixture verb, with one feature, an irregular past with two variants, a form that does not exist, and verb details.
 key: fx:lexeme:hebben
 lemma: hebben
 upos: VERB
@@ -23,7 +23,7 @@ forms:
   - cell: past.sg
     form: hadde
     variety: fx-south
-  - cell: plural
+  - cell: imperative
     nonexistent: true
 verb:
   class: irregular
@@ -36,4 +36,4 @@ verb:
     - auxiliary: fx:lexeme:hebben
       condition_en: Always.
       example: {tl: Fixture perfect sentence., en: Fixture perfect sentence.}
-  rules: [fx:grammar:kofschip]
+  rules: [fx:grammar:niet-geen-rule]

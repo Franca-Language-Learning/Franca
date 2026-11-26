@@ -1,7 +1,7 @@
 # Fixture interface strings, element names and a glossary term.
 element_names:
-  warm_up: Fixture opwarming
-  notebook: Fixture schrift
+  today: Fixture vandaag
+  notes: Fixture schrift
 strings:
   home.greeting: "Fixture hallo, {name}."
   lesson.items_left: "{count, plural, one {# fixture item} other {# fixture items}}"

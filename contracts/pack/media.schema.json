@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://franca.local/spec/media.schema.json",
   "title": "Franca media record (media/<name>.yaml)",
-  "description": "The record of one media file: what it is, its licence and rights, and for audio and video its transcript with word timings. The file itself is in the media store, under its SHA-256. Imported into catalogue_media_asset, catalogue_transcript_line_v and catalogue_alignment_token_v. The pack builder checks the times against each other and the file's size and hash against the store (story E03-002).",
+  "description": "The record of one media file: what it is, its licence and rights, and for audio and video its transcript with word timings. The file itself is in the media store, under its SHA-256. Imported into catalogue_media_asset, catalogue_transcript_line_v and catalogue_alignment_token_v. The times are checked against each other, and the file's size and hash against the media store, by the pack builder (story E03-002).",
   "type": "object",
   "required": ["sha256", "mime", "byte_size", "licence", "rights_scope"],
   "additionalProperties": false,
@@ -42,11 +42,17 @@
     "duration_ms": { "type": "integer", "minimum": 1 },
     "width": { "type": "integer", "minimum": 1 },
     "height": { "type": "integer", "minimum": 1 },
-    "licence": { "description": "A licence code from the app's licence list, for example CC-BY-4.0 or private-use.", "type": "string", "minLength": 2, "maxLength": 40 },
+    "licence": { "$ref": "common.schema.json#/$defs/licence" },
     "rights_scope": { "$ref": "common.schema.json#/$defs/rights_scope" },
     "attribution": { "$ref": "common.schema.json#/$defs/text" },
-    "source_url": { "type": "string", "format": "uri" },
-    "synthetic_voice": { "description": "true: the voice was made by speech synthesis, and is labelled as such.", "type": "boolean", "default": false },
+    "source_url": { "type": "string", "format": "uri", "pattern": "^https?://" },
+    "synthetic_voice": {
+      "description": "true: the voice was made by speech synthesis, and is labelled as such.",
+      "type": "boolean",
+      "default": false
+    },
     "transcript": { "type": "array", "items": { "$ref": "#/$defs/line" } }
-  }
+  },
+  "if": { "properties": { "mime": { "pattern": "^(audio|video)/" } } },
+  "else": { "not": { "required": ["transcript"] } }
 }

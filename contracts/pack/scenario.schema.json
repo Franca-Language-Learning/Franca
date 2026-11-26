@@ -23,7 +23,10 @@
     },
     "register": { "enum": ["neutral", "informal", "formal"], "default": "neutral" },
     "level": { "$ref": "common.schema.json#/$defs/level" },
-    "can_do": { "description": "The can-do descriptor the scenario gives evidence for.", "$ref": "common.schema.json#/$defs/item_key" },
+    "can_do": {
+      "description": "The can-do descriptor that the scenario is evidence for.",
+      "$ref": "common.schema.json#/$defs/item_key"
+    },
     "variety": { "$ref": "common.schema.json#/$defs/variety" },
     "slot": {
       "description": "The place in the course this scenario is one of the alternatives for.",

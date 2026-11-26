@@ -15,7 +15,10 @@
         "gloss_en": { "$ref": "common.schema.json#/$defs/text" },
         "definition_tl": { "$ref": "common.schema.json#/$defs/text" },
         "register": { "$ref": "common.schema.json#/$defs/register", "default": "neutral" },
-        "variety": { "description": "Only where the sense is used in one variety.", "$ref": "common.schema.json#/$defs/variety" },
+        "variety": {
+          "description": "Only where the sense is used in one variety.",
+          "$ref": "common.schema.json#/$defs/variety"
+        },
         "level": { "$ref": "common.schema.json#/$defs/level" },
         "examples": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/example" } },
         "pictures": {
@@ -26,7 +29,10 @@
             "additionalProperties": false,
             "properties": {
               "media": { "$ref": "common.schema.json#/$defs/sha256" },
-              "alt": { "description": "The text for people who cannot see the picture.", "$ref": "common.schema.json#/$defs/english_first" }
+              "alt": {
+                "description": "The text for people who cannot see the picture.",
+                "$ref": "common.schema.json#/$defs/english_first"
+              }
             }
           }
         }
@@ -57,7 +63,11 @@
         "vowel_pattern": { "$ref": "common.schema.json#/$defs/text" },
         "separable_particle": { "$ref": "common.schema.json#/$defs/text" },
         "subject": { "enum": ["any", "third_person", "impersonal"], "default": "any" },
-        "chart_rank": { "description": "The verb's place in the verb charts, from 1.", "type": "integer", "minimum": 1 },
+        "chart_rank": {
+          "description": "The verb's place in the verb charts, from 1.",
+          "type": "integer",
+          "minimum": 1
+        },
         "review_status": { "$ref": "common.schema.json#/$defs/review_status" },
         "auxiliaries": {
           "description": "The auxiliaries of the perfect, with the condition for each where there are two.",
@@ -88,7 +98,11 @@
     "upos": { "$ref": "common.schema.json#/$defs/upos" },
     "frequency_rank": { "type": "integer", "minimum": 1 },
     "level": { "$ref": "common.schema.json#/$defs/level" },
-    "added_for_course": { "description": "true: not in the frequency lists, added because the course needs it.", "type": "boolean", "default": false },
+    "added_for_course": {
+      "description": "true: not in the frequency lists, added because the course needs it.",
+      "type": "boolean",
+      "default": false
+    },
     "review_status": { "$ref": "common.schema.json#/$defs/review_status" },
     "features": {
       "description": "Grammatical features with Universal Dependencies names, for example Gender: [Com]. A word that takes both de and het has two values.",
@@ -105,5 +119,7 @@
     "forms": { "type": "array", "items": { "$ref": "#/$defs/form" } },
     "verb": { "$ref": "#/$defs/verb" },
     "pronunciations": { "$ref": "common.schema.json#/$defs/pronunciations" }
-  }
+  },
+  "if": { "properties": { "upos": { "enum": ["VERB", "AUX"] } } },
+  "else": { "not": { "required": ["verb"] } }
 }

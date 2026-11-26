@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://franca.local/spec/grammar-point.schema.json",
   "title": "Franca grammar point (grammar/<key>.yaml)",
-  "description": "One grammar point: its place in the grammar graph, its explanation at three depths, its rules with decision or formation steps, and the rules that the answer checker uses. Imported into catalogue_grammar_point_v and the tables that refer to it. Each rule step becomes an item of its own, with the key <rule key>#<step id>, so that a wrong answer can be linked to the step where it went wrong.",
+  "description": "One grammar point: its place in the grammar graph, its explanation at three depths, its rules with decision or formation steps, and the rules for the answer checker. Imported into catalogue_grammar_point_v and the tables that refer to it. Each rule step becomes an item of its own, with the key <rule key>#<step id>, so that a wrong answer can be linked to the step where it went wrong.",
   "type": "object",
   "required": ["key", "title"],
   "additionalProperties": false,
@@ -15,7 +15,15 @@
       "properties": {
         "depth": { "enum": ["short", "full", "technical"] },
         "section": {
-          "enum": ["concept", "elements", "how_it_works", "variations", "exceptions", "common_errors", "contrast_and_varieties"]
+          "enum": [
+            "concept",
+            "elements",
+            "how_it_works",
+            "variations",
+            "exceptions",
+            "common_errors",
+            "contrast_and_varieties"
+          ]
         },
         "body_en_md": { "$ref": "common.schema.json#/$defs/markdown" },
         "body_tl_md": { "$ref": "common.schema.json#/$defs/markdown" }
@@ -26,9 +34,18 @@
       "required": ["answer", "action_en"],
       "additionalProperties": false,
       "properties": {
-        "answer": { "description": "An answer to the step's question.", "$ref": "common.schema.json#/$defs/english_first" },
-        "action_en": { "description": "What the learner does with that answer.", "$ref": "common.schema.json#/$defs/text" },
-        "next_step": { "description": "The id of the step that follows this answer. Without it, the rule ends here.", "$ref": "common.schema.json#/$defs/slug" }
+        "answer": {
+          "description": "An answer to the step's question.",
+          "$ref": "common.schema.json#/$defs/english_first"
+        },
+        "action_en": {
+          "description": "What the learner does with that answer.",
+          "$ref": "common.schema.json#/$defs/text"
+        },
+        "next_step": {
+          "description": "The id of the step that follows this answer. Without it, the rule ends here.",
+          "$ref": "common.schema.json#/$defs/slug"
+        }
       }
     },
     "step": {
@@ -50,7 +67,10 @@
         "key": { "$ref": "common.schema.json#/$defs/item_key" },
         "type": { "enum": ["decision", "formation", "spelling", "sound_spelling"] },
         "title": { "$ref": "common.schema.json#/$defs/bilingual" },
-        "why_en_md": { "description": "Why the rule is as it is, where that helps learners remember it.", "$ref": "common.schema.json#/$defs/markdown" },
+        "why_en_md": {
+          "description": "Why the rule is as it is, where that helps learners remember it.",
+          "$ref": "common.schema.json#/$defs/markdown"
+        },
         "review_status": { "$ref": "common.schema.json#/$defs/review_status" },
         "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/step" } },
         "examples": {
@@ -63,7 +83,11 @@
               "tl": { "$ref": "common.schema.json#/$defs/text" },
               "en": { "$ref": "common.schema.json#/$defs/text" },
               "step": { "description": "The step the example shows.", "$ref": "common.schema.json#/$defs/slug" },
-              "worked": { "description": "true: shown as a worked example, step by step.", "type": "boolean", "default": false }
+              "worked": {
+                "description": "true: shown as a worked example, step by step.",
+                "type": "boolean",
+                "default": false
+              }
             }
           }
         },
@@ -83,15 +107,17 @@
       }
     },
     "checker_rule": {
-      "description": "A rule the answer checker applies before LanguageTool and the model (story E07-002). The fields of a match are defined with the checker; here a rule has an id, the error type it finds, and the step a learner is sent back to.",
+      "description": "A rule for the answer checker, which is run before LanguageTool and the model (story E07-002). The fields of a match are defined in story E07-002 and are kept in match. Not imported into the database: the pack builder copies the rules into the manifest of the pack file.",
       "type": "object",
       "required": ["id", "error_type", "description_en"],
       "properties": {
         "id": { "$ref": "common.schema.json#/$defs/slug" },
-        "error_type": { "type": "string", "pattern": "^[a-z_]+$" },
+        "error_type": { "$ref": "common.schema.json#/$defs/error_type" },
         "description_en": { "$ref": "common.schema.json#/$defs/text" },
-        "step": { "$ref": "common.schema.json#/$defs/slug" }
-      }
+        "step": { "$ref": "common.schema.json#/$defs/slug" },
+        "match": { "description": "How the rule finds the error, as defined in story E07-002.", "type": "object" }
+      },
+      "additionalProperties": false
     }
   },
   "properties": {

@@ -8,4 +8,4 @@ title: {tl: Fixture boodschappen, en: Fixture shopping}
 estimated_minutes: 240
 can_dos: [fx:can-do:a1-shop]
 goals:
-  daily_life: 0.8
+  living: 0.8

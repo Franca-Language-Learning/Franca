@@ -8,7 +8,16 @@
   "additionalProperties": false,
   "$defs": {
     "component": {
-      "enum": ["vocabulary", "grammar", "pronunciation", "spelling", "pragmatics", "sociocultural", "fluency", "comprehension"]
+      "enum": [
+        "vocabulary",
+        "grammar",
+        "pronunciation",
+        "spelling",
+        "pragmatics",
+        "sociocultural",
+        "fluency",
+        "comprehension"
+      ]
     },
     "evidence": {
       "type": "object",

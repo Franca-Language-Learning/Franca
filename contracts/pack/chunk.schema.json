@@ -10,8 +10,14 @@
     "key": { "$ref": "common.schema.json#/$defs/item_key" },
     "text_tl": { "$ref": "common.schema.json#/$defs/text" },
     "gloss_en": { "description": "What the chunk means.", "$ref": "common.schema.json#/$defs/text" },
-    "literal_en": { "description": "A word-for-word translation, where it helps.", "$ref": "common.schema.json#/$defs/text" },
-    "function_en": { "description": "What the chunk is used for, for example to ask for something politely.", "$ref": "common.schema.json#/$defs/text" },
+    "literal_en": {
+      "description": "A word-for-word translation, where it helps.",
+      "$ref": "common.schema.json#/$defs/text"
+    },
+    "function_en": {
+      "description": "What the chunk is used for, for example to ask for something politely.",
+      "$ref": "common.schema.json#/$defs/text"
+    },
     "register": { "$ref": "common.schema.json#/$defs/register", "default": "neutral" },
     "level": { "$ref": "common.schema.json#/$defs/level" },
     "parts": {

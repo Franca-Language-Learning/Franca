@@ -27,39 +27,32 @@
       }
     }
   },
-  "oneOf": [
-    {
-      "title": "A sound",
-      "additionalProperties": false,
-      "required": ["kind", "key", "ipa", "name_en"],
-      "properties": {
-        "kind": { "const": "sound" },
-        "key": { "$ref": "common.schema.json#/$defs/item_key" },
-        "ipa": { "$ref": "common.schema.json#/$defs/text" },
-        "name_en": { "$ref": "common.schema.json#/$defs/text" },
-        "description_en": { "$ref": "common.schema.json#/$defs/text" },
-        "pronunciations": { "$ref": "common.schema.json#/$defs/pronunciations" }
-      }
-    },
-    {
-      "title": "A contrast between two sounds",
-      "additionalProperties": false,
-      "required": ["kind", "key", "sounds", "minimal_pairs"],
-      "properties": {
-        "kind": { "const": "contrast" },
-        "key": { "$ref": "common.schema.json#/$defs/item_key" },
-        "sounds": {
-          "description": "The two sounds, by their keys.",
-          "type": "array",
-          "minItems": 2,
-          "maxItems": 2,
-          "uniqueItems": true,
-          "items": { "$ref": "common.schema.json#/$defs/item_key" }
-        },
-        "priority": { "description": "How early the contrast is practised, from 1.", "type": "integer", "minimum": 1 },
-        "note_en": { "$ref": "common.schema.json#/$defs/text" },
-        "minimal_pairs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/minimal_pair" } }
-      }
+  "properties": { "kind": { "enum": ["sound", "contrast"] }, "key": { "$ref": "common.schema.json#/$defs/item_key" } },
+  "if": { "properties": { "kind": { "const": "sound" } } },
+  "then": {
+    "required": ["ipa", "name_en"],
+    "properties": {
+      "ipa": { "$ref": "common.schema.json#/$defs/text" },
+      "name_en": { "$ref": "common.schema.json#/$defs/text" },
+      "description_en": { "$ref": "common.schema.json#/$defs/text" },
+      "pronunciations": { "$ref": "common.schema.json#/$defs/pronunciations" }
     }
-  ]
+  },
+  "else": {
+    "required": ["sounds", "minimal_pairs"],
+    "properties": {
+      "sounds": {
+        "description": "The two sounds, by their keys.",
+        "type": "array",
+        "minItems": 2,
+        "maxItems": 2,
+        "uniqueItems": true,
+        "items": { "$ref": "common.schema.json#/$defs/item_key" }
+      },
+      "priority": { "description": "How early the contrast is practised, from 1.", "type": "integer", "minimum": 1 },
+      "note_en": { "$ref": "common.schema.json#/$defs/text" },
+      "minimal_pairs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/minimal_pair" } }
+    }
+  },
+  "unevaluatedProperties": false
 }

@@ -1,4 +1,4 @@
-# A fixture grammar point with an explanation, a decision rule with two steps, an example, an exception and a checker rule.
+# A fixture grammar point with two explanation sections, a decision rule with two steps, an example, an exception and a checker rule.
 key: fx:grammar:niet-geen
 title: {tl: Fixture niet of geen, en: Fixture not or no}
 level: a1
@@ -42,6 +42,6 @@ rules:
         example_tl: Fixture exception example.
 checker_rules:
   - id: geen-before-noun
-    error_type: negation_choice
+    error_type: word_choice
     description_en: Fixture checker rule.
     step: ng-1

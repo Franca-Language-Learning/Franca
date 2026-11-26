@@ -1,0 +1,6 @@
+# A fixture level node, which the fixture exam in pack.yaml names as its level exam.
+key: fx:level:a2
+type: level
+position: 1
+level: a2
+title: {tl: Fixture niveau A2, en: Level A2}

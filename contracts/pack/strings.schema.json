@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://franca.local/spec/strings.schema.json",
   "title": "Franca interface strings (strings/<name>.yaml)",
-  "description": "The interface in the pack's language: the names of interface elements, the interface messages in ICU MessageFormat, and the glossary of grammar terms. The pack builder checks that the messages match the English catalogue key for key (story E03-002). Imported into catalogue_element_name_v, catalogue_ui_string_v and catalogue_glossary_v.",
+  "description": "Interface text in the pack's language. There are names for interface elements, messages in ICU MessageFormat and a glossary of grammar terms. The messages are checked against the English catalogue, key by key, by the pack builder (story E03-002). Imported into catalogue_element_name_v, catalogue_ui_string_v and catalogue_glossary_v.",
   "type": "object",
   "additionalProperties": false,
   "minProperties": 1,
@@ -10,7 +10,7 @@
     "element_names": {
       "description": "The names of interface elements in the pack's language, by element key.",
       "type": "object",
-      "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+      "propertyNames": { "$ref": "common.schema.json#/$defs/ui_element" },
       "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 40 }
     },
     "strings": {

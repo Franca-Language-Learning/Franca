@@ -9,13 +9,20 @@
   "properties": {
     "key": { "$ref": "common.schema.json#/$defs/node_key" },
     "type": { "enum": ["level", "stage", "unit", "module"] },
-    "parent": { "description": "The node this one belongs to. A level has none.", "$ref": "common.schema.json#/$defs/node_key" },
-    "position": { "description": "The node's place among the children of its parent, from 0.", "type": "integer", "minimum": 0 },
+    "parent": {
+      "description": "The node this one belongs to. A level has none.",
+      "$ref": "common.schema.json#/$defs/node_key"
+    },
+    "position": {
+      "description": "The node's place among the children of its parent, from 0.",
+      "type": "integer",
+      "minimum": 0
+    },
     "level": { "$ref": "common.schema.json#/$defs/level" },
     "title": { "$ref": "common.schema.json#/$defs/bilingual" },
     "estimated_minutes": { "type": "integer", "minimum": 1 },
     "can_dos": {
-      "description": "The can-do descriptors the node works towards.",
+      "description": "The can-do descriptors that the node is aimed at.",
       "type": "array",
       "uniqueItems": true,
       "items": { "$ref": "common.schema.json#/$defs/item_key" }
@@ -32,7 +39,38 @@
       }
     }
   },
-  "if": { "properties": { "type": { "const": "module" } } },
-  "then": { "required": ["module"] },
-  "else": { "not": { "required": ["module"] } }
+  "allOf": [
+    {
+      "description": "A domain module has its module fields, and other nodes do not.",
+      "if": { "properties": { "type": { "const": "module" } } },
+      "then": { "required": ["module"] },
+      "else": { "not": { "required": ["module"] } }
+    },
+    {
+      "description": "A level is at the root of the tree, and other nodes have a parent.",
+      "if": { "properties": { "type": { "const": "level" } } },
+      "then": { "not": { "required": ["parent"] } },
+      "else": { "required": ["parent"] }
+    },
+    {
+      "description": "The key of a level has level as its type.",
+      "if": { "properties": { "type": { "const": "level" } } },
+      "then": { "properties": { "key": { "pattern": "^[^:]+:level:" } } }
+    },
+    {
+      "description": "The key of a stage has stage as its type.",
+      "if": { "properties": { "type": { "const": "stage" } } },
+      "then": { "properties": { "key": { "pattern": "^[^:]+:stage:" } } }
+    },
+    {
+      "description": "The key of a unit has unit as its type.",
+      "if": { "properties": { "type": { "const": "unit" } } },
+      "then": { "properties": { "key": { "pattern": "^[^:]+:unit:" } } }
+    },
+    {
+      "description": "The key of a module has module as its type.",
+      "if": { "properties": { "type": { "const": "module" } } },
+      "then": { "properties": { "key": { "pattern": "^[^:]+:module:" } } }
+    }
+  ]
 }
