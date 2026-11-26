@@ -111,7 +111,8 @@ def headscale(*arguments: str) -> str:
 
 
 def new_key() -> str:
-    users = json.loads(headscale("users", "list", "--output", "json") or "[]")
+    # Headscale lists no users as null.
+    users = json.loads(headscale("users", "list", "--output", "json") or "null") or []
     if not any(user["name"] == "rehearsal" for user in users):
         headscale("users", "create", "rehearsal")
         users = json.loads(headscale("users", "list", "--output", "json"))
