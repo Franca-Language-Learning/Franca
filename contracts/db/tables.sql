@@ -130,12 +130,15 @@ CREATE TABLE identity_auth_session (
     last_seen_at      TEXT    NOT NULL @TS,
     expires_at        TEXT    NOT NULL @TS,
     revoked_at        TEXT    @TS,
+    -- The passkey the learner signed in with, if any. Its sessions are ended when the passkey is removed.
+    passkey_credential_id BLOB REFERENCES identity_passkey ON DELETE SET NULL,
     CHECK (expires_at > created_at),
     CHECK (last_seen_at >= created_at),
     CHECK (julianday(expires_at) - julianday(last_seen_at) <= 30.0001)
 ) STRICT;
 CREATE INDEX identity_auth_session_learner ON identity_auth_session (learner_id);
 CREATE INDEX identity_auth_session_expires ON identity_auth_session (expires_at);
+CREATE INDEX identity_auth_session_passkey ON identity_auth_session (passkey_credential_id);
 
 -- One row per learner. Settings that belong to one course are on study_enrolment.
 CREATE TABLE identity_preferences (

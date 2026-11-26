@@ -11,6 +11,7 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { useState } from "react";
+import { DevicesPage } from "./features/devices";
 import { HomePage } from "./features/home";
 import { PasskeysPage } from "./features/passkeys";
 import { RecoveryCodeSignInPage, RecoveryCodesPage } from "./features/recovery-codes";
@@ -41,7 +42,8 @@ const signInRoute = createRoute({
 const passkeysRoute = createRoute({ getParentRoute: () => rootRoute, path: "/passkeys", component: PasskeysPage });
 const recoveryCodesRoute = createRoute({ getParentRoute: () => rootRoute, path: "/recovery-codes", component: RecoveryCodesPage });
 const recoverySignInRoute = createRoute({ getParentRoute: () => rootRoute, path: "/sign-in/recovery-code", component: RecoveryCodeSignInPage });
-const routeTree = rootRoute.addChildren([homeRoute, signInRoute, passkeysRoute, recoveryCodesRoute, recoverySignInRoute]);
+const devicesRoute = createRoute({ getParentRoute: () => rootRoute, path: "/devices", component: DevicesPage });
+const routeTree = rootRoute.addChildren([homeRoute, signInRoute, passkeysRoute, recoveryCodesRoute, recoverySignInRoute, devicesRoute]);
 
 function makeRouter(initialPath?: string) {
   const history = initialPath ? createMemoryHistory({ initialEntries: [initialPath] }) : createBrowserHistory();

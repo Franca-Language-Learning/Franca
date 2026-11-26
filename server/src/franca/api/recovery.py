@@ -2,16 +2,15 @@
 
 import threading
 import time
-from typing import Annotated
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine
 from starlette.concurrency import run_in_threadpool
 
 from franca import identity
-from franca.api.auth import Db, Me, RecentlySignedIn, SignedIn, set_session_cookie
+from franca.api.auth import Db, Me, RecentlySignedIn, SignedIn, session_token, set_session_cookie
 from franca.platform import Settings, utc_now
 
 NOT_ACCEPTED = "recovery-code-not-accepted"
@@ -135,7 +134,8 @@ def recovery_router(settings: Settings) -> APIRouter:
         },
         dependencies=[Depends(require_json)],
     )
-    async def sign_in(body: RecoverySignIn, request: Request, franca_session: Annotated[str | None, Cookie()] = None) -> Response:
+    async def sign_in(body: RecoverySignIn, request: Request) -> Response:
+        earlier = session_token(request)
         engine: Engine = request.app.state.engine
         address = identity.normalise_email(body.email)
         computer = request.client.host if request.client else "unknown"
@@ -153,8 +153,8 @@ def recovery_router(settings: Settings) -> APIRouter:
                     learner = identity.finish_recovery_sign_in(connection, candidate, match, now)
                 except identity.RecoveryCodeNotAccepted:
                     return None  # returned, not raised, so the transaction is committed and the wrong code is counted
-                if franca_session:
-                    identity.end_session(connection, franca_session, now)  # an earlier session in this browser is closed
+                if earlier:
+                    identity.end_session(connection, earlier, now)  # an earlier session in this browser is closed
                 return learner, identity.start_session(connection, learner, request.headers.get("user-agent"), now)
 
         try:

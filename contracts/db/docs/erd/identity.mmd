@@ -6,6 +6,7 @@ erDiagram
     identity_auth_session {
         INTEGER auth_session_id PK
         INTEGER learner_id FK
+        BLOB passkey_credential_id FK
     }
     identity_external_identity {
         INTEGER external_identity_id PK
@@ -39,6 +40,7 @@ erDiagram
         INTEGER weekday PK
     }
     identity_learner |o--o{ identity_audit_event : "learner_id"
+    identity_passkey |o--o{ identity_auth_session : "passkey_credential_id"
     identity_learner ||--o{ identity_auth_session : "learner_id"
     identity_learner ||--o{ identity_external_identity : "learner_id"
     identity_learner |o--o{ identity_invitation : "accepted_learner_id"

@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from joserfc import jwt
 from joserfc.jwk import RSAKey
 
+from conftest import FrancaTestClient
 from franca.api import create_app
 from franca.platform import load_settings
 
@@ -88,7 +89,7 @@ def client(database_path: Path, google: FakeGoogle) -> TestClient:
         }
     )
     app = create_app(settings, google_transport=httpx2.MockTransport(google.handler))
-    return TestClient(app, base_url="https://franca.example.ts.net")
+    return FrancaTestClient(app, base_url="https://franca.example.ts.net")
 
 
 def sign_in(client: TestClient, google: FakeGoogle, **claims: Any) -> Any:
@@ -96,7 +97,13 @@ def sign_in(client: TestClient, google: FakeGoogle, **claims: Any) -> Any:
     assert start.status_code == 302
     query = google.authorize(start.headers["location"])
     google.claims = {"sub": "owner-sub", "email": "owner@example.org", "email_verified": True, "name": "Owner", **claims}
-    return client.get("/api/v1/auth/google/callback", params={"code": "the-code", "state": query["state"]}, follow_redirects=False)
+    # Google sends the browser back from another site, so the browser leaves out the Strict session cookie.
+    earlier = client.cookies.get("__Host-franca_session")
+    client.cookies.delete("__Host-franca_session")
+    finish = client.get("/api/v1/auth/google/callback", params={"code": "the-code", "state": query["state"]}, follow_redirects=False)
+    if earlier and "__Host-franca_session" not in client.cookies:
+        client.cookies.set("__Host-franca_session", earlier)
+    return finish
 
 
 def test_the_start_sends_the_browser_to_google_with_pkce_state_and_nonce(client: TestClient, google: FakeGoogle) -> None:
@@ -115,7 +122,7 @@ def test_the_owner_signs_in_and_gets_a_session_cookie(client: TestClient, google
     assert finish.status_code == 303
     assert finish.headers["location"] == "/"
     cookie = finish.headers["set-cookie"]
-    assert "franca_session=" in cookie and "HttpOnly" in cookie and "Secure" in cookie and "SameSite=lax" in cookie
+    assert "__Host-franca_session=" in cookie and "HttpOnly" in cookie and "Secure" in cookie and "SameSite=strict" in cookie
     assert google.token_requests[0]["code_verifier"]
     me = client.get("/api/v1/me")
     assert me.json() == {"displayName": "Owner", "role": "owner"}
@@ -124,7 +131,7 @@ def test_the_owner_signs_in_and_gets_a_session_cookie(client: TestClient, google
 def test_a_stranger_is_sent_back_to_the_sign_in_page_with_the_reason(client: TestClient, google: FakeGoogle) -> None:
     finish = sign_in(client, google, sub="stranger", email="stranger@example.org")
     assert finish.headers["location"] == "/sign-in?error=not-invited"
-    assert "franca_session" not in finish.headers.get("set-cookie", "")
+    assert "__Host-franca_session" not in finish.headers.get("set-cookie", "")
     assert client.get("/api/v1/me").status_code == 401
 
 
@@ -181,7 +188,7 @@ def test_the_owner_invites_a_learner_who_can_then_sign_in(client: TestClient, go
     assert created.json()["status"] == "open"
     assert [i["email"] for i in client.get("/api/v1/invitations").json()["invitations"]] == ["partner@example.org"]
 
-    partner = TestClient(client.app, base_url="https://franca.example.ts.net")
+    partner = FrancaTestClient(client.app, base_url="https://franca.example.ts.net")
     finish = sign_in(partner, google, sub="partner-sub", email="partner@example.org", name="Partner")
     assert finish.headers["location"] == "/"
     assert partner.get("/api/v1/me").json() == {"displayName": "Partner", "role": "learner"}
@@ -220,7 +227,7 @@ def test_a_used_session_is_extended_in_the_browser_too(client: TestClient, googl
             "expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+29 days')"
         )
     me = client.get("/api/v1/me")
-    assert "franca_session=" in me.headers["set-cookie"] and "Max-Age=2592000" in me.headers["set-cookie"]
+    assert "__Host-franca_session=" in me.headers["set-cookie"] and "Max-Age=2592000" in me.headers["set-cookie"]
 
 
 def test_signing_in_again_closes_the_earlier_session(client: TestClient, google: FakeGoogle, database_path: Path) -> None:

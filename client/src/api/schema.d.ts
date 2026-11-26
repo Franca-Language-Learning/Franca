@@ -228,6 +228,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The devices the learner is signed in on */
+        get: operations["listSessions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/sign-out-others": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Signs out every device of the learner except this one */
+        post: operations["signOutOtherDevices"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Signs out one of the learner's devices */
+        delete: operations["signOutDevice"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -434,6 +485,57 @@ export interface components {
             /** Email */
             email: string;
         };
+        /**
+         * SessionList
+         * @example {
+         *       "sessions": [
+         *         {
+         *           "browser": "Chrome on Windows",
+         *           "current": true,
+         *           "deviceKind": "desktop",
+         *           "id": 12,
+         *           "lastUsedAt": "2026-12-03T18:20:00.000Z",
+         *           "signedInAt": "2026-12-01T09:00:00.000Z"
+         *         },
+         *         {
+         *           "browser": "Safari on iPhone",
+         *           "current": false,
+         *           "deviceKind": "phone",
+         *           "id": 9,
+         *           "lastUsedAt": "2026-12-02T07:50:00.000Z",
+         *           "signedInAt": "2026-11-28T07:45:00.000Z"
+         *         }
+         *       ]
+         *     }
+         */
+        SessionList: {
+            /** Sessions */
+            sessions: components["schemas"]["SessionOut"][];
+        };
+        /** SessionOut */
+        SessionOut: {
+            /**
+             * Browser
+             * @description The browser and system, such as Chrome on Windows
+             */
+            browser: string;
+            /**
+             * Current
+             * @description True for the device that sent this request
+             */
+            current: boolean;
+            /**
+             * Devicekind
+             * @description desktop, tablet or phone
+             */
+            deviceKind: string;
+            /** Id */
+            id: number;
+            /** Lastusedat */
+            lastUsedAt: string;
+            /** Signedinat */
+            signedInAt: string;
+        };
         /** SignInRequest */
         SignInRequest: {
             /**
@@ -443,6 +545,19 @@ export interface components {
             credential: {
                 [key: string]: unknown;
             };
+        };
+        /**
+         * SignedOut
+         * @example {
+         *       "signedOut": 2
+         *     }
+         */
+        SignedOut: {
+            /**
+             * Signedout
+             * @description How many devices were signed out
+             */
+            signedOut: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -471,9 +586,7 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: {
-                franca_session?: string | null;
-            };
+            cookie?: never;
         };
         requestBody?: never;
         responses: {
@@ -483,15 +596,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
             };
         };
     };
@@ -525,9 +629,7 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: {
-                franca_session?: string | null;
-            };
+            cookie?: never;
         };
         requestBody: {
             content: {
@@ -594,9 +696,7 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: {
-                franca_session?: string | null;
-            };
+            cookie?: never;
         };
         requestBody: {
             content: {
@@ -650,9 +750,7 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: {
-                franca_session?: string | null;
-            };
+            cookie?: never;
         };
         requestBody?: never;
         responses: {
@@ -662,15 +760,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
             };
         };
     };
@@ -699,9 +788,7 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: {
-                franca_session?: string | null;
-            };
+            cookie?: never;
         };
         requestBody?: never;
         responses: {
@@ -728,15 +815,6 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
         };
     };
     createInvitation: {
@@ -744,9 +822,7 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: {
-                franca_session?: string | null;
-            };
+            cookie?: never;
         };
         requestBody: {
             content: {
@@ -793,9 +869,7 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: {
-                franca_session?: string | null;
-            };
+            cookie?: never;
         };
         requestBody?: never;
         responses: {
@@ -815,15 +889,6 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
         };
     };
     listPasskeys: {
@@ -831,9 +896,7 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: {
-                franca_session?: string | null;
-            };
+            cookie?: never;
         };
         requestBody?: never;
         responses: {
@@ -853,15 +916,6 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
         };
     };
     addPasskey: {
@@ -869,9 +923,7 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: {
-                franca_session?: string | null;
-            };
+            cookie?: never;
         };
         requestBody: {
             content: {
@@ -925,9 +977,7 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: {
-                franca_session?: string | null;
-            };
+            cookie?: never;
         };
         requestBody?: never;
         responses: {
@@ -954,15 +1004,6 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
         };
     };
     removePasskey: {
@@ -972,9 +1013,7 @@ export interface operations {
             path: {
                 passkeyId: string;
             };
-            cookie?: {
-                franca_session?: string | null;
-            };
+            cookie?: never;
         };
         requestBody?: never;
         responses: {
@@ -1015,9 +1054,7 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: {
-                franca_session?: string | null;
-            };
+            cookie?: never;
         };
         requestBody?: never;
         responses: {
@@ -1037,15 +1074,6 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
         };
     };
     makeRecoveryCodes: {
@@ -1053,9 +1081,7 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: {
-                franca_session?: string | null;
-            };
+            cookie?: never;
         };
         requestBody?: never;
         responses: {
@@ -1077,6 +1103,94 @@ export interface operations {
             };
             /** @description The learner signed in more than 15 minutes ago (sign-in-again) */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionList"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    signOutOtherDevices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignedOut"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    signOutDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The learner has no open session with this id */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

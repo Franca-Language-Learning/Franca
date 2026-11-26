@@ -1,11 +1,21 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { getHealth, getMe } from "../../api/client";
+import { Button } from "react-aria-components";
+import { getHealth, getMe, signOut } from "../../api/client";
 
 /** The first screen of milestone M0: the app's name, whether the server is running and who is signed in. */
 export function HomePage() {
   const health = useQuery({ queryKey: ["health"], queryFn: ({ signal }) => getHealth(signal) });
   const me = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => getMe(signal) });
+  const queryClient = useQueryClient();
+  // After signing out, nothing of the learner's is kept in the page: the cache is emptied and "me" is set to nobody.
+  const leave = useMutation({
+    mutationFn: signOut,
+    onSuccess: () => {
+      queryClient.clear();
+      queryClient.setQueryData(["me"], null);
+    },
+  });
 
   return (
     <main>
@@ -25,7 +35,14 @@ export function HomePage() {
             <li>
               <Link to="/recovery-codes">Your recovery codes</Link>
             </li>
+            <li>
+              <Link to="/devices">Your devices</Link>
+            </li>
           </ul>
+          <Button onPress={() => leave.mutate()} isDisabled={leave.isPending}>
+            Sign out on this device
+          </Button>
+          {leave.isError && <p role="alert">Signing out did not work. Please try again.</p>}
         </>
       )}
       {me.data === null && (

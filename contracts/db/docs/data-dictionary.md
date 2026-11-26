@@ -842,6 +842,7 @@ A sign-in session expires 30 days after it was last used (decision of 11 Novembe
 | `last_seen_at` | TEXT | yes |  |  |
 | `expires_at` | TEXT | yes |  |  |
 | `revoked_at` | TEXT |  |  |  |
+| `passkey_credential_id` | BLOB |  | FK | `identity_passkey` (on delete set null) |
 
 ### `identity_external_identity`
 

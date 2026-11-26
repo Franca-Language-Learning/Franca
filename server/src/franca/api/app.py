@@ -10,7 +10,8 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.exc import OperationalError
 from starlette.middleware.sessions import SessionMiddleware
 
-from franca.api import auth, passkeys, recovery
+from franca.api import auth, passkeys, recovery, sessions
+from franca.api.anti_forgery import AntiForgeryMiddleware
 from franca.platform import Settings, load_settings, make_engine
 
 API_PREFIX = "/api/v1"
@@ -66,6 +67,7 @@ def create_app(settings: Settings | None = None, *, google_transport: Any = None
     # Holds the state of a sign-in with Google, or the challenge for a passkey, for up to 10 minutes. Without a
     # configured secret, a random one is used, and a sign-in that is in progress when the service restarts has to
     # be started again.
+    app.add_middleware(AntiForgeryMiddleware, secure=settings.cookies_secure)
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.session_secret or secrets.token_urlsafe(32),
@@ -79,4 +81,5 @@ def create_app(settings: Settings | None = None, *, google_transport: Any = None
     app.include_router(auth.install(app, settings, make_engine(settings.database_path), google_transport), prefix=API_PREFIX)
     app.include_router(passkeys.passkey_router(settings), prefix=API_PREFIX)
     app.include_router(recovery.recovery_router(settings), prefix=API_PREFIX)
+    app.include_router(sessions.session_router(), prefix=API_PREFIX)
     return app

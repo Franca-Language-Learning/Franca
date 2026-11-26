@@ -8,6 +8,7 @@ The first time, an account is made for them if:
 After that, the Google account is recognised by its subject id, which stays the same if the address changes.
 """
 
+import base64
 import hashlib
 import json
 import secrets
@@ -166,13 +167,18 @@ def _device_kind(user_agent: str | None) -> str:
     return "desktop"
 
 
-def start_session(connection: Connection, learner: Learner, user_agent: str | None, now: datetime) -> str:
-    """Makes a sign-in session and returns its token. Only a hash of the token is stored."""
+def _from_base64url(text_: str) -> bytes:
+    return base64.urlsafe_b64decode(text_ + "=" * (-len(text_) % 4))
+
+
+def start_session(connection: Connection, learner: Learner, user_agent: str | None, now: datetime, *, passkey_id: str | None = None) -> str:
+    """Makes a sign-in session and returns its token. Only a hash of the token is stored. passkey_id (base64url) is
+    the passkey the learner signed in with, so that the session ends when that passkey is removed."""
     token = secrets.token_urlsafe(32)
     connection.execute(
         text(
-            "INSERT INTO identity_auth_session (learner_id, token_hash, device_kind, user_agent, created_at, last_seen_at, expires_at) "
-            "VALUES (:learner, :hash, :device, :agent, :now, :now, :expires)"
+            "INSERT INTO identity_auth_session (learner_id, token_hash, device_kind, user_agent, created_at, last_seen_at, expires_at, "
+            "passkey_credential_id) VALUES (:learner, :hash, :device, :agent, :now, :now, :expires, :passkey)"
         ),
         {
             "learner": learner.learner_id,
@@ -181,6 +187,7 @@ def start_session(connection: Connection, learner: Learner, user_agent: str | No
             "agent": (user_agent or "")[:200] or None,
             "now": iso(now),
             "expires": iso(now + timedelta(days=SESSION_DAYS)),
+            "passkey": _from_base64url(passkey_id) if passkey_id else None,
         },
     )
     return token
@@ -218,10 +225,111 @@ def learner_for_session(connection: Connection, token: str, now: datetime) -> Se
     return SessionCheck(learner, extended=True, signed_in_at=row.created_at)
 
 
+def session_id_for_token(connection: Connection, token: str, now: datetime) -> int | None:
+    """The id of the open session with this token, or None."""
+    found = connection.execute(
+        text("SELECT auth_session_id FROM identity_auth_session WHERE token_hash = :hash AND revoked_at IS NULL AND expires_at > :now"),
+        {"hash": _token_hash(token), "now": iso(now)},
+    ).scalar_one_or_none()
+    return int(found) if found is not None else None
+
+
+def end_session_by_id(connection: Connection, session_id: int, now: datetime) -> None:
+    connection.execute(
+        text("UPDATE identity_auth_session SET revoked_at = :now WHERE auth_session_id = :id AND revoked_at IS NULL"),
+        {"now": iso(now), "id": session_id},
+    )
+
+
 def end_session(connection: Connection, token: str, now: datetime) -> None:
     connection.execute(
         text("UPDATE identity_auth_session SET revoked_at = :now WHERE token_hash = :hash AND revoked_at IS NULL"),
         {"now": iso(now), "hash": _token_hash(token)},
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SessionInfo:
+    """A signed-in device, as the learner sees it in the list of their devices."""
+
+    session_id: int
+    device_kind: str
+    browser: str
+    created_at: str
+    last_seen_at: str
+    current: bool
+
+
+_BROWSERS = (("Edg/", "Edge"), ("Firefox/", "Firefox"), ("Chrome/", "Chrome"), ("Safari/", "Safari"))
+_SYSTEMS = (("iPhone", "iPhone"), ("iPad", "iPad"), ("Android", "Android"), ("Windows", "Windows"), ("Mac OS X", "Mac"), ("Linux", "Linux"))
+
+
+def _browser(user_agent: str | None) -> str:
+    """A short name for the browser and system, such as "Chrome on Windows", read from the browser's User-Agent."""
+    agent = user_agent or ""
+    browser = next((name for marker, name in _BROWSERS if marker in agent), None)
+    system = next((name for marker, name in _SYSTEMS if marker in agent), None)
+    if browser and system:
+        return f"{browser} on {system}"
+    return browser or system or "Unknown browser"
+
+
+def list_sessions(connection: Connection, learner: Learner, *, current_token: str | None, now: datetime) -> list[SessionInfo]:
+    """The learner's open sessions, the most recently used first."""
+    current_hash = _token_hash(current_token) if current_token else b""
+    rows = connection.execute(
+        text(
+            "SELECT auth_session_id, device_kind, user_agent, created_at, last_seen_at, token_hash FROM identity_auth_session "
+            "WHERE learner_id = :learner AND revoked_at IS NULL AND expires_at > :now ORDER BY last_seen_at DESC, auth_session_id DESC"
+        ),
+        {"learner": learner.learner_id, "now": iso(now)},
+    )
+    return [
+        SessionInfo(
+            row.auth_session_id, row.device_kind, _browser(row.user_agent), row.created_at, row.last_seen_at, row.token_hash == current_hash
+        )
+        for row in rows
+    ]
+
+
+def end_learner_session(connection: Connection, learner: Learner, session_id: int, now: datetime) -> None:
+    """Signs out one of the learner's devices. Raises LookupError when the learner has no open session with this id."""
+    ended = connection.execute(
+        text(
+            "UPDATE identity_auth_session SET revoked_at = :now "
+            "WHERE auth_session_id = :id AND learner_id = :learner AND revoked_at IS NULL AND expires_at > :now"
+        ),
+        {"now": iso(now), "id": session_id, "learner": learner.learner_id},
+    ).rowcount
+    if not ended:
+        raise LookupError("No such session")
+    record_event(connection, learner.learner_id, "sign_out", now, {"scope": "one_device", "session": str(session_id)})
+
+
+def end_other_sessions(connection: Connection, learner: Learner, *, current_token: str, now: datetime) -> int:
+    """Signs out every device of the learner except this one, and returns how many were signed out."""
+    ended = connection.execute(
+        text(
+            "UPDATE identity_auth_session SET revoked_at = :now "
+            "WHERE learner_id = :learner AND revoked_at IS NULL AND expires_at > :now AND token_hash != :current"
+        ),
+        {"now": iso(now), "learner": learner.learner_id, "current": _token_hash(current_token)},
+    ).rowcount
+    if ended:
+        record_event(connection, learner.learner_id, "sign_out", now, {"scope": "other_devices", "sessions": str(ended)})
+    return int(ended)
+
+
+def end_passkey_sessions(connection: Connection, credential_id: bytes, now: datetime) -> int:
+    """Ends the sessions that were started with this passkey, before the passkey is removed, and returns how many."""
+    return int(
+        connection.execute(
+            text(
+                "UPDATE identity_auth_session SET revoked_at = :now "
+                "WHERE passkey_credential_id = :id AND revoked_at IS NULL AND expires_at > :now"
+            ),
+            {"now": iso(now), "id": credential_id},
+        ).rowcount
     )
 
 

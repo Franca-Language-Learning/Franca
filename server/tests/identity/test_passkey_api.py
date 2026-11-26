@@ -11,6 +11,7 @@ from passkey_device import PasskeyDevice
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
+from conftest import FrancaTestClient
 from franca import identity
 from franca.api import create_app
 from franca.platform import db, load_settings, utc_now
@@ -23,7 +24,7 @@ def client(database_path: Path) -> TestClient:
     settings = load_settings(
         {"FRANCA_DATABASE_PATH": str(database_path), "FRANCA_PUBLIC_URL": ORIGIN, "FRANCA_SESSION_SECRET": "test-session-secret"}
     )
-    return TestClient(create_app(settings), base_url=ORIGIN)
+    return FrancaTestClient(create_app(settings), base_url=ORIGIN)
 
 
 def signed_in(
@@ -47,7 +48,7 @@ def signed_in(
         )
         token = identity.start_session(connection, learner, "pytest", utc_now() - timedelta(minutes=minutes_ago))
     engine.dispose()
-    client.cookies.set("franca_session", token)
+    client.cookies.set("__Host-franca_session", token)
     return learner
 
 
@@ -133,7 +134,7 @@ def test_a_learner_signs_in_with_a_passkey(client: TestClient, database_path: Pa
     assert response.status_code == 200
     assert response.json() == {"displayName": "Nik", "role": "owner"}
     cookie = response.headers["set-cookie"]
-    assert "franca_session=" in cookie and "HttpOnly" in cookie and "Secure" in cookie
+    assert "__Host-franca_session=" in cookie and "HttpOnly" in cookie and "Secure" in cookie
     assert client.get("/api/v1/me").json()["role"] == "owner"
 
 
@@ -141,7 +142,7 @@ def test_signing_in_with_a_passkey_ends_the_earlier_session_in_this_browser(clie
     signed_in(client, database_path)
     device = PasskeyDevice(ORIGIN)
     add_passkey(client, device)
-    earlier = client.cookies.get("franca_session")
+    earlier = client.cookies.get("__Host-franca_session")
 
     sign_in(client, device)
 
@@ -160,7 +161,7 @@ def test_a_sign_in_answer_is_used_once(client: TestClient, database_path: Path) 
     answer = device.sign_in(options)
 
     assert client.post("/api/v1/auth/passkey", json={"credential": answer}).status_code == 200
-    client.cookies.delete("franca_session")
+    client.cookies.delete("__Host-franca_session")
     assert client.post("/api/v1/auth/passkey", json={"credential": answer}).status_code == 400
 
 
@@ -168,7 +169,7 @@ def test_an_unknown_passkey_is_refused(client: TestClient) -> None:
     response = sign_in(client, PasskeyDevice(ORIGIN))
     assert response.status_code == 401
     assert response.json() == {"detail": "passkey-unknown"}
-    assert "franca_session" not in response.headers.get("set-cookie", "")
+    assert "__Host-franca_session" not in response.headers.get("set-cookie", "")
 
 
 def test_a_registration_challenge_cannot_be_used_to_sign_in(client: TestClient, database_path: Path) -> None:

@@ -39,7 +39,7 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
-from franca.identity.accounts import Learner, NotAllowed, SignInRefused, record_event
+from franca.identity.accounts import Learner, NotAllowed, SignInRefused, end_passkey_sessions, record_event
 from franca.platform import iso
 
 RP_NAME = "Franca"
@@ -270,10 +270,17 @@ def remove_passkey(connection: Connection, learner: Learner, passkey_id: str, no
         credential_id = base64url_to_bytes(passkey_id)
     except ANSWER_ERRORS as error:
         raise LookupError("No such passkey") from error
+    owned = connection.execute(
+        text("SELECT 1 FROM identity_passkey WHERE credential_id = :id AND learner_id = :learner"),
+        {"id": credential_id, "learner": learner.learner_id},
+    ).first()
+    if owned is None:
+        raise LookupError("No such passkey")
+    ended = end_passkey_sessions(connection, credential_id, now)
     removed = connection.execute(
         text("DELETE FROM identity_passkey WHERE credential_id = :id AND learner_id = :learner"),
         {"id": credential_id, "learner": learner.learner_id},
     ).rowcount
     if not removed:
         raise LookupError("No such passkey")
-    record_event(connection, learner.learner_id, "passkey_removed", now)
+    record_event(connection, learner.learner_id, "passkey_removed", now, {"sessions_ended": str(ended)})
