@@ -1,11 +1,12 @@
 """Settings read from the environment when the service starts.
 
-The container image sets FRANCA_VERSION at build time. Secrets are read from files that Docker mounts under
+FRANCA_VERSION is given in the container image at build time. Secrets are read from files that Docker mounts under
 /run/secrets; the variable names the file (for example FRANCA_GOOGLE_CLIENT_SECRET_FILE). For development, the
 secret itself can be given in the variable without _FILE.
 """
 
 import os
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,7 +27,7 @@ class Settings:
     # The Google account with this e-mail address becomes the owner when it first signs in.
     owner_email: str | None
     google: GoogleSignIn | None
-    # Signs the short-lived cookie that holds the state of a sign-in with Google.
+    # The secret for the short-lived cookie with the state of a sign-in with Google.
     session_secret: str | None
 
     @property
@@ -50,7 +51,7 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
         environment=env.get("FRANCA_ENVIRONMENT", "development"),
         database_path=env.get("FRANCA_DATABASE_PATH", "franca.db"),
         public_url=env.get("FRANCA_PUBLIC_URL", "http://localhost:8080").rstrip("/"),
-        owner_email=(env.get("FRANCA_OWNER_EMAIL") or "").strip().lower() or None,
+        owner_email=unicodedata.normalize("NFC", (env.get("FRANCA_OWNER_EMAIL") or "").strip()).casefold() or None,
         google=GoogleSignIn(client_id, client_secret) if client_id and client_secret else None,
         session_secret=_secret(env, "FRANCA_SESSION_SECRET"),
     )

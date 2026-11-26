@@ -1,5 +1,6 @@
 """Accounts, Google sign-in, invitations and sessions (story E02-001)."""
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -99,18 +100,31 @@ def test_a_disabled_learner_is_refused(connection: Connection) -> None:
 def test_a_session_token_finds_its_learner_and_only_its_hash_is_stored(connection: Connection) -> None:
     learner = owner(connection)
     token = identity.start_session(connection, learner, "Mozilla/5.0 (iPhone) Mobile", NOW)
-    assert identity.learner_for_session(connection, token, NOW + timedelta(minutes=5)) == learner
+    assert identity.learner_for_session(connection, token, NOW + timedelta(minutes=5)) == identity.SessionCheck(learner, extended=False)
     stored = connection.execute(text("SELECT token_hash, device_kind FROM identity_auth_session")).one()
-    assert token.encode() not in stored.token_hash
+    assert stored.token_hash == hashlib.sha256(token.encode()).digest()
     assert stored.device_kind == "phone"
 
 
 def test_a_session_ends_after_30_days_without_use_and_each_use_extends_it(connection: Connection) -> None:
     learner = owner(connection)
     token = identity.start_session(connection, learner, None, NOW)
-    assert identity.learner_for_session(connection, token, NOW + timedelta(days=29)) == learner
-    assert identity.learner_for_session(connection, token, NOW + timedelta(days=58)) == learner
+    assert identity.learner_for_session(connection, token, NOW + timedelta(days=29)) == identity.SessionCheck(learner, extended=True)
+    assert identity.learner_for_session(connection, token, NOW + timedelta(days=58)) == identity.SessionCheck(learner, extended=True)
     assert identity.learner_for_session(connection, token, NOW + timedelta(days=89)) is None
+
+
+def test_a_session_is_written_at_most_once_an_hour(connection: Connection) -> None:
+    learner = owner(connection)
+    token = identity.start_session(connection, learner, None, NOW)
+    assert identity.learner_for_session(connection, token, NOW + timedelta(minutes=59)).extended is False  # type: ignore[union-attr]
+    assert identity.learner_for_session(connection, token, NOW + timedelta(minutes=61)).extended is True  # type: ignore[union-attr]
+
+
+def test_addresses_are_compared_after_nfc_and_casefolding(connection: Connection) -> None:
+    identity.invite(connection, owner(connection), "STRAẞE@example.org", NOW)
+    learner = google(connection, "s-sub", "strasse@example.org")
+    assert learner.role == "learner"
 
 
 def test_a_signed_out_session_and_an_unknown_token_find_nobody(connection: Connection) -> None:

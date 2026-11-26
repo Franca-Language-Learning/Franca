@@ -132,10 +132,25 @@ paths:
   /api/v1/auth/google/callback:
     get:
       operationId: finishGoogleSignIn
+      parameters:
+      - in: cookie
+        name: franca_session
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Franca Session
       responses:
         '303':
           description: To the home page, or to the sign-in page with the reason it
             failed
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
       summary: Where Google sends the browser back after sign-in
       tags:
       - identity

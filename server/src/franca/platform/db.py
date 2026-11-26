@@ -28,7 +28,9 @@ def _sqlite_settings(dbapi_connection: Any, _record: Any) -> None:
 
 
 def _begin(connection: Connection) -> None:
-    connection.exec_driver_sql("BEGIN")
+    # IMMEDIATE takes the write lock at the start, so two requests that read and then write wait for each other
+    # (up to the busy timeout) instead of one failing with "database is locked". With a few learners the wait is short.
+    connection.exec_driver_sql("BEGIN IMMEDIATE")
 
 
 def make_engine(path: Path | str) -> Engine:

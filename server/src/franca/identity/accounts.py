@@ -1,7 +1,7 @@
 """Accounts, Google sign-in, invitations and sign-in sessions (story E02-001).
 
 Franca stores no passwords. A person signs in with a Google account whose e-mail address Google has verified.
-The first time, Franca makes an account for them if:
+The first time, an account is made for them if:
 - their address is the owner address given at installation and there is no owner yet, or
 - the owner has invited their address, and the invitation has not expired or been withdrawn.
 
@@ -10,6 +10,7 @@ After that, the Google account is recognised by its subject id, which stays the 
 
 import hashlib
 import secrets
+import unicodedata
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -22,6 +23,8 @@ from franca.platform import iso
 
 SESSION_DAYS = 30
 INVITATION_DAYS = 14
+# A session's last use is written at most once an hour, so most requests only read.
+SESSION_REFRESH = timedelta(hours=1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +56,8 @@ class NotAllowed(Exception):
 
 
 def normalise_email(email: str) -> str:
-    return email.strip().lower()
+    """The form in which addresses are stored and compared: NFC and casefolded, as in the schema."""
+    return unicodedata.normalize("NFC", email.strip()).casefold()
 
 
 def _learner(row: Sequence[Any]) -> Learner:
@@ -171,11 +175,19 @@ def start_session(connection: Connection, learner: Learner, user_agent: str | No
     return token
 
 
-def learner_for_session(connection: Connection, token: str, now: datetime) -> Learner | None:
-    """The learner of a valid session. The session is extended to 30 days from now."""
+@dataclass(frozen=True, slots=True)
+class SessionCheck:
+    learner: Learner
+    # True when the session was extended, so the browser's cookie is to be extended too.
+    extended: bool
+
+
+def learner_for_session(connection: Connection, token: str, now: datetime) -> SessionCheck | None:
+    """The learner of a valid session. If the session was last used more than an hour ago, it is extended to
+    30 days from now."""
     row = connection.execute(
         text(
-            "SELECT s.auth_session_id, l.learner_id, l.uuid, l.display_name, l.role FROM identity_auth_session s "
+            "SELECT s.auth_session_id, s.last_seen_at, l.learner_id, l.uuid, l.display_name, l.role FROM identity_auth_session s "
             "JOIN identity_learner l USING (learner_id) WHERE s.token_hash = :hash AND s.revoked_at IS NULL "
             "AND s.expires_at > :now AND l.status = 'active'"
         ),
@@ -183,11 +195,14 @@ def learner_for_session(connection: Connection, token: str, now: datetime) -> Le
     ).one_or_none()
     if row is None:
         return None
+    learner = _learner(row[2:])
+    if row.last_seen_at > iso(now - SESSION_REFRESH):
+        return SessionCheck(learner, extended=False)
     connection.execute(
         text("UPDATE identity_auth_session SET last_seen_at = :now, expires_at = :expires WHERE auth_session_id = :id"),
         {"now": iso(now), "expires": iso(now + timedelta(days=SESSION_DAYS)), "id": row.auth_session_id},
     )
-    return _learner(row[1:])
+    return SessionCheck(learner, extended=True)
 
 
 def end_session(connection: Connection, token: str, now: datetime) -> None:
@@ -205,7 +220,7 @@ def invite(connection: Connection, inviter: Learner, email: str, now: datetime) 
         raise NotAllowed("Only the owner can invite learners")
     email_norm = normalise_email(email)
     expires = now + timedelta(days=INVITATION_DAYS)
-    # A new invitation to the same address replaces an open one.
+    # An open invitation to the same address is withdrawn first.
     connection.execute(
         text("UPDATE identity_invitation SET revoked_at = :now WHERE email_norm = :email AND accepted_at IS NULL AND revoked_at IS NULL"),
         {"now": iso(now), "email": email_norm},

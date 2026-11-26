@@ -4,7 +4,10 @@ The stand-in answers Google's discovery, token and key requests, and signs ID to
 OpenID Connect flow runs, including the checks of state, nonce, PKCE and the token signature.
 """
 
+import base64
+import hashlib
 import json
+import sqlite3
 import time
 from pathlib import Path
 from typing import Any
@@ -32,6 +35,7 @@ class FakeGoogle:
         self.nonce = ""
         self.code_challenge = ""
         self.token_requests: list[dict[str, list[str]]] = []
+        self.fail_token = False
 
     def authorize(self, location: str) -> dict[str, str]:
         query = {k: v[0] for k, v in parse_qs(urlparse(location).query).items()}
@@ -55,6 +59,8 @@ class FakeGoogle:
         if url == "https://www.googleapis.com/oauth2/v3/certs":
             return httpx2.Response(200, json={"keys": [KEY.as_dict(private=False)]})
         if url == "https://oauth2.googleapis.com/token":
+            if self.fail_token:
+                return httpx2.Response(502, text="<html>Bad gateway</html>")
             form = parse_qs(request.content.decode())
             self.token_requests.append(form)
             now = int(time.time())
@@ -140,6 +146,29 @@ def test_an_id_token_for_another_client_is_refused(client: TestClient, google: F
     assert finish.headers["location"] == "/sign-in?error=failed"
 
 
+def test_an_id_token_for_another_audience_is_refused_even_with_our_client_as_azp(client: TestClient, google: FakeGoogle) -> None:
+    finish = sign_in(client, google, aud="evil-client", azp=CLIENT_ID)
+    assert finish.headers["location"] == "/sign-in?error=failed"
+
+
+def test_an_id_token_from_another_issuer_is_refused(client: TestClient, google: FakeGoogle) -> None:
+    finish = sign_in(client, google, iss="https://evil.example")
+    assert finish.headers["location"] == "/sign-in?error=failed"
+
+
+def test_the_code_verifier_matches_the_code_challenge(client: TestClient, google: FakeGoogle) -> None:
+    sign_in(client, google)
+    verifier = google.token_requests[0]["code_verifier"][0]
+    expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    assert google.code_challenge == expected
+
+
+def test_an_error_at_googles_token_endpoint_ends_the_sign_in_with_a_reason(client: TestClient, google: FakeGoogle) -> None:
+    google.fail_token = True
+    finish = sign_in(client, google)
+    assert finish.headers["location"] == "/sign-in?error=failed"
+
+
 def test_an_id_token_with_the_wrong_nonce_is_refused(client: TestClient, google: FakeGoogle) -> None:
     finish = sign_in(client, google, nonce="replayed")
     assert finish.headers["location"] == "/sign-in?error=failed"
@@ -163,6 +192,43 @@ def test_the_owner_invites_a_learner_who_can_then_sign_in(client: TestClient, go
 def test_an_invitation_needs_an_email_address(client: TestClient, google: FakeGoogle) -> None:
     sign_in(client, google)
     assert client.post("/api/v1/invitations", json={"email": "not an address"}).status_code == 422
+
+
+def test_a_disabled_learners_open_session_stops_working(client: TestClient, google: FakeGoogle, database_path: Path) -> None:
+    sign_in(client, google)
+    with sqlite3.connect(database_path) as db:
+        db.execute("UPDATE identity_learner SET role = 'learner' WHERE role = 'owner'")
+        db.execute("UPDATE identity_learner SET status = 'disabled'")
+    assert client.get("/api/v1/me").status_code == 401
+
+
+def test_an_expired_session_stops_working(client: TestClient, google: FakeGoogle, database_path: Path) -> None:
+    sign_in(client, google)
+    with sqlite3.connect(database_path) as db:
+        db.execute(
+            "UPDATE identity_auth_session SET created_at = '2026-01-01T00:00:00.000Z', last_seen_at = '2026-01-01T00:00:00.000Z', expires_at = '2026-01-02T00:00:00.000Z'"
+        )
+    assert client.get("/api/v1/me").status_code == 401
+
+
+def test_a_used_session_is_extended_in_the_browser_too(client: TestClient, google: FakeGoogle, database_path: Path) -> None:
+    sign_in(client, google)
+    with sqlite3.connect(database_path) as db:
+        db.execute(
+            "UPDATE identity_auth_session SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-2 hours'), "
+            "last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-2 hours'), "
+            "expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+29 days')"
+        )
+    me = client.get("/api/v1/me")
+    assert "franca_session=" in me.headers["set-cookie"] and "Max-Age=2592000" in me.headers["set-cookie"]
+
+
+def test_signing_in_again_closes_the_earlier_session(client: TestClient, google: FakeGoogle, database_path: Path) -> None:
+    sign_in(client, google)
+    sign_in(client, google)
+    with sqlite3.connect(database_path) as db:
+        open_sessions = db.execute("SELECT count(*) FROM identity_auth_session WHERE revoked_at IS NULL").fetchone()[0]
+    assert open_sessions == 1
 
 
 def test_signing_out_ends_the_session(client: TestClient, google: FakeGoogle) -> None:

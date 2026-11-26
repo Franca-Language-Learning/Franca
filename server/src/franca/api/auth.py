@@ -1,7 +1,7 @@
 """Routes for signing in with Google, the signed-in learner, signing out and invitations (story E02-001).
 
 Sign-in with Google uses OpenID Connect with PKCE through Authlib. Authlib checks the state, the nonce and the
-ID token's signature, issuer, audience and expiry. The state of a sign-in in progress is kept in a short-lived signed
+ID token's signature and expiry; the issuer and the audience are checked with the claims options below. The state of a sign-in in progress is kept in a short-lived signed
 cookie (franca_oauth); the sign-in session is a random token in the franca_session cookie, of which only a hash is
 stored.
 """
@@ -9,18 +9,24 @@ stored.
 from collections.abc import Iterator
 from typing import Annotated, Any
 
+import httpx2
 from authlib.integrations.starlette_client import OAuth, OAuthError
 from fastapi import APIRouter, Cookie, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from joserfc.errors import JoseError
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Connection, Engine
+from sqlalchemy.exc import IntegrityError, OperationalError
+from starlette.concurrency import run_in_threadpool
 
 from franca import identity
 from franca.platform import Settings, utc_now
 
 SESSION_COOKIE = "franca_session"
-GOOGLE_DISCOVERY = "https://accounts.google.com/.well-known/openid-configuration"
+GOOGLE_ISSUER = "https://accounts.google.com"
+GOOGLE_DISCOVERY = f"{GOOGLE_ISSUER}/.well-known/openid-configuration"
+# Errors from Google, the network, or the checks of the ID token. Each one ends the sign-in with error=failed.
+SIGN_IN_ERRORS = (OAuthError, JoseError, httpx2.HTTPError, ValueError, KeyError)
 
 
 class Me(BaseModel):
@@ -87,14 +93,33 @@ def connection(request: Request) -> Iterator[Connection]:
         yield conn
 
 
-Db = Annotated[Connection, Depends(connection)]
+# scope="function": the transaction is committed before the response is sent, so a browser that follows a
+# redirect at once finds the new session.
+Db = Annotated[Connection, Depends(connection, scope="function")]
 
 
-def current_learner(db: Db, franca_session: Annotated[str | None, Cookie()] = None) -> identity.Learner:
-    learner = identity.learner_for_session(db, franca_session, utc_now()) if franca_session else None
-    if learner is None:
+def set_session_cookie(response: Response, settings: Settings, token: str) -> None:
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        max_age=identity.SESSION_DAYS * 24 * 3600,
+        httponly=True,
+        secure=settings.cookies_secure,
+        samesite="lax",
+        path="/",
+    )
+
+
+def current_learner(
+    request: Request, response: Response, db: Db, franca_session: Annotated[str | None, Cookie()] = None
+) -> identity.Learner:
+    check = identity.learner_for_session(db, franca_session, utc_now()) if franca_session else None
+    if check is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not signed in")
-    return learner
+    if check.extended and franca_session:
+        # The session was extended in the database, so the cookie in the browser is extended to match.
+        set_session_cookie(response, request.app.state.settings, franca_session)
+    return check.learner
 
 
 SignedIn = Annotated[identity.Learner, Depends(current_learner)]
@@ -118,7 +143,10 @@ def auth_router(settings: Settings, oauth: OAuth | None) -> APIRouter:
         if oauth is None:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Sign-in with Google is not configured")
         redirect_uri = f"{settings.public_url}/api/v1/auth/google/callback"
-        return await oauth.google.authorize_redirect(request, redirect_uri)
+        try:
+            return await oauth.google.authorize_redirect(request, redirect_uri)
+        except SIGN_IN_ERRORS:
+            return refused("failed")
 
     @router.get(
         "/auth/google/callback",
@@ -128,39 +156,47 @@ def auth_router(settings: Settings, oauth: OAuth | None) -> APIRouter:
         response_class=RedirectResponse,
         responses={303: {"description": "To the home page, or to the sign-in page with the reason it failed"}},
     )
-    async def callback(request: Request, db: Db) -> Any:
-        if oauth is None:
+    async def callback(request: Request, db: Db, franca_session: Annotated[str | None, Cookie()] = None) -> Any:
+        if oauth is None or settings.google is None:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Sign-in with Google is not configured")
+        claims_options = {
+            "iss": {"essential": True, "values": [GOOGLE_ISSUER]},
+            "aud": {"essential": True, "value": settings.google.client_id},
+        }
         try:
-            token = await oauth.google.authorize_access_token(request)
-        except OAuthError, JoseError:
-            # A wrong state, nonce, audience, issuer, signature or expiry, or Google refusing the code.
+            token = await oauth.google.authorize_access_token(request, claims_options=claims_options)
+            claims = token["userinfo"]
+            subject = str(claims["sub"])
+        except SIGN_IN_ERRORS:
+            # A wrong state, nonce, audience, issuer, signature or expiry, Google refusing the code, or Google or
+            # the network failing.
             return refused("failed")
-        claims = token.get("userinfo") or {}
-        now = utc_now()
-        try:
+
+        def finish() -> str:
+            # Database work, run in a worker thread so that a wait for the database does not hold up other requests.
+            now = utc_now()
             learner = identity.sign_in_with_google(
                 db,
-                subject=str(claims["sub"]),
+                subject=subject,
                 email=str(claims.get("email", "")),
                 email_verified=claims.get("email_verified") is True,
                 name=claims.get("name"),
                 owner_email=settings.owner_email,
                 now=now,
             )
+            if franca_session:
+                identity.end_session(db, franca_session, now)  # an earlier session in this browser is closed
+            return identity.start_session(db, learner, request.headers.get("user-agent"), now)
+
+        try:
+            session_token = await run_in_threadpool(finish)
         except identity.SignInRefused as refusal:
             return refused(refusal.reason.replace("_", "-"))
-        session_token = identity.start_session(db, learner, request.headers.get("user-agent"), now)
+        except IntegrityError, OperationalError:
+            # For example two first sign-ins of the owner at the same moment: the second one is refused.
+            return refused("failed")
         response = RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
-        response.set_cookie(
-            SESSION_COOKIE,
-            session_token,
-            max_age=identity.SESSION_DAYS * 24 * 3600,
-            httponly=True,
-            secure=settings.cookies_secure,
-            samesite="lax",
-            path="/",
-        )
+        set_session_cookie(response, settings, session_token)
         return response
 
     @router.get(
@@ -233,4 +269,5 @@ def google_oauth(settings: Settings, transport: Any = None) -> OAuth | None:
 
 def install(app: FastAPI, settings: Settings, engine: Engine, transport: Any = None) -> APIRouter:
     app.state.engine = engine
+    app.state.settings = settings
     return auth_router(settings, google_oauth(settings, transport))

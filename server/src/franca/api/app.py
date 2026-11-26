@@ -35,6 +35,8 @@ def health_router(settings: Settings) -> APIRouter:
 def create_app(settings: Settings | None = None, *, google_transport: Any = None) -> FastAPI:
     """google_transport is for tests: an HTTP transport that answers in place of Google."""
     settings = settings or load_settings()
+    if settings.environment == "production" and settings.google is not None and settings.session_secret is None:
+        raise RuntimeError("FRANCA_SESSION_SECRET_FILE is missing or empty; sign-in with Google needs it in production")
     # The version in the contract is the API version, not the release, so the contract file does not change
     # with every release.
     app = FastAPI(title="Franca API", version="1", docs_url=None, redoc_url=None, openapi_url=f"{API_PREFIX}/openapi.json")
