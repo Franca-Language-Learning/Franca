@@ -40,13 +40,13 @@ jobs:
       - name: Lint and format
         working-directory: server
         run: |
-          uv run ruff check . ../contracts ../tools ../infra/updater ../infra/backup ../infra/tests
-          uv run ruff format --check . ../contracts ../tools ../infra/updater ../infra/backup ../infra/tests
+          uv run ruff check . ../contracts ../tools ../infra/updater ../infra/backup ../infra/tests ../installer/linux
+          uv run ruff format --check . ../contracts ../tools ../infra/updater ../infra/backup ../infra/tests ../installer/linux
       - name: Type check
         working-directory: server
         run: |
           uv run mypy
-          uv run mypy --strict ../tools/content_guard.py ../infra/updater/franca_updater.py ../infra/backup/franca_backup.py ../infra/tests/rehearse_update.py ../infra/tests/rehearse_backup.py ../infra/tests/rehearse_tailnet.py ../infra/tests/rehearse_status.py
+          uv run mypy --strict ../tools/content_guard.py ../infra/updater/franca_updater.py ../infra/backup/franca_backup.py ../infra/tests/rehearse_update.py ../infra/tests/rehearse_backup.py ../infra/tests/rehearse_tailnet.py ../infra/tests/rehearse_status.py ../installer/linux/franca_install.py ../infra/tests/rehearse_install.py
       - name: Module boundaries
         working-directory: server
         env:
@@ -57,6 +57,16 @@ jobs:
         env:
           CI: "true"
         run: uv run pytest
+      - name: Windows installer
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force
+          $issues = Invoke-ScriptAnalyzer -Path installer/windows -Recurse -Settings installer/windows/PSScriptAnalyzerSettings.psd1
+          $issues | Format-Table -AutoSize | Out-String | Write-Host
+          if ($issues) { throw "PSScriptAnalyzer found $(@($issues).Count) issue(s) in the Windows installer" }
+          Invoke-Pester -Path installer/windows/tests -CI
       - name: Shell scripts
         working-directory: server
         run: uv run shellcheck ../tools/*.sh ../.githooks/* ../scripts/* ../client/scripts/*.sh ../infra/tests/*.sh
@@ -165,6 +175,8 @@ jobs:
         run: uv run --no-project --python 3.14 python infra/tests/rehearse_tailnet.py
       - name: Rehearse health monitoring
         run: uv run --no-project --python 3.14 python infra/tests/rehearse_status.py
+      - name: Rehearse the installer
+        run: uv run --no-project --python 3.14 python infra/tests/rehearse_install.py
       # The same scan as in the release workflow, so a vulnerable image is found before a release.
       - name: Scan the app image for known vulnerabilities
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2

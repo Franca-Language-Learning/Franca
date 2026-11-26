@@ -114,10 +114,22 @@ jobs:
       - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: assets
           merge-multiple: true
+      # The installer for Windows (story E01-011): the Windows script, the Linux part, the updater it uses to read and
+      # check the release, and the bundle's compose.yaml, from this version's tag.
+      - name: Make the installer package
+        run: |
+          mkdir -p franca-installer
+          cp installer/windows/Install-Franca.ps1 installer/windows/Install-Franca.cmd installer/linux/franca_install.py \
+            infra/updater/franca_updater.py infra/compose.yaml docs/installing-franca.md franca-installer/
+          (cd franca-installer && zip -q -r "../assets/franca-installer.zip" .)
+          sha256sum assets/franca-installer.zip > assets/franca-installer.zip.sha256
       - name: Publish the release with the image digests and SBOMs
         env:
           GH_TOKEN: ${{ github.token }}

@@ -349,7 +349,7 @@ def health_probe(url: str) -> Probe:
             with urllib.request.urlopen(url, timeout=5) as response:  # noqa: S310 - a fixed address inside the bundle
                 answer = json.loads(response.read(10_000))
                 return str(answer.get("version")) if answer.get("status") == "ok" else None
-        except OSError, ValueError:
+        except (OSError, ValueError):
             return None
 
     return probe
@@ -387,7 +387,7 @@ class StatusFile:
         """The last status written, or an empty dict when there is none or it cannot be read."""
         try:
             loaded = json.loads(self.path.read_text(encoding="utf-8"))
-        except OSError, ValueError:
+        except (OSError, ValueError):
             return {}
         return {str(name): str(value) for name, value in loaded.items()} if isinstance(loaded, dict) else {}
 
@@ -402,7 +402,7 @@ class HighWaterMark:
     def read(self) -> Version | None:
         try:
             return Version.parse(self.path.read_text(encoding="utf-8"))
-        except OSError, UpdateError:
+        except (OSError, UpdateError):
             return None
 
     def raise_to(self, version: Version) -> None:
