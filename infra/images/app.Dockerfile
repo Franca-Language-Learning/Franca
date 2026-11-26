@@ -2,7 +2,7 @@
 #   docker build -f infra/images/app.Dockerfile .
 # Base images are named by tag here; Renovate adds and updates their digests.
 
-FROM python:3.14.6-slim-trixie AS build
+FROM python:3.14.10-slim-trixie AS build
 COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never UV_PROJECT_ENVIRONMENT=/app/.venv
 WORKDIR /src
@@ -13,8 +13,13 @@ RUN uv sync --locked --no-dev --package franca-server
 # The build stops if a package installs a file that Python would run at start-up (stories E01-004 and E01-013).
 RUN tools/check-startup-files.sh /app/.venv
 
-FROM python:3.14.6-slim-trixie
+FROM python:3.14.10-slim-trixie
 ARG FRANCA_VERSION=0.1.0-dev
+# Security fixes from Debian that came out after the base image was built are installed here. The vulnerability scan
+# in the pipeline fails on a high or critical finding that has a fix.
+RUN apt-get update \
+    && apt-get upgrade --yes --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
 RUN useradd --uid 10001 --user-group --no-create-home --shell /usr/sbin/nologin franca \
     && install -d -o franca -g franca /data
 COPY --from=build /app/.venv /app/.venv

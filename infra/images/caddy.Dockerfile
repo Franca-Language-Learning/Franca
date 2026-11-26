@@ -13,6 +13,8 @@ COPY client client
 RUN pnpm --filter @franca/client build
 
 FROM caddy:2.11.9-alpine
+# Security fixes from Alpine that came out after the base image was built are installed here.
+RUN apk upgrade --no-cache
 RUN addgroup -g 10002 -S caddyuser && adduser -u 10002 -S -G caddyuser -H caddyuser \
     && install -d -o caddyuser -g caddyuser /data /config
 COPY infra/caddy/Caddyfile /etc/caddy/Caddyfile
