@@ -6,8 +6,8 @@ reported as problems:
   Dockerfiles   an image in FROM, COPY --from=, RUN --mount=from= or a # syntax= line with no @sha256 digest, apart
                 from scratch and earlier stages of the same file; ADD of a remote file with no --checksum=sha256:; a git clone with no
                 test "$(git rev-parse HEAD)" = <commit> after it, or with a git checkout, fetch, reset or pull, or
-                an || after the check, in the same RUN instruction. The numbers of clones and of checks in an
-                instruction are compared; which check belongs to which clone is not worked out
+                an || after the check, in the same RUN instruction. The number of clones in an instruction is
+                compared with the number of checks. A check is not matched to its clone
   Compose       an image with no digest, apart from Franca's own images, which are named by digest in the .env file
                 that is written by the installer and the updater (${FRANCA_<NAME>_IMAGE:-franca/<name>:...})
   Workflows     an image in image:, container:, uses: docker:// or docker run/pull/create with no digest, apart
@@ -42,8 +42,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 DIGEST_SUFFIX = re.compile(r"@sha256:[0-9a-f]{64}$")
 # An image reference in a Python string: optional registry and path, a name and a tag. A tag of digits only is taken
-# to be a port (caddy:8443), so an image such as redis:7 is not found in a Python string. true and false are options,
-# as in no-new-privileges:true.
+# to be a port (caddy:8443), so an image such as redis:7, or an image with no tag, is not found in a Python string.
+# true and false are options, as in no-new-privileges:true.
 IMAGE_REFERENCE = re.compile(
     r"^[a-z0-9][a-z0-9._-]*(?:/[a-z0-9._-]+)*:(?!(?:true|false)$)(?=[\w.-]*[A-Za-z_.-])[\w.-]+(?:@sha256:[0-9a-f]{64})?$"
 )
@@ -70,6 +70,8 @@ DOCKER_OPTIONS_WITH_VALUES = {
     "--name", "-v", "--volume", "-e", "--env", "--env-file", "--network", "--network-alias", "--user", "-u", "-w",
     "--workdir", "--entrypoint", "-p", "--publish", "--shm-size", "--security-opt", "--cap-drop", "--cap-add",
     "--mount", "--platform", "-l", "--label", "--tmpfs", "--add-host", "--ipc", "--pid", "--memory", "--cpus",
+    "--hostname", "-h", "--restart", "--log-driver", "--log-opt", "--device", "--ulimit", "--dns", "--gpus",
+    "--group-add", "--runtime", "--stop-signal",
 }  # fmt: skip
 # The forms that are matched by Renovate's managers in .github/renovate.json: = "image" in Python, : "image" in YAML.
 MARKED_IMAGE = re.compile(r"(?:= |: )\"(?P<image>[^\"\s]+)\"  # renovate: image")

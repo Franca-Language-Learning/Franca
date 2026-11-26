@@ -58,7 +58,7 @@ There are no model files yet. The speech models (epic E09) will be pinned by has
 
 Images on registries other than Docker Hub (mcr.microsoft.com, lscr.io and ghcr.io) come with no release dates that Renovate can read, so the seven-day rule is not applied to them. Updates to these images are reviewed before they are merged, and an update to the Playwright image is held until the matching @playwright/test update is ready.
 
-`tools/check_pins.py` is run with the server's tests and in the Container bundle job, and fails when an image has no digest, a pinned image has no `# renovate: image` marker, or a cloned source has no commit check. Renovate adds the digest when it updates an image. To add one by hand, run this on a computer with Docker and access to the registries, and copy the digests that are printed into the files:
+`tools/check_pins.py` is run with the server's tests and in the Container bundle job, and fails when an image has no digest, a pinned image in a Python script or workflow has no `# renovate: image` marker, or a cloned source has no commit check. Renovate adds the digest when it updates an image. To add one by hand, run this on a computer with Docker and access to the registries, and copy the digests that are printed into the files:
 
 ```sh
 python3 -I tools/check_pins.py --resolve

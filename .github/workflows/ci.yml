@@ -92,7 +92,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
-      # pnpm is installed by Corepack, which checks it against the hash in package.json (packageManager).
+      # pnpm is installed with Corepack and checked against the hash in package.json (packageManager).
       - name: Install pnpm
         run: corepack enable pnpm && corepack install
       - name: Install the locked packages
@@ -134,7 +134,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
-      # pnpm is installed by Corepack, which checks it against the hash in package.json (packageManager).
+      # pnpm is installed with Corepack and checked against the hash in package.json (packageManager).
       - name: Install pnpm
         run: corepack enable pnpm && corepack install
       - name: Install the locked packages

@@ -129,7 +129,7 @@ Fetch = Callable[[str], bytes]
 
 
 def http_fetch(url: str, limit: int = 1_000_000, accept: str = "application/vnd.github+json") -> bytes:
-    """The body at an https address. A body larger than the limit is refused rather than cut short."""
+    """The body at an https address. UpdateError is raised for a body larger than the limit. The body is not cut short."""
     if not url.startswith("https://"):
         raise UpdateError(f"Only https addresses are read: {url[:120]}")
     request = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": "franca-updater"})  # noqa: S310
