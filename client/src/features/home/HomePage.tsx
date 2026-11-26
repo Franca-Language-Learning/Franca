@@ -18,9 +18,14 @@ export function HomePage() {
       {me.data && (
         <>
           <p>You are signed in as {me.data.displayName}.</p>
-          <p>
-            <Link to="/passkeys">Your passkeys</Link>
-          </p>
+          <ul>
+            <li>
+              <Link to="/passkeys">Your passkeys</Link>
+            </li>
+            <li>
+              <Link to="/recovery-codes">Your recovery codes</Link>
+            </li>
+          </ul>
         </>
       )}
       {me.data === null && (

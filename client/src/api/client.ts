@@ -83,3 +83,24 @@ export async function signInWithPasskey(credential: CredentialJson): Promise<Me>
   if (!data) throw failure(response, error);
   return data;
 }
+
+export type RecoveryCodeStatus = components["schemas"]["RecoveryCodeStatusOut"];
+
+export async function getRecoveryCodeStatus(signal?: AbortSignal): Promise<RecoveryCodeStatus> {
+  const { data, error, response } = await api.GET("/api/v1/recovery-codes", { signal });
+  if (!data) throw failure(response, error);
+  return data;
+}
+
+/** Makes ten new recovery codes. The old ones stop working. */
+export async function makeRecoveryCodes(): Promise<string[]> {
+  const { data, error, response } = await api.POST("/api/v1/recovery-codes");
+  if (!data) throw failure(response, error);
+  return data.codes;
+}
+
+export async function signInWithRecoveryCode(email: string, code: string): Promise<Me> {
+  const { data, error, response } = await api.POST("/api/v1/auth/recovery-code", { body: { email, code } });
+  if (!data) throw failure(response, error);
+  return data;
+}

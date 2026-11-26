@@ -189,6 +189,66 @@ components:
       - publicKey
       title: PublicKeyOptions
       type: object
+    RecoveryCodeStatusOut:
+      examples:
+      - createdAt: '2026-12-01T09:00:00.000Z'
+        unused: 9
+      properties:
+        createdAt:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: When the codes were made, or null when the learner has none
+          title: Createdat
+        unused:
+          description: Codes that have not been used yet
+          title: Unused
+          type: integer
+      required:
+      - unused
+      - createdAt
+      title: RecoveryCodeStatusOut
+      type: object
+    RecoveryCodes:
+      examples:
+      - codes:
+        - ABCDE-FGHJK
+        - MNPQR-STUVW
+        - XYZ23-45678
+        - 9ABCD-EFGHJ
+        - KMNPQ-RSTUV
+        - WXYZ2-34567
+        - 89ABC-DEFGH
+        - JKMNP-QRSTU
+        - VWXYZ-23456
+        - 789AB-CDEFG
+      properties:
+        codes:
+          description: The new codes. They are shown this once and cannot be shown
+            again.
+          items:
+            type: string
+          title: Codes
+          type: array
+      required:
+      - codes
+      title: RecoveryCodes
+      type: object
+    RecoverySignIn:
+      properties:
+        code:
+          maxLength: 40
+          title: Code
+          type: string
+        email:
+          maxLength: 254
+          title: Email
+          type: string
+      required:
+      - email
+      - code
+      title: RecoverySignIn
+      type: object
     SignInRequest:
       properties:
         credential:
@@ -318,6 +378,45 @@ paths:
                 $ref: '#/components/schemas/PublicKeyOptions'
           description: Successful Response
       summary: Options for signing in with a passkey
+      tags:
+      - identity
+  /api/v1/auth/recovery-code:
+    post:
+      operationId: signInWithRecoveryCode
+      parameters:
+      - in: cookie
+        name: franca_session
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Franca Session
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoverySignIn'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+          description: Successful Response
+        '401':
+          description: The address or the code is wrong, the code was used already,
+            or the account is disabled
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+        '429':
+          description: Five wrong codes in 15 minutes; try again later
+      summary: Signs in with an e-mail address and a recovery code
       tags:
       - identity
   /api/v1/auth/sign-out:
@@ -590,5 +689,66 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
       summary: Removes one of the signed-in learner's passkeys
+      tags:
+      - identity
+  /api/v1/recovery-codes:
+    get:
+      operationId: getRecoveryCodeStatus
+      parameters:
+      - in: cookie
+        name: franca_session
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Franca Session
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryCodeStatusOut'
+          description: Successful Response
+        '401':
+          description: Not signed in
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: How many of the signed-in learner's recovery codes are left
+      tags:
+      - identity
+    post:
+      operationId: makeRecoveryCodes
+      parameters:
+      - in: cookie
+        name: franca_session
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Franca Session
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryCodes'
+          description: Successful Response
+        '401':
+          description: Not signed in
+        '403':
+          description: The learner signed in more than 15 minutes ago (sign-in-again)
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Makes ten new recovery codes; the old ones stop working
       tags:
       - identity

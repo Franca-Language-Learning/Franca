@@ -72,6 +72,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/recovery-code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Signs in with an e-mail address and a recovery code */
+        post: operations["signInWithRecoveryCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/sign-out": {
         parameters: {
             query?: never;
@@ -188,6 +205,24 @@ export interface paths {
         post?: never;
         /** Removes one of the signed-in learner's passkeys */
         delete: operations["removePasskey"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/recovery-codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** How many of the signed-in learner's recovery codes are left */
+        get: operations["getRecoveryCodeStatus"];
+        put?: never;
+        /** Makes ten new recovery codes; the old ones stop working */
+        post: operations["makeRecoveryCodes"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -349,6 +384,56 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * RecoveryCodeStatusOut
+         * @example {
+         *       "createdAt": "2026-12-01T09:00:00.000Z",
+         *       "unused": 9
+         *     }
+         */
+        RecoveryCodeStatusOut: {
+            /**
+             * Createdat
+             * @description When the codes were made, or null when the learner has none
+             */
+            createdAt: string | null;
+            /**
+             * Unused
+             * @description Codes that have not been used yet
+             */
+            unused: number;
+        };
+        /**
+         * RecoveryCodes
+         * @example {
+         *       "codes": [
+         *         "ABCDE-FGHJK",
+         *         "MNPQR-STUVW",
+         *         "XYZ23-45678",
+         *         "9ABCD-EFGHJ",
+         *         "KMNPQ-RSTUV",
+         *         "WXYZ2-34567",
+         *         "89ABC-DEFGH",
+         *         "JKMNP-QRSTU",
+         *         "VWXYZ-23456",
+         *         "789AB-CDEFG"
+         *       ]
+         *     }
+         */
+        RecoveryCodes: {
+            /**
+             * Codes
+             * @description The new codes. They are shown this once and cannot be shown again.
+             */
+            codes: string[];
+        };
+        /** RecoverySignIn */
+        RecoverySignIn: {
+            /** Code */
+            code: string;
+            /** Email */
+            email: string;
+        };
         /** SignInRequest */
         SignInRequest: {
             /**
@@ -501,6 +586,55 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["PublicKeyOptions"];
                 };
+            };
+        };
+    };
+    signInWithRecoveryCode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                franca_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecoverySignIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            /** @description The address or the code is wrong, the code was used already, or the account is disabled */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Five wrong codes in 15 minutes; try again later */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -853,6 +987,89 @@ export interface operations {
             };
             /** @description The learner has no passkey with this id */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getRecoveryCodeStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                franca_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryCodeStatusOut"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    makeRecoveryCodes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                franca_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryCodes"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The learner signed in more than 15 minutes ago (sign-in-again) */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -33,8 +33,24 @@ from franca.identity.passkeys import (
     remove_passkey,
     sign_in_with_passkey,
 )
+from franca.identity.recovery import (
+    CODE_COUNT,
+    RecoveryCodeNotAccepted,
+    RecoveryCodeStatus,
+    TooManyAttempts,
+    recovery_code_status,
+    replace_recovery_codes,
+    sign_in_with_recovery_code,
+)
 
 __all__ = [
+    "sign_in_with_recovery_code",
+    "replace_recovery_codes",
+    "recovery_code_status",
+    "TooManyAttempts",
+    "RecoveryCodeStatus",
+    "RecoveryCodeNotAccepted",
+    "CODE_COUNT",
     "sign_in_with_passkey",
     "remove_passkey",
     "relying_party",
