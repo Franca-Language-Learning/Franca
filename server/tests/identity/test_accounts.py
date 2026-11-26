@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import Connection, text
 
 from franca import identity
+from franca.platform import iso
 
 NOW = datetime(2026, 12, 1, 9, 0, tzinfo=UTC)
 OWNER = "owner@example.org"
@@ -100,7 +101,9 @@ def test_a_disabled_learner_is_refused(connection: Connection) -> None:
 def test_a_session_token_finds_its_learner_and_only_its_hash_is_stored(connection: Connection) -> None:
     learner = owner(connection)
     token = identity.start_session(connection, learner, "Mozilla/5.0 (iPhone) Mobile", NOW)
-    assert identity.learner_for_session(connection, token, NOW + timedelta(minutes=5)) == identity.SessionCheck(learner, extended=False)
+    assert identity.learner_for_session(connection, token, NOW + timedelta(minutes=5)) == identity.SessionCheck(
+        learner, extended=False, signed_in_at=iso(NOW)
+    )
     stored = connection.execute(text("SELECT token_hash, device_kind FROM identity_auth_session")).one()
     assert stored.token_hash == hashlib.sha256(token.encode()).digest()
     assert stored.device_kind == "phone"
@@ -109,8 +112,12 @@ def test_a_session_token_finds_its_learner_and_only_its_hash_is_stored(connectio
 def test_a_session_ends_after_30_days_without_use_and_each_use_extends_it(connection: Connection) -> None:
     learner = owner(connection)
     token = identity.start_session(connection, learner, None, NOW)
-    assert identity.learner_for_session(connection, token, NOW + timedelta(days=29)) == identity.SessionCheck(learner, extended=True)
-    assert identity.learner_for_session(connection, token, NOW + timedelta(days=58)) == identity.SessionCheck(learner, extended=True)
+    assert identity.learner_for_session(connection, token, NOW + timedelta(days=29)) == identity.SessionCheck(
+        learner, extended=True, signed_in_at=iso(NOW)
+    )
+    assert identity.learner_for_session(connection, token, NOW + timedelta(days=58)) == identity.SessionCheck(
+        learner, extended=True, signed_in_at=iso(NOW)
+    )
     assert identity.learner_for_session(connection, token, NOW + timedelta(days=89)) is None
 
 

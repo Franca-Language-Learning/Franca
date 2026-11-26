@@ -12,6 +12,7 @@ import {
 } from "@tanstack/react-router";
 import { useState } from "react";
 import { HomePage } from "./features/home";
+import { PasskeysPage } from "./features/passkeys";
 import { SignInPage } from "./features/sign-in";
 
 function NotFound() {
@@ -36,7 +37,8 @@ const signInRoute = createRoute({
     return <SignInPage error={signInRoute.useSearch().error} />;
   },
 });
-const routeTree = rootRoute.addChildren([homeRoute, signInRoute]);
+const passkeysRoute = createRoute({ getParentRoute: () => rootRoute, path: "/passkeys", component: PasskeysPage });
+const routeTree = rootRoute.addChildren([homeRoute, signInRoute, passkeysRoute]);
 
 function makeRouter(initialPath?: string) {
   const history = initialPath ? createMemoryHistory({ initialEntries: [initialPath] }) : createBrowserHistory();

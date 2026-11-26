@@ -26,3 +26,60 @@ export async function getMe(signal?: AbortSignal): Promise<Me | null> {
   if (!data) throw new Error(`The request for the signed-in learner returned ${response.status}`);
   return data;
 }
+
+export type Passkey = components["schemas"]["PasskeyOut"];
+/** The options for navigator.credentials, in their JSON form (challenge and ids as base64url text). */
+export type PublicKeyOptionsJson = components["schemas"]["PublicKeyOptions"]["publicKey"];
+/** The device's answer, in the JSON form of a PublicKeyCredential. */
+export type CredentialJson = Record<string, unknown>;
+
+/** An answer from the server that is not a success, with the reason the server gave (detail). */
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly detail: string,
+  ) {
+    super(`The server answered ${status}: ${detail}`);
+  }
+}
+
+/** The error for an answer that is not a success. body is the answer's JSON, as openapi-fetch read it. */
+function failure(response: Response, body: unknown): ApiError {
+  const detail = body && typeof body === "object" && "detail" in body && typeof body.detail === "string" ? body.detail : "";
+  return new ApiError(response.status, detail);
+}
+
+export async function listPasskeys(signal?: AbortSignal): Promise<Passkey[]> {
+  const { data, error, response } = await api.GET("/api/v1/passkeys", { signal });
+  if (!data) throw failure(response, error);
+  return data.passkeys;
+}
+
+export async function getPasskeyRegistrationOptions(): Promise<PublicKeyOptionsJson> {
+  const { data, error, response } = await api.POST("/api/v1/passkeys/options");
+  if (!data) throw failure(response, error);
+  return data.publicKey;
+}
+
+export async function addPasskey(credential: CredentialJson, label: string | null): Promise<Passkey> {
+  const { data, error, response } = await api.POST("/api/v1/passkeys", { body: { credential, label } });
+  if (!data) throw failure(response, error);
+  return data;
+}
+
+export async function removePasskey(passkeyId: string): Promise<void> {
+  const { error, response } = await api.DELETE("/api/v1/passkeys/{passkeyId}", { params: { path: { passkeyId } } });
+  if (!response.ok) throw failure(response, error);
+}
+
+export async function getPasskeySignInOptions(): Promise<PublicKeyOptionsJson> {
+  const { data, error, response } = await api.POST("/api/v1/auth/passkey/options");
+  if (!data) throw failure(response, error);
+  return data.publicKey;
+}
+
+export async function signInWithPasskey(credential: CredentialJson): Promise<Me> {
+  const { data, error, response } = await api.POST("/api/v1/auth/passkey", { body: { credential } });
+  if (!data) throw failure(response, error);
+  return data;
+}

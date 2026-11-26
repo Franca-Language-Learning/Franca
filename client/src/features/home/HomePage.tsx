@@ -11,14 +11,21 @@ export function HomePage() {
     <main>
       <h1>Franca</h1>
       {health.isError ? (
-        <p role="alert">The Franca server is not responding. Check that it is running on your PC, then reload this page.</p>
+        <p role="alert">The Franca server cannot be reached. Check that Franca is running on the computer where it is installed, then reload this page.</p>
       ) : (
         <p role="status">{health.data ? `The Franca server is running (version ${health.data.version}).` : "Checking the server…"}</p>
       )}
-      {me.data && <p>You are signed in as {me.data.displayName}.</p>}
+      {me.data && (
+        <>
+          <p>You are signed in as {me.data.displayName}.</p>
+          <p>
+            <Link to="/passkeys">Your passkeys</Link>
+          </p>
+        </>
+      )}
       {me.data === null && (
         <p>
-          You are not signed in. <Link to="/sign-in">Sign in</Link>
+          You are not signed in. <Link to="/sign-in">Sign in</Link>.
         </p>
       )}
     </main>

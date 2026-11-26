@@ -9,6 +9,7 @@ After that, the Google account is recognised by its subject id, which stays the 
 """
 
 import hashlib
+import json
 import secrets
 import unicodedata
 import uuid
@@ -60,6 +61,14 @@ def normalise_email(email: str) -> str:
     return unicodedata.normalize("NFC", email.strip()).casefold()
 
 
+def record_event(connection: Connection, learner_id: int | None, event: str, now: datetime, detail: dict[str, str] | None = None) -> None:
+    """Adds a security event to the audit log. The detail has no secrets in it."""
+    connection.execute(
+        text("INSERT INTO identity_audit_event (learner_id, event, detail, at) VALUES (:learner, :event, :detail, :now)"),
+        {"learner": learner_id, "event": event, "detail": json.dumps(detail) if detail else None, "now": iso(now)},
+    )
+
+
 def _learner(row: Sequence[Any]) -> Learner:
     return Learner(int(row[0]), str(row[1]), str(row[2]), str(row[3]))
 
@@ -107,6 +116,7 @@ def sign_in_with_google(
             ),
             {"now": iso(now), "email": email, "subject": subject},
         )
+        record_event(connection, known.learner_id, "sign_in", now, {"method": "google"})
         return _learner(known[:4])
 
     email_norm = normalise_email(email)
@@ -136,6 +146,7 @@ def sign_in_with_google(
         ),
         {"learner": learner.learner_id, "subject": subject, "email": email, "now": iso(now)},
     )
+    record_event(connection, learner.learner_id, "sign_in", now, {"method": "google"})
     return learner
 
 
@@ -180,6 +191,8 @@ class SessionCheck:
     learner: Learner
     # True when the session was extended, so the browser's cookie is to be extended too.
     extended: bool
+    # When the learner signed in, for steps that need a recent sign-in, such as adding a passkey.
+    signed_in_at: str
 
 
 def learner_for_session(connection: Connection, token: str, now: datetime) -> SessionCheck | None:
@@ -187,7 +200,7 @@ def learner_for_session(connection: Connection, token: str, now: datetime) -> Se
     30 days from now."""
     row = connection.execute(
         text(
-            "SELECT s.auth_session_id, s.last_seen_at, l.learner_id, l.uuid, l.display_name, l.role FROM identity_auth_session s "
+            "SELECT s.auth_session_id, s.last_seen_at, s.created_at, l.learner_id, l.uuid, l.display_name, l.role FROM identity_auth_session s "
             "JOIN identity_learner l USING (learner_id) WHERE s.token_hash = :hash AND s.revoked_at IS NULL "
             "AND s.expires_at > :now AND l.status = 'active'"
         ),
@@ -195,14 +208,14 @@ def learner_for_session(connection: Connection, token: str, now: datetime) -> Se
     ).one_or_none()
     if row is None:
         return None
-    learner = _learner(row[2:])
+    learner = _learner(row[3:])
     if row.last_seen_at > iso(now - SESSION_REFRESH):
-        return SessionCheck(learner, extended=False)
+        return SessionCheck(learner, extended=False, signed_in_at=row.created_at)
     connection.execute(
         text("UPDATE identity_auth_session SET last_seen_at = :now, expires_at = :expires WHERE auth_session_id = :id"),
         {"now": iso(now), "expires": iso(now + timedelta(days=SESSION_DAYS)), "id": row.auth_session_id},
     )
-    return SessionCheck(learner, extended=True)
+    return SessionCheck(learner, extended=True, signed_in_at=row.created_at)
 
 
 def end_session(connection: Connection, token: str, now: datetime) -> None:

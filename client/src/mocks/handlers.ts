@@ -42,9 +42,12 @@ export function handlersFromContract(): HttpHandler[] {
       const route = METHODS[method as keyof typeof METHODS];
       if (!route) return [];
       const example = responseExample(operation);
+      const noContent = Object.keys(operation.responses ?? {}).includes("204");
       return [
         route(path.replace(/\{(\w+)\}/g, ":$1"), () =>
-          example === undefined
+          noContent
+            ? new HttpResponse(null, { status: 204 })
+            : example === undefined
             ? HttpResponse.json({ detail: "The contract has no example for this response" }, { status: 501 })
             : HttpResponse.json(example as Parameters<typeof HttpResponse.json>[0]),
         ),

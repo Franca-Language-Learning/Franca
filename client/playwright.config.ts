@@ -14,7 +14,8 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
   use: {
-    baseURL: "http://127.0.0.1:4173",
+    // localhost and not 127.0.0.1: passkeys belong to a host name, and browsers do not allow an IP address there.
+    baseURL: "http://localhost:4173",
     trace: "retain-on-failure",
     launchOptions: chromium ? { executablePath: chromium } : {},
   },
@@ -23,7 +24,7 @@ export default defineConfig({
     {
       // A new database for each run, in the server folder (database files are ignored by Git).
       command:
-        "cd ../server && rm -f e2e.db && export PYTHONPATH=src FRANCA_DATABASE_PATH=e2e.db && uv run python -m franca.platform.migrate && uv run uvicorn franca.api:create_app --factory --host 127.0.0.1 --port 8000",
+        "cd ../server && rm -f e2e.db && export PYTHONPATH=src FRANCA_DATABASE_PATH=e2e.db FRANCA_PUBLIC_URL=http://localhost:4173 FRANCA_OWNER_EMAIL=owner@example.org && uv run python -m franca.platform.migrate && uv run uvicorn franca.api:create_app --factory --host 127.0.0.1 --port 8000",
       url: "http://127.0.0.1:8000/api/v1/health",
       reuseExistingServer: !process.env.CI,
     },
