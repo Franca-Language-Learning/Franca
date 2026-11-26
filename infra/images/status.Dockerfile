@@ -4,8 +4,8 @@
 #
 # Gatus 5.38.0 is built from its source here, with newer versions of four of its libraries, in which known
 # vulnerabilities are fixed: compress (GO-2026-6865), x/net (GO-2026-6860), brotli (GO-2026-6888) and go-jose
-# (GHSA-mgcc-cww5-fp2q). Remove these when a Gatus release has these versions or newer. Gatus's own image has no shell, and the start script needs one, so the program
-# is put on Alpine.
+# (GHSA-mgcc-cww5-fp2q). Remove these when a Gatus release has these versions or newer.
+# Gatus's own image has no shell, and the start script needs one, so the program is put on Alpine.
 FROM golang:1.27.4-trixie AS gatus
 ENV CGO_ENABLED=0 GOFLAGS=-trimpath
 # The tag is checked against its commit, so a moved tag is noticed.
