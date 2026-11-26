@@ -1,0 +1,16 @@
+# The files and folders listed here are not sent to Docker when the images are built. They are local
+# environments, build output, caches, test reports, the Git history, database files and .env files.
+**/node_modules
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+client/dist
+client/playwright-report
+client/test-results
+.git
+*.sqlite
+*.db
+.env
+.env.*

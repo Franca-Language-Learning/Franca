@@ -1,0 +1,30 @@
+# Caddy configuration for the bundle (story E01-005). HTTPS on the Tailscale name is added in story E01-009;
+# until then Caddy listens on port 8080 inside the bundle, and the port is published on the PC's loopback only.
+{
+	admin off
+	auto_https off
+}
+
+:8080 {
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		X-Frame-Options DENY
+		Permissions-Policy "camera=(), geolocation=(), microphone=(self)"
+		-Server
+	}
+
+	respond /healthz 200
+
+	handle /api/* {
+		reverse_proxy app:8000
+	}
+
+	handle {
+		root * /srv/client
+		try_files {path} /index.html
+		file_server
+	}
+}

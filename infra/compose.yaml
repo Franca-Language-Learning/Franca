@@ -1,0 +1,49 @@
+# Franca's container bundle (story E01-005). Start it from the repository root with:
+#   docker compose -f infra/compose.yaml up -d --build --wait
+# The other containers (worker, speech, languagetool, backup, status, tailscale) are added in their own stories.
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  tmpfs:
+    - /tmp
+
+services:
+  app:
+    <<: *hardening
+    build:
+      context: ..
+      dockerfile: infra/images/app.Dockerfile
+      args:
+        FRANCA_VERSION: ${FRANCA_VERSION:-0.1.0-dev}
+    image: franca/app:${FRANCA_VERSION:-0.1.0-dev}
+    volumes:
+      - app-data:/data
+    networks: [internal]
+
+  caddy:
+    <<: *hardening
+    build:
+      context: ..
+      dockerfile: infra/images/caddy.Dockerfile
+    image: franca/caddy:${FRANCA_VERSION:-0.1.0-dev}
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      # Loopback only: the bundle is not reachable from the network until Tailscale is added (story E01-009).
+      - "127.0.0.1:${FRANCA_PORT:-8080}:8080"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [internal]
+
+volumes:
+  app-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  internal:
