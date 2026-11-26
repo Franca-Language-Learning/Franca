@@ -12,6 +12,7 @@ from dataclasses import dataclass
 class Settings:
     version: str
     environment: str
+    database_path: str
 
 
 def load_settings(environ: dict[str, str] | None = None) -> Settings:
@@ -19,4 +20,5 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
     return Settings(
         version=env.get("FRANCA_VERSION", "0.1.0-dev"),
         environment=env.get("FRANCA_ENVIRONMENT", "development"),
+        database_path=env.get("FRANCA_DATABASE_PATH", "franca.db"),
     )

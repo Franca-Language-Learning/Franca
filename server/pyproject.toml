@@ -11,6 +11,8 @@ dependencies = [
     "pyyaml>=6",
     "jsonschema>=4.23",
     "uvicorn>=0.32",
+    "sqlalchemy>=2.1.9",
+    "alembic>=1.20.1",
 ]
 
 [dependency-groups]
@@ -25,6 +27,7 @@ dev = [
     "import-linter>=2.1",
     "shellcheck-py>=0.10",
     "zizmor>=1.0",
+    "pytest-alembic>=0.13.2",
 ]
 
 [tool.uv]
