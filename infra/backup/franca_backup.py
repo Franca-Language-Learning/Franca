@@ -283,11 +283,13 @@ class Backup:
 
     def _wait_for_database(self, now: datetime) -> str:
         """On a new installation, the backup container can start before there is a database. Until a backup has
-        succeeded, a missing database is taken to mean "not yet", and the next try is ten minutes later. After a day
+        succeeded, a missing database is taken to mean "not yet", and the next try is an hour later. After a day
         it is a failure, because the data volume is then probably not the app's."""
         since = self.status.read(WAITING).get("waitingSince", "")
         try:
             started = datetime.fromisoformat(since)
+            if started.tzinfo is None:
+                raise ValueError(since)
         except ValueError:
             return self._report(WAITING, "waiting-for-database", now, key="waitingSince", message="There is no database yet")
         if now - started > WAIT_FOR_DATABASE:

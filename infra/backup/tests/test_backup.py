@@ -472,6 +472,34 @@ def test_no_database_a_day_after_installation_is_a_failure(tmp_path: Path) -> No
     assert not backup.healthy(NOW + timedelta(hours=25))
 
 
+def test_the_wait_lasts_a_day(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    (tmp_path / "data" / "franca.db").unlink()
+    backup.back_up(NOW)
+
+    assert backup.back_up(NOW + timedelta(hours=23)) == "waiting-for-database"
+    assert backup.healthy(NOW + timedelta(hours=23))
+    assert backup.back_up(NOW + timedelta(hours=24, minutes=1)) == "backup-failed"
+
+
+def test_the_wait_ends_when_the_database_is_there(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    (tmp_path / "data" / "franca.db").unlink()
+    backup.back_up(NOW)
+    make_database(tmp_path / "data" / "franca.db")
+
+    assert backup.back_up(NOW + timedelta(hours=1)) == "backed-up"
+
+
+def test_a_wait_start_without_a_time_zone_starts_the_wait_again(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    (tmp_path / "data" / "franca.db").unlink()
+    backup.status.write("backup-waiting.json", waitingSince="2026-12-01T00:00:00")
+
+    assert backup.back_up(NOW) == "waiting-for-database"
+    assert backup.status.read("backup-waiting.json")["waitingSince"] == NOW.astimezone(UTC).isoformat(timespec="seconds")
+
+
 def test_a_missing_backup_disk_is_a_failure_while_waiting_for_the_database(tmp_path: Path) -> None:
     backup, _restic = make(tmp_path)
     (tmp_path / "data" / "franca.db").unlink()
