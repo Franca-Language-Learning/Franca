@@ -1,4 +1,4 @@
-# The health monitoring (container "status"), story E01-010. Built from the repository root:
+# Health monitoring (container "status"), story E01-010. Built from the repository root:
 #   docker build -f infra/images/status.Dockerfile .
 # Base images are named by tag here; Renovate adds and updates their digests.
 #

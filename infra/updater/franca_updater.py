@@ -57,11 +57,11 @@ IMAGE_KEYS = {
     "status": "FRANCA_STATUS_IMAGE",
 }
 REQUIRED_IMAGES = frozenset({"app", "caddy"})
-# The results that count as a successful run, and the key of the updater's external endpoint in the health monitoring.
+# The results that count as a successful run, and the key of the updater's external endpoint in the status container.
 SUCCESSFUL_RESULTS = frozenset({"installed", "up-to-date"})
 MONITOR_KEY = "nightly_update"
 # The services whose new images are started straight after the app is healthy, each with the Compose profile that has
-# to be on: the private network (story E01-009), which faces the tailnet, and the health monitoring (story E01-010).
+# to be on: the private network (story E01-009), which faces the tailnet, and health monitoring (story E01-010).
 STARTED_AFTER_THE_APP = {"tailscale": "tailnet", "status": "monitoring"}
 VERSION_KEY = "FRANCA_VERSION"
 SNAPSHOTS_KEPT = 5
@@ -409,7 +409,7 @@ def check_bundle(folder: Path) -> None:
         raise UpdateError(f"The updater cannot write to the bundle folder {folder}")
 
 
-# --- reports to the health monitoring (story E01-010)
+# --- reports to health monitoring (story E01-010)
 
 
 def _post(request: urllib.request.Request) -> None:
@@ -419,16 +419,16 @@ def _post(request: urllib.request.Request) -> None:
 
 @dataclass(slots=True)
 class Monitor:
-    """Reports the result of each run to the health monitoring: an external endpoint in Gatus, which sends an alert
-    when a run fails or no report comes in for a day."""
+    """Reports the result of each run to an external endpoint in Gatus (the status container). An alert is sent when a
+    run fails or no report arrives within 25 hours."""
 
     url: str
     token_file: Path
     send: Callable[[urllib.request.Request], object] = field(default=_post)
 
     def report(self, key: str, success: bool, message: str) -> None:
-        """Sends one result. Nothing is sent while there is no push token (the monitoring is not switched on), and a
-        report that cannot be sent is printed: the run's own result stands either way."""
+        """Sends one result. Nothing is sent while there is no push token, which means monitoring is switched off. A
+        report that cannot be sent is printed instead, and the run's result is not changed."""
         try:
             token = self.token_file.read_text(encoding="utf-8").strip() if self.token_file.is_file() else ""
             if not token:

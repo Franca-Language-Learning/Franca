@@ -163,7 +163,7 @@ jobs:
         run: uv run --no-project --python 3.14 python infra/tests/rehearse_backup.py
       - name: Rehearse the private network
         run: uv run --no-project --python 3.14 python infra/tests/rehearse_tailnet.py
-      - name: Rehearse the health monitoring
+      - name: Rehearse health monitoring
         run: uv run --no-project --python 3.14 python infra/tests/rehearse_status.py
       # The same scan as in the release workflow, so a vulnerable image is found before a release.
       - name: Scan the app image for known vulnerabilities

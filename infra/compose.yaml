@@ -5,7 +5,7 @@
 # The installer writes the .env file beside this file. A release names its images by digest there
 # (FRANCA_APP_IMAGE, FRANCA_CADDY_IMAGE, FRANCA_UPDATER_IMAGE), and the updater changes them (story E01-007).
 # The updater and its socket proxy are in the "updates" profile, the backup is in the "backups" profile, the private
-# network is in the "tailnet" profile and the health monitoring is in the "monitoring" profile. The installer switches
+# network is in the "tailnet" profile and health monitoring is in the "monitoring" profile. The installer switches
 # them on with COMPOSE_PROFILES=updates,backups,tailnet,monitoring.
 
 x-hardening: &hardening
@@ -62,7 +62,7 @@ services:
       - tailscale-socket:/var/run/tailscale:ro
     networks:
       internal:
-        # Inside the bundle, the Tailscale name leads to Caddy, so the health monitoring can check Caddy's certificate.
+        # Inside the bundle, the Tailscale name is an alias for Caddy, so Caddy's certificate can be checked.
         aliases: ["${FRANCA_TAILSCALE_NAME:-tailscale-name-not-set.ts.net}"]
 
   # The private network (story E01-009). The PC joins the owner's tailnet as a device named franca, and connections
@@ -149,7 +149,7 @@ services:
       COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-franca}
       FRANCA_HEALTH_URL: http://app:8000/api/v1/health
       FRANCA_UPDATE_AT_UTC: ${FRANCA_UPDATE_AT_UTC:-02:30}
-      # Each run's result is reported to the health monitoring (story E01-010), with the token in status_push_token.
+      # Each run's result is reported to the status container (story E01-010), with the token in status_push_token.
       FRANCA_STATUS_URL: http://status:8080
     secrets: [status_push_token]
     volumes:
@@ -174,7 +174,7 @@ services:
     environment:
       FRANCA_BACKUP_AT_UTC: ${FRANCA_BACKUP_AT_UTC:-03:30}
       FRANCA_HEALTH_URL: http://app:8000/api/v1/health
-      # Each run's result is reported to the health monitoring (story E01-010), with the token in status_push_token.
+      # Each run's result is reported to the status container (story E01-010), with the token in status_push_token.
       FRANCA_STATUS_URL: http://status:8080
     secrets: [backup_password, status_push_token]
     volumes:
@@ -184,7 +184,7 @@ services:
       - ${FRANCA_BACKUP_DIR:-/franca-backups-not-set}:/backups
     networks: [internal]
 
-  # The health monitoring (story E01-010). Gatus checks the app and the web server every minute, and HTTPS and
+  # Health monitoring (story E01-010). Gatus checks the app and the web server every minute, and HTTPS and
   # Tailscale once the PC has a Tailscale name. The updater and the backup report each run. Alerts go to the owner's
   # phone through ntfy. The dashboard is on the PC's loopback only.
   status:
@@ -219,7 +219,7 @@ secrets:
   # The ntfy topic that alerts are sent to. Anyone who knows it can read the alerts, so it is long and random.
   ntfy_topic:
     file: ${FRANCA_SECRETS_DIR:-./secrets}/ntfy_topic
-  # The token with which the updater and the backup report to the health monitoring.
+  # The token with which the updater and the backup report to the status container.
   status_push_token:
     file: ${FRANCA_SECRETS_DIR:-./secrets}/status_push_token
 

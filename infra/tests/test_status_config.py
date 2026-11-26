@@ -1,4 +1,4 @@
-"""Checks of the health monitoring settings (story E01-010) in the bundle's files.
+"""Checks of the health-monitoring settings (story E01-010) in the bundle's files.
 
 The monitoring is rehearsed with real containers in rehearse_status.py. These tests read the files, so that a check or
 an alert that goes missing, or a secret written into a file, fails before any container is built.

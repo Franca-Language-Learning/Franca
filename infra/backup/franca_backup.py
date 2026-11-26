@@ -198,7 +198,7 @@ def health_check(url: str) -> Callable[[], bool]:
     return answers
 
 
-# --- reports to the health monitoring (story E01-010)
+# --- reports to health monitoring (story E01-010)
 
 # The status files whose results are reported, with the key of their external endpoint in Gatus and the result that
 # counts as a success. A restore by the owner (restore.json) is not reported.
@@ -215,16 +215,17 @@ def _post(request: urllib.request.Request) -> None:
 
 @dataclass(slots=True)
 class Monitor:
-    """Reports the result of each run to the health monitoring: an external endpoint in Gatus, which sends an alert
-    when a run fails or no report comes in on time. The same as the updater's Monitor; the two images share no code."""
+    """Reports the result of each run to an external endpoint in Gatus (the status container). An alert is sent when a
+    run fails or no report arrives within its heartbeat interval. This is a copy of the updater's Monitor, because the
+    two images share no code."""
 
     url: str
     token_file: Path
     send: Callable[[urllib.request.Request], object] = field(default=_post)
 
     def report(self, key: str, success: bool, message: str) -> None:
-        """Sends one result. Nothing is sent while there is no push token (the monitoring is not switched on), and a
-        report that cannot be sent is printed: the run's own result stands either way."""
+        """Sends one result. Nothing is sent while there is no push token, which means monitoring is switched off. A
+        report that cannot be sent is printed instead, and the run's result is not changed."""
         try:
             token = self.token_file.read_text(encoding="utf-8").strip() if self.token_file.is_file() else ""
             if not token:

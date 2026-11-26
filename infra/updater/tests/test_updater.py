@@ -551,7 +551,7 @@ def test_a_failed_restore_copy_leaves_the_database_as_it_was(tmp_path: Path) -> 
         assert connection.execute("SELECT name FROM sqlite_master").fetchall() == [("t",)]
 
 
-# --- reports to the health monitoring (story E01-010)
+# --- reports to health monitoring (story E01-010)
 
 
 class FakeMonitor(fu.Monitor):

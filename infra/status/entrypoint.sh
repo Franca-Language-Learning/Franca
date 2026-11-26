@@ -12,7 +12,7 @@ fail() {
     exit 1
 }
 
-# Reads a secret file without its line ending. A missing or empty file stops the container with a message.
+# Reads a secret file without its line ending. If the file is missing or empty, the container is stopped with a message.
 read_secret() {
     [ -s "/run/secrets/$1" ] || fail "the secret $1 is missing or empty"
     tr -d '\r\n' < "/run/secrets/$1"

@@ -1,4 +1,4 @@
-"""A rehearsal of the health monitoring with real containers (story E01-010). Run from the repository root:
+"""A rehearsal of health monitoring with real containers (story E01-010). Run from the repository root:
     python3 infra/tests/rehearse_status.py
 
 It needs Docker with Compose and builds the images itself. A small web server that records what it is sent is used in

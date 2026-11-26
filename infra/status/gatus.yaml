@@ -5,8 +5,8 @@
 # FRANCA_TAILNET_CHECKS, which is true once the installer has written the PC's Tailscale name.
 #
 # The app and the web server are checked every minute, and an alert is sent after three failures in a row. The updater
-# and the backup report the result of each run to the external endpoints; a failed run, or no report within the
-# heartbeat interval, is an alert at once.
+# and the backup report the result of each run to the external endpoints. An alert is sent at once when a run fails
+# or no report arrives within the heartbeat interval.
 
 web:
   port: 8080
@@ -53,7 +53,7 @@ endpoints:
       - type: ntfy
         description: The web server (Caddy) does not answer.
 
-  # Inside the bundle, the Tailscale name leads to Caddy, so this request uses Caddy's real certificate.
+  # Inside the bundle, the Tailscale name is an alias for Caddy, so this check is made against Caddy's real certificate.
   - name: HTTPS on the Tailscale name
     group: Franca
     enabled: ${FRANCA_TAILNET_CHECKS}
@@ -87,7 +87,7 @@ external-endpoints:
     alerts:
       - type: ntfy
         failure-threshold: 1
-        description: The nightly update failed, or did not report.
+        description: The nightly update failed or sent no report.
 
   - name: Backup
     group: Nightly
@@ -97,7 +97,7 @@ external-endpoints:
     alerts:
       - type: ntfy
         failure-threshold: 1
-        description: The nightly backup failed, or did not report.
+        description: The nightly backup failed or sent no report.
 
   - name: Restore test
     group: Nightly
@@ -107,4 +107,4 @@ external-endpoints:
     alerts:
       - type: ntfy
         failure-threshold: 1
-        description: The monthly restore test failed, or did not report.
+        description: The monthly restore test failed or sent no report.

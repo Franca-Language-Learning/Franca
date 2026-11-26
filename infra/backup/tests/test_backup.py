@@ -348,7 +348,7 @@ def test_the_health_check_follows_the_last_successful_backup(tmp_path: Path) -> 
     assert backup.healthy(NOW.replace(day=10)) is False
 
 
-# --- reports to the health monitoring (story E01-010)
+# --- reports to health monitoring (story E01-010)
 
 
 class FakeMonitor(fb.Monitor):
