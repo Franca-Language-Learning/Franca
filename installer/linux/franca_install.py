@@ -39,7 +39,7 @@ import franca_updater as fu
 
 BUNDLE_DIR = Path("/opt/franca")
 COSIGN = Path("/usr/local/bin/cosign")
-COSIGN_URL = "https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64"  # renovate: datasource=github-releases depName=sigstore/cosign
+COSIGN_URL = "https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64"  # renovate: datasource=github-release-attachments depName=sigstore/cosign
 COSIGN_SHA256 = "424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa"
 PROGRAM_MAX_BYTES = 300_000_000
 # Docker's signing key for its Debian packages, checked by fingerprint before it is trusted.
