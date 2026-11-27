@@ -28,7 +28,7 @@ COPY --from=restic /out/restic /usr/local/bin/restic
 # takes the owner of the folder in the image that mounts it first, so the folder belongs to 10001 in each image.
 RUN useradd --uid 10001 --user-group --no-create-home --shell /usr/sbin/nologin franca \
     && install -d -o franca -g franca /cache /status /backups \
-    && install -d -o 10001 -g 10001 /restore-test
+    && install -d -o 10001 -g 10001 -m 2775 /restore-test
 COPY infra/backup/franca_backup.py /app/franca_backup.py
 ENV HOME=/tmp \
     PYTHONDONTWRITEBYTECODE=1 \

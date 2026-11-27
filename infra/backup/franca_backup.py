@@ -60,6 +60,9 @@ HEALTHY_FOR = timedelta(hours=48)
 # How long the restore test waits for the updater to start the app on the restored copy, and how often it looks.
 APP_CHECK_WAIT = timedelta(minutes=15)
 APP_CHECK_LOOK_EVERY = 10.0  # seconds
+# The note in the restore test's report when the app check is left out. The updater starts the app on the restored
+# copy, and without the updates profile there is no updater.
+APP_CHECK_OFF = "The app check needs the updates profile, which is off."
 
 
 class BackupError(Exception):
@@ -286,8 +289,10 @@ class Backup:
     app_answers: Callable[[], bool] = field(default=lambda: False)
     backups: Path = Path("/backups")
     monitor: Monitor | None = None
-    # The folder shared with the updater for the app check in the restore test. Without it, the app check is left out.
+    # The folder shared with the updater for the app check in the restore test. Without it, the app check is left out,
+    # and app_check_note says why in the report.
     app_check_dir: Path | None = None
+    app_check_note: str = ""
     app_check_wait: timedelta = APP_CHECK_WAIT
     sleep: Callable[[float], None] = field(default=time.sleep)
     clock: Callable[[], float] = field(default=time.monotonic)
@@ -392,7 +397,7 @@ class Backup:
             appVersion=app_version,
             message="The latest backup was restored and checked, and the app started on it"
             if app_version
-            else "The latest backup was restored and checked",
+            else " ".join(("The latest backup was restored and checked.", self.app_check_note)).strip(),
         )
 
     def check_app_on(self, restored: Path, now: datetime) -> str:
@@ -417,8 +422,9 @@ class Backup:
                 if self.clock() >= deadline:
                     minutes = int(self.app_check_wait.total_seconds() // 60)
                     raise BackupError(
-                        f"The app was not started on the restored copy within {minutes} minutes. The updater starts it, "
-                        "so check that the updater is running."
+                        f"There was no answer from the app on the restored copy within {minutes} minutes. The updater may "
+                        "have stopped, or it could not write its answer. The updater's log has the reason "
+                        "(restore-check-not-run)."
                     )
                 self.sleep(APP_CHECK_LOOK_EVERY)
         finally:
@@ -516,6 +522,8 @@ def next_run(now: datetime, at: str) -> datetime:
 
 
 def from_environment(environ: dict[str, str] | os._Environ[str]) -> Backup:
+    # The app check in the restore test needs the updater, which is in the updates profile.
+    updates_on = "updates" in {profile.strip() for profile in environ.get("FRANCA_PROFILES", "").split(",")}
     return Backup(
         data=Path(environ.get("FRANCA_DATA_DIR", "/data")),
         work=Path(environ.get("FRANCA_BACKUP_WORK_DIR", "/cache/work")),
@@ -524,7 +532,8 @@ def from_environment(environ: dict[str, str] | os._Environ[str]) -> Backup:
         app_answers=health_check(environ.get("FRANCA_HEALTH_URL", "http://app:8000/api/v1/health")),
         backups=Path(environ.get("FRANCA_BACKUP_DIR_IN_CONTAINER", "/backups")),
         monitor=Monitor(environ["FRANCA_STATUS_URL"], Path("/run/secrets/status_push_token")) if environ.get("FRANCA_STATUS_URL") else None,
-        app_check_dir=Path(environ.get("FRANCA_RESTORE_TEST_DIR", "/restore-test")),
+        app_check_dir=Path(environ.get("FRANCA_RESTORE_TEST_DIR", "/restore-test")) if updates_on else None,
+        app_check_note="" if updates_on else APP_CHECK_OFF,
     )
 
 

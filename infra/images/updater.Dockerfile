@@ -35,7 +35,7 @@ COPY --from=tools /out/cosign /usr/local/bin/cosign
 # there as user 10001. A new volume takes the owner of the folder in the image that mounts it first.
 RUN useradd --uid 10003 --user-group --no-create-home --shell /usr/sbin/nologin updater \
     && install -d -o updater -g updater /status \
-    && install -d -o 10001 -g 10001 /restore-test
+    && install -d -o 10001 -g 10001 -m 2775 /restore-test
 COPY infra/updater/franca_updater.py /app/franca_updater.py
 # The file system is read-only; cosign and docker keep their caches under HOME, which is a temporary folder.
 ENV HOME=/tmp \

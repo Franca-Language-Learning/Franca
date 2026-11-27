@@ -389,14 +389,19 @@ def _with_arguments(script: str, *arguments: str) -> str:
 # Run in the restore-check container, for the backup's monthly restore test. The migrations are run on the restored
 # copy, the app is started on the container's loopback address and its health check is called, as the app's own
 # container does at start. The answer is written beside the copy, with the id of the backup's request, whatever
-# happens.
+# happens; an app that does not stop is killed first.
 RESTORE_CHECK_SCRIPT = """
-import json, os, pathlib, subprocess, sys, time, urllib.request
+import json, os, pathlib, secrets, subprocess, sys, tempfile, time, urllib.request
 folder, port = pathlib.Path(sys.argv[1]), int(sys.argv[2])
-os.environ['FRANCA_DATABASE_PATH'] = str(folder / 'franca.db')
-answer = {'id': json.loads((folder / 'request.json').read_text(encoding='utf-8'))['id'], 'passed': False}
+answer = {'id': None, 'passed': False}
 server = None
 try:
+    answer['id'] = json.loads((folder / 'request.json').read_text(encoding='utf-8'))['id']
+    os.environ['FRANCA_DATABASE_PATH'] = str(folder / 'franca.db')
+    # The app needs a session secret to start. A throwaway one is used, so the real one is not given to this container.
+    secret_file = pathlib.Path(tempfile.gettempdir()) / 'session_secret'
+    secret_file.write_text(secrets.token_urlsafe(48), encoding='utf-8')
+    os.environ['FRANCA_SESSION_SECRET_FILE'] = str(secret_file)
     if not (folder / 'franca.db').is_file():
         raise RuntimeError('There is no restored copy of the database')
     migrated = subprocess.run([sys.executable, '-m', 'franca.platform.migrate'], capture_output=True, text=True, timeout=300)
@@ -423,7 +428,11 @@ except Exception as error:
 finally:
     if server is not None:
         server.terminate()
-        server.wait(timeout=10)
+        try:
+            server.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            server.kill()
+            server.wait()
     written = folder / 'answer.json.new'
     written.write_text(json.dumps(answer), encoding='utf-8')
     os.replace(written, folder / 'answer.json')
@@ -598,9 +607,9 @@ class Updater:
     sleep: Callable[[float], None] = field(default=time.sleep)
     monitor: Monitor | None = None
     docker_api: DockerApiProbe | None = None
-    # The folder shared with the backup for the app check in its monthly restore test, and the requests tried so far.
+    # The folder shared with the backup for the app check in its monthly restore test, and the last request tried.
     restore_test_dir: Path | None = None
-    restore_checks_tried: set[str] = field(default_factory=set)
+    restore_check_tried: str | None = None
 
     def run_once(self, now: datetime) -> str:
         """Checks for a release and installs it, then reports the state to health monitoring. Returns the result, which
@@ -751,26 +760,48 @@ class Updater:
 
     def check_restored_copy(self) -> None:
         """Starts the app on the backup's restored copy in a one-off container, when the backup has asked for it and
-        there is no answer yet. Each request is tried once. A container that cannot be started is printed, and the
-        backup's restore test fails when no answer comes."""
+        there is no answer yet. Only an id in the form the backup makes is taken, and each request is tried once. When
+        the container cannot be started, a failure answer with the reason is written for the backup."""
         if self.restore_test_dir is None:
             return
         request = _read_json(self.restore_test_dir / "request.json").get("id")
-        if not isinstance(request, str) or request in self.restore_checks_tried:
+        if not isinstance(request, str) or not REQUEST_ID_PATTERN.fullmatch(request) or request == self.restore_check_tried:
             return
         if _read_json(self.restore_test_dir / "answer.json").get("id") == request:
             return
-        self.restore_checks_tried.add(request)
+        self.restore_check_tried = request
         try:
             self.compose.run_restore_check(restore_check_script())
-        except UpdateError as error:
-            print(json.dumps({"result": "restore-check-not-run", "message": str(error)}), flush=True)
+        except (UpdateError, subprocess.SubprocessError) as error:
+            reason = f"it did not finish within {error.timeout:.0f} seconds" if isinstance(error, subprocess.TimeoutExpired) else str(error)
+            print(json.dumps({"result": "restore-check-not-run", "message": reason}), flush=True)
+            self._answer_failure(request, f"The updater could not run the restore-check container: {reason}")
+
+    def _answer_failure(self, request: str, message: str) -> None:
+        """Writes a failure answer for the backup. The updater writes in the folder through its group (infra/compose.yaml)."""
+        assert self.restore_test_dir is not None  # noqa: S101 - checked by the caller
+        answer = {"id": request, "passed": False, "message": message[:500]}
+        try:
+            written = self.restore_test_dir / "answer.json.new"
+            written.write_text(json.dumps(answer), encoding="utf-8")
+            os.replace(written, self.restore_test_dir / "answer.json")
+        except OSError as error:
+            print(json.dumps({"result": "restore-check-answer-not-written", "message": str(error)}), flush=True)
 
 
-def _read_json(path: Path) -> dict[str, object]:
-    """A JSON object from a file, or an empty dict when the file is missing, half written or not an object."""
+# The ids that the backup writes in its requests (franca_backup.Backup.check_app_on), and the most a request file may
+# hold. Anything else in the shared folder is ignored.
+REQUEST_ID_PATTERN = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00-[0-9a-f]{8}")
+REQUEST_LIMIT = 1000  # bytes
+
+
+def _read_json(path: Path, limit: int = REQUEST_LIMIT) -> dict[str, object]:
+    """A JSON object from a file of up to `limit` bytes, or an empty dict when the file is missing, half written, too
+    long or not an object."""
     try:
-        loaded = json.loads(path.read_text(encoding="utf-8"))
+        with path.open("rb") as file:
+            text = file.read(limit + 1)
+        loaded = json.loads(text) if len(text) <= limit else None
     except (OSError, ValueError):
         return {}
     return loaded if isinstance(loaded, dict) else {}

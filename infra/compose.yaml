@@ -173,11 +173,14 @@ services:
       # Each run's result is reported to the status container (story E01-010), with the token in status_push_token.
       FRANCA_STATUS_URL: http://status:8080
     secrets: [status_push_token]
+    # The group of the restore-test folder, for the failure answer described below.
+    group_add: ["10001"]
     volumes:
       - ${FRANCA_BUNDLE_DIR:-/franca-bundle-not-set}:${FRANCA_BUNDLE_DIR:-/franca-bundle-not-set}
       - updater-status:/status
       # The backup puts a request here during the monthly restore test, and the updater starts the restore-check
-      # container for it. The folder belongs to user 10001, so the updater's user (10003) can read it and not write.
+      # container for it. When that container cannot start, the updater writes a failure answer here, through the
+      # folder's group (10001). A read-only mount would not limit the updater, which can start containers.
       - restore-test:/restore-test
     networks: [internal, docker-api]
 
@@ -197,6 +200,8 @@ services:
     stop_grace_period: 2m
     environment:
       FRANCA_BACKUP_AT_UTC: ${FRANCA_BACKUP_AT_UTC:-03:30}
+      # The app check in the restore test is made only when the updates profile is on, because the updater starts it.
+      FRANCA_PROFILES: ${COMPOSE_PROFILES:-}
       FRANCA_HEALTH_URL: http://app:8000/api/v1/health
       # Each run's result is reported to the status container (story E01-010), with the token in status_push_token.
       FRANCA_STATUS_URL: http://status:8080
@@ -213,18 +218,15 @@ services:
   # The app check in the monthly restore test (story E01-008). The backup restores the latest backup, checks the
   # database, and puts the copy in the restore-test volume with a request. The updater, which already reaches Docker
   # through the socket proxy, starts this one-off container with docker compose run, as it does for snapshots. The
-  # app is started on the copy with no network, its health check (/api/v1/health) is called on the container's own
-  # loopback address, and the answer is written beside the copy. The backup is not given the Docker API, because
-  # that is the same as root on the PC.
+  # app is started on the copy with no network and a throwaway session secret, its health check (/api/v1/health) is
+  # called on the container's own loopback address, and the answer is written beside the copy. The backup is not given
+  # the Docker API, because that is the same as root on the PC.
   restore-check:
     <<: *hardening
     image: ${FRANCA_APP_IMAGE:-franca/app:${FRANCA_VERSION:-0.1.0-dev}}
     profiles: [restore-check]
     restart: "no"
     network_mode: none
-    environment:
-      FRANCA_SESSION_SECRET_FILE: /run/secrets/session_secret
-    secrets: [session_secret]
     volumes:
       - restore-test:/data
 
