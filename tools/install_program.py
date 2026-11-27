@@ -19,6 +19,12 @@ modules work on any platform. The other files are for the platform on the platfo
 on another platform nothing is downloaded.
 Only the Python standard library is needed.
 
+A download that fails with a connection error, a timeout, HTTP 429 or HTTP 5xx is tried up to three times, with waits
+of 5 and 15 seconds. A download that fails with HTTP 403 for an address on the PowerShell Gallery, before or after
+redirects, is tried again in the same way, because the gallery has refused a request once and accepted it on the next
+run. Before a new try, a line with the address, the reason and the number of the try is written to standard error.
+Other HTTP errors fail at once, and a download with another hash is not tried again.
+
 Exit codes: 0 when the program is ready, 3 when the download has another hash, 4 when this computer is not on the
 platform of the file, and 1 for other problems, such as no network.
 """
@@ -27,14 +33,18 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import os
 import platform
 import re
 import shutil
+import ssl
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from collections.abc import Callable
@@ -55,6 +65,9 @@ ZIP_START = b"PK\x03\x04"
 ELF_START = b"\x7fELF"
 # PowerShell modules are .nupkg files, from a GitHub release or from the PowerShell Gallery, and work on any platform.
 GALLERY = "https://www.powershellgallery.com/"
+# A failed download is tried again after each of these waits, so it is tried up to three times.
+RETRY_WAITS_SECONDS = (5, 15)
+POWERSHELL_GALLERY_HOSTS = {"www.powershellgallery.com", "cdn.powershellgallery.com"}
 
 Fetch = Callable[[str], bytes]
 
@@ -136,16 +149,64 @@ class HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
 OPENER = urllib.request.build_opener(HttpsOnlyRedirects)
 
 
-def download(url: str) -> bytes:
-    """The file at the address, up to MAX_DOWNLOAD_BYTES. Redirects are followed to https addresses only."""
+class TemporaryFailure(InstallError):
+    """A download failed for a reason that may be gone on the next try, such as a timeout or a server error."""
+
+    def __init__(self, url: str, reason: str) -> None:
+        super().__init__(f"{url} could not be downloaded: {reason}")
+        self.reason = reason
+
+
+def _failure(url: str, error: BaseException) -> InstallError:
+    """The error to raise for a failed download: a TemporaryFailure when the download is worth trying again.
+
+    A download that fails with HTTP 403 is tried again when the address asked for or the address that answered is on the
+    PowerShell Gallery, because the gallery can redirect a package download to storage on another host.
+    """
+    if isinstance(error, urllib.error.HTTPError):
+        # The error holds the open response, which is closed here so that it is not left open during the next try.
+        error.close()
+        hosts = {urllib.parse.urlsplit(address).hostname for address in (url, error.geturl() or url)}
+        if error.code == 429 or 500 <= error.code < 600 or (error.code == 403 and hosts & POWERSHELL_GALLERY_HOSTS):
+            return TemporaryFailure(url, f"HTTP {error.code}")
+        return InstallError(f"{url} could not be downloaded: HTTP {error.code}")
+    cause = error.reason if isinstance(error, urllib.error.URLError) else error
+    if isinstance(cause, ssl.SSLCertVerificationError):
+        return InstallError(f"{url} could not be downloaded: {cause}")
+    if isinstance(cause, TimeoutError):
+        return TemporaryFailure(url, "timeout")
+    return TemporaryFailure(url, f"connection error ({cause})")
+
+
+def _download_once(url: str) -> bytes:
     try:
         with OPENER.open(url, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
             data: bytes = response.read(MAX_DOWNLOAD_BYTES + 1)
-    except (urllib.error.URLError, TimeoutError, OSError) as error:
-        raise InstallError(f"{url} could not be downloaded: {error}") from error
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as error:
+        raise _failure(url, error) from error
     if len(data) > MAX_DOWNLOAD_BYTES:
         raise InstallError(f"{url} is larger than {MAX_DOWNLOAD_BYTES} bytes")
     return data
+
+
+def download(url: str, sleep: Callable[[float], None] = time.sleep) -> bytes:
+    """The file at the address, up to MAX_DOWNLOAD_BYTES. Redirects are followed to https addresses only.
+
+    A download that fails with a connection error, a timeout, HTTP 429, HTTP 5xx, or HTTP 403 for an address on the
+    PowerShell Gallery before or after redirects, is tried again after the waits in RETRY_WAITS_SECONDS, with a line on
+    standard error before a new try. Other failures are raised at once.
+    """
+    attempts = len(RETRY_WAITS_SECONDS) + 1
+    for attempt, wait in enumerate(RETRY_WAITS_SECONDS, start=2):
+        try:
+            return _download_once(url)
+        except TemporaryFailure as failure:
+            print(
+                f"install_program: {url} failed ({failure.reason}), trying again in {wait} seconds (attempt {attempt} of {attempts})",
+                file=sys.stderr,
+            )
+            sleep(wait)
+    return _download_once(url)
 
 
 def _has_hash(path: Path, sha256: str) -> bool:
