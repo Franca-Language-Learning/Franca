@@ -25,7 +25,7 @@ Renovate opens a pull request for a vulnerability straight away, but the lock ca
 
 ## uv itself
 
-The uv version is pinned in `required-version` in `pyproject.toml` and in the `version` of setup-uv in `.github/workflows/ci.yml`. It is pinned because `tools/startup-files-allowed.txt` has the hash of the `_virtualenv.py` file that uv writes into each environment. Renovate updates both places in one pull request, which waits for a review. If the start-up file check fails, read the new `_virtualenv.py`, then update its hash in `tools/startup-files-allowed.txt` in the same pull request. After the merge, developers install the new version with `uv self update <new version>`, or with the package manager they used to install uv.
+The uv version is pinned in `required-version` in `pyproject.toml`. The same version is installed in the pipeline, because setup-uv reads it from there when no version is given. It is pinned because `tools/startup-files-allowed.txt` has the hash of the `_virtualenv.py` file that uv writes into each environment. Renovate updates it in a pull request that has to be reviewed. If the start-up file check fails, read the new `_virtualenv.py`, then update its hash in `tools/startup-files-allowed.txt` in the same pull request. After the merge, developers install the new version with `uv self update <new version>`, or with the package manager they used to install uv.
 
 ## Container images
 

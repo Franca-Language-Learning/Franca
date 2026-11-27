@@ -1,0 +1,13 @@
+# Node.js and pnpm for the jobs that build or test the client (.github/workflows/ci.yml).
+name: Set up Node.js and pnpm
+description: Installs Node.js at the version in .nvmrc, and pnpm at the version and hash in package.json (packageManager).
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version-file: .nvmrc
+    # pnpm is checked against the hash in package.json by Corepack before it is used.
+    - name: Install pnpm
+      shell: bash
+      run: corepack enable pnpm && corepack install

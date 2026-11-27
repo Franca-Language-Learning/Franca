@@ -18,6 +18,7 @@ Franca is a language-learning app. The product owner reviews the work, and anyth
 |---|---|
 | Set up a checkout | `scripts/setup` |
 | All checks | `scripts/check` |
+| Some of the checks | `scripts/check python client` (the parts are guard, python, windows, client and browser) |
 | Server tests | `cd server && uv run pytest` |
 | Client tests | `pnpm --filter @franca/client test` |
 | Write the API contract | `scripts/update-contract` |

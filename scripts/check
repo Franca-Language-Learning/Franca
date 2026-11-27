@@ -1,50 +1,104 @@
 #!/usr/bin/env bash
-# Runs the same checks as the pipeline, on this checkout:  scripts/check
+# Runs the same checks as the pipeline, on this checkout. The python and client parts are run in the pipeline through
+# this script too, so each list of files and folders below is the one used in the pipeline.
+#
+#   scripts/check                  all parts, in the order listed under Parts
+#   scripts/check python client    some parts
+#
+# Parts: guard (content guard), python (server, contracts, tools, infra and installer), windows (the Windows
+# installer, when pwsh is installed), client, browser (browser tests).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 root="$(pwd)"
 
 step() { printf '\n== %s\n' "$1"; }
 
-step "Content guard"
-python3 -I tools/content_guard.py --index
+# The Python code that is linted and formatted, and the stand-alone scripts that are type-checked with mypy --strict
+# (the server code is listed in server/pyproject.toml). The paths are relative to server/.
+python_paths=(. ../contracts ../tools ../infra/updater ../infra/backup ../infra/tests ../installer/linux)
+strict_scripts=(
+    ../tools/content_guard.py
+    ../tools/check_pins.py
+    ../infra/updater/franca_updater.py
+    ../infra/backup/franca_backup.py
+    ../infra/tests/rehearse_update.py
+    ../infra/tests/rehearse_backup.py
+    ../infra/tests/rehearse_tailnet.py
+    ../infra/tests/rehearse_status.py
+    ../installer/linux/franca_install.py
+    ../infra/tests/rehearse_install.py
+)
 
-step "Python packages"
-uv sync --locked --quiet
-tools/check-startup-files.sh .venv
+check_guard() {
+    step "Content guard"
+    python3 -I tools/content_guard.py --index
+}
 
-cd "$root/server"
-step "Lint and format"
-uv run ruff check . ../contracts ../tools ../infra/updater ../infra/backup ../infra/tests ../installer/linux
-uv run ruff format --check . ../contracts ../tools ../infra/updater ../infra/backup ../infra/tests ../installer/linux
-step "Type check"
-uv run mypy
-uv run mypy --strict ../tools/content_guard.py ../tools/check_pins.py ../infra/updater/franca_updater.py ../infra/backup/franca_backup.py ../infra/tests/rehearse_update.py ../infra/tests/rehearse_backup.py ../infra/tests/rehearse_tailnet.py ../infra/tests/rehearse_status.py ../installer/linux/franca_install.py ../infra/tests/rehearse_install.py
-step "Module boundaries"
-PYTHONPATH=src uv run lint-imports
-step "Server, contract and tool tests"
-uv run pytest
-step "Shell scripts"
-uv run shellcheck ../tools/*.sh ../.githooks/* ../scripts/* ../client/scripts/*.sh ../infra/tests/*.sh
-step "Workflow security"
-uv run zizmor --offline ../.github/workflows
-step "Windows installer"
-if command -v pwsh >/dev/null 2>&1; then
-    pwsh -NoProfile -Command "Invoke-ScriptAnalyzer -Path ../installer/windows -Recurse -Settings ../installer/windows/PSScriptAnalyzerSettings.psd1 -EnableExit; Invoke-Pester -Path ../installer/windows/tests -CI"
-else
-    echo "PowerShell (pwsh) is not installed here, so the Windows installer is checked in the pipeline only."
+check_python() {
+    step "Python packages"
+    uv sync --locked --quiet
+    tools/check-startup-files.sh .venv
+
+    cd "$root/server"
+    step "Lint and format"
+    uv run ruff check "${python_paths[@]}"
+    uv run ruff format --check "${python_paths[@]}"
+    step "Type check"
+    uv run mypy
+    uv run mypy --strict "${strict_scripts[@]}"
+    step "Module boundaries"
+    PYTHONPATH=src uv run lint-imports
+    step "Server, contract and tool tests"
+    uv run pytest
+    step "Shell scripts"
+    uv run shellcheck ../tools/*.sh ../.githooks/* ../scripts/* ../client/scripts/*.sh ../infra/tests/*.sh
+    step "Workflow security"
+    # In the pipeline, zizmor also asks GitHub about the actions that the workflows use, with the job's token (GH_TOKEN).
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then
+        uv run zizmor ../.github
+    else
+        uv run zizmor --offline ../.github
+    fi
+    cd "$root"
+}
+
+check_windows() {
+    step "Windows installer"
+    if command -v pwsh >/dev/null 2>&1; then
+        pwsh -NoProfile -Command "Invoke-ScriptAnalyzer -Path installer/windows -Recurse -Settings installer/windows/PSScriptAnalyzerSettings.psd1 -EnableExit; Invoke-Pester -Path installer/windows/tests -CI"
+    else
+        echo "PowerShell (pwsh) is not installed here, so the Windows installer is checked in the pipeline only."
+    fi
+}
+
+check_client() {
+    step "Client"
+    pnpm install --frozen-lockfile --silent
+    pnpm --filter @franca/client generate:api >/dev/null
+    git diff --exit-code -- client/src/api/schema.d.ts
+    pnpm --filter @franca/client typecheck
+    pnpm --filter @franca/client boundaries
+    pnpm --filter @franca/client test
+    pnpm --filter @franca/client build
+}
+
+check_browser() {
+    step "Browser tests"
+    pnpm --filter @franca/client e2e
+}
+
+parts=("$@")
+if [ ${#parts[@]} -eq 0 ]; then
+    parts=(guard python windows client browser)
 fi
+for part in "${parts[@]}"; do
+    case "$part" in
+        guard | python | windows | client | browser) "check_$part" ;;
+        *)
+            echo "Unknown part: $part. The parts are guard, python, windows, client and browser." >&2
+            exit 2
+            ;;
+    esac
+done
 
-cd "$root"
-step "Client"
-pnpm install --frozen-lockfile --silent
-pnpm --filter @franca/client generate:api >/dev/null
-git diff --exit-code -- client/src/api/schema.d.ts
-pnpm --filter @franca/client typecheck
-pnpm --filter @franca/client boundaries
-pnpm --filter @franca/client test
-pnpm --filter @franca/client build
-step "Browser tests"
-pnpm --filter @franca/client e2e
-
-printf '\nAll checks passed.\n'
+printf '\nAll checks passed (%s).\n' "${parts[*]}"
