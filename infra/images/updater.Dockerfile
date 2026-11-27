@@ -31,8 +31,11 @@ RUN apt-get update \
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=tools /out/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
 COPY --from=tools /out/cosign /usr/local/bin/cosign
+# /restore-test is shared with the backup and the one-off app container of the monthly restore test, which write
+# there as user 10001. A new volume takes the owner of the folder in the image that mounts it first.
 RUN useradd --uid 10003 --user-group --no-create-home --shell /usr/sbin/nologin updater \
-    && install -d -o updater -g updater /status
+    && install -d -o updater -g updater /status \
+    && install -d -o 10001 -g 10001 /restore-test
 COPY infra/updater/franca_updater.py /app/franca_updater.py
 # The file system is read-only; cosign and docker keep their caches under HOME, which is a temporary folder.
 ENV HOME=/tmp \

@@ -16,7 +16,8 @@ Each run:
 
 The result is written to the status file whether the update worked or not, for the owner and for the health
 monitoring (story E01-010). Between runs, the updater checks every minute that the Docker API answers through the
-socket proxy, and reports the result to the health monitoring.
+socket proxy, and reports the result to the health monitoring. It also looks every minute for a request from the
+backup's monthly restore test, and starts the app on the restored copy in a one-off container for it (story E01-008).
 
 The updater reaches Docker through a socket proxy (infra/compose.yaml). Calls about containers, images, networks and
 volumes are let through. Exec, build, swarm, plugin, secret and system calls are blocked. The updater uses only the
@@ -322,6 +323,12 @@ class Compose:
         """Runs Python in a one-off container of the app image, with the database volume, while the app is stopped."""
         _check(self.run(self._compose("run", "--rm", "--no-deps", "--entrypoint", "python", "app", "-c", script)), "The database step")
 
+    def run_restore_check(self, script: str) -> None:
+        """Runs Python in a one-off container of the app image on the restored copy in the restore-test volume, with no
+        network (the restore-check service)."""
+        command = self._compose("run", "--rm", "--no-deps", "--entrypoint", "python", "restore-check", "-c", script)
+        _check(self.run(command), "Starting the app on the restored copy")
+
 
 # Run in a one-off app container while the app is stopped. The snapshot needs twice the database's size free, so a full
 # disk is found before anything changes; a snapshot left half written is removed.
@@ -377,6 +384,55 @@ class Database:
 
 def _with_arguments(script: str, *arguments: str) -> str:
     return f"import sys; sys.argv = {['-c', *arguments]!r}\n{script}"
+
+
+# Run in the restore-check container, for the backup's monthly restore test. The migrations are run on the restored
+# copy, the app is started on the container's loopback address and its health check is called, as the app's own
+# container does at start. The answer is written beside the copy, with the id of the backup's request, whatever
+# happens.
+RESTORE_CHECK_SCRIPT = """
+import json, os, pathlib, subprocess, sys, time, urllib.request
+folder, port = pathlib.Path(sys.argv[1]), int(sys.argv[2])
+os.environ['FRANCA_DATABASE_PATH'] = str(folder / 'franca.db')
+answer = {'id': json.loads((folder / 'request.json').read_text(encoding='utf-8'))['id'], 'passed': False}
+server = None
+try:
+    if not (folder / 'franca.db').is_file():
+        raise RuntimeError('There is no restored copy of the database')
+    migrated = subprocess.run([sys.executable, '-m', 'franca.platform.migrate'], capture_output=True, text=True, timeout=300)
+    if migrated.returncode != 0:
+        lines = (migrated.stderr or migrated.stdout).strip().splitlines() or ['no output']
+        raise RuntimeError('The migrations failed on the restored copy: ' + lines[-1][:300])
+    serve = f"import uvicorn; from franca.api import create_app; uvicorn.run(create_app, factory=True, host='127.0.0.1', port={port})"
+    server = subprocess.Popen([sys.executable, '-c', serve], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + 60
+    while True:
+        try:
+            with urllib.request.urlopen(f'http://127.0.0.1:{port}/api/v1/health', timeout=5) as response:
+                health = json.loads(response.read(10000))
+            break
+        except OSError:
+            if server.poll() is not None or time.monotonic() > deadline:
+                raise RuntimeError('The app did not answer /api/v1/health on the restored copy') from None
+            time.sleep(1)
+    if health.get('status') != 'ok':
+        raise RuntimeError(f'The health check on the restored copy answered {health}')
+    answer.update(passed=True, version=str(health.get('version', '')), message='The app started on the restored copy')
+except Exception as error:
+    answer['message'] = str(error)[:500]
+finally:
+    if server is not None:
+        server.terminate()
+        server.wait(timeout=10)
+    written = folder / 'answer.json.new'
+    written.write_text(json.dumps(answer), encoding='utf-8')
+    os.replace(written, folder / 'answer.json')
+"""
+
+
+def restore_check_script(folder: str = "/data", port: int = 8000) -> str:
+    """The script for the restore-check container, for the copy in folder, with the app on the given port."""
+    return _with_arguments(RESTORE_CHECK_SCRIPT, folder, str(port))
 
 
 # --- health
@@ -542,6 +598,9 @@ class Updater:
     sleep: Callable[[float], None] = field(default=time.sleep)
     monitor: Monitor | None = None
     docker_api: DockerApiProbe | None = None
+    # The folder shared with the backup for the app check in its monthly restore test, and the requests tried so far.
+    restore_test_dir: Path | None = None
+    restore_checks_tried: set[str] = field(default_factory=set)
 
     def run_once(self, now: datetime) -> str:
         """Checks for a release and installs it, then reports the state to health monitoring. Returns the result, which
@@ -690,6 +749,32 @@ class Updater:
         problem = self.docker_api()
         self.monitor.report(SOCKET_PROXY_KEY, problem is None, problem or "The Docker API answers through the socket proxy")
 
+    def check_restored_copy(self) -> None:
+        """Starts the app on the backup's restored copy in a one-off container, when the backup has asked for it and
+        there is no answer yet. Each request is tried once. A container that cannot be started is printed, and the
+        backup's restore test fails when no answer comes."""
+        if self.restore_test_dir is None:
+            return
+        request = _read_json(self.restore_test_dir / "request.json").get("id")
+        if not isinstance(request, str) or request in self.restore_checks_tried:
+            return
+        if _read_json(self.restore_test_dir / "answer.json").get("id") == request:
+            return
+        self.restore_checks_tried.add(request)
+        try:
+            self.compose.run_restore_check(restore_check_script())
+        except UpdateError as error:
+            print(json.dumps({"result": "restore-check-not-run", "message": str(error)}), flush=True)
+
+
+def _read_json(path: Path) -> dict[str, object]:
+    """A JSON object from a file, or an empty dict when the file is missing, half written or not an object."""
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
 
 # --- the service
 
@@ -725,10 +810,10 @@ def _step(name: str, action: Callable[[], object]) -> None:
 
 @dataclass(slots=True)
 class Service:
-    """The updater's loop. tick is called every minute (CHECK_EVERY). Each time, the socket proxy is checked. The
-    update is run at the time of day `at`. The state is reported to health monitoring after each run and every hour
-    (see Updater.report_state). Each part runs on its own: an error in one part is printed, and the other parts
-    still run."""
+    """The updater's loop. tick is called every minute (CHECK_EVERY). Each time, the socket proxy is checked and a
+    request from the backup's restore test is looked for. The update is run at the time of day `at`. The state is
+    reported to health monitoring after each run and every hour (see Updater.report_state). Each part runs on its own:
+    an error in one part is printed, and the other parts still run."""
 
     updater: Updater
     at: str
@@ -737,6 +822,7 @@ class Service:
 
     def tick(self, now: datetime) -> None:
         _step("socket proxy check", self.updater.report_docker_api)
+        _step("restore check", self.updater.check_restored_copy)
         if now >= self.wake:
             self.wake = next_run(now, self.at)
             self.report_after = now + REPORT_EVERY
@@ -764,6 +850,7 @@ def from_environment(environ: Mapping[str, str]) -> Updater:
         bundle=project,
         monitor=Monitor(environ["FRANCA_STATUS_URL"], Path("/run/secrets/status_push_token")) if environ.get("FRANCA_STATUS_URL") else None,
         docker_api=docker_api_probe(environ["DOCKER_HOST"]) if environ.get("DOCKER_HOST", "").startswith("tcp://") else None,
+        restore_test_dir=Path(environ.get("FRANCA_RESTORE_TEST_DIR", "/restore-test")),
     )
 
 

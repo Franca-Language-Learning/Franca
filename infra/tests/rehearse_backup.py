@@ -4,8 +4,9 @@
 It needs Docker with Compose and builds the images itself. A temporary folder stands in for disk J:.
 
 The rehearsal:
-1. starts the app and writes a row to the database;
-2. runs a backup in the backup container, then the monthly restore test;
+1. starts the app, the socket proxy and the updater, and writes a row to the database;
+2. runs a backup in the backup container, then the monthly restore test. In the restore test the updater has to start
+   the app on the restored copy in a one-off container, and the app's health check has to answer there;
 3. checks that the backup folder has an encrypted restic repository and no readable copy of the database;
 4. deletes the row, stops the app, restores the latest backup and starts the app again; the row has to be back, and
    the database from before the restore has to be kept beside it;
@@ -25,6 +26,7 @@ from rehearsal import (
     build_image,
     compose_command,
     copy_compose_file,
+    docker_group,
     free_port,
     sh,
     tear_down,
@@ -36,6 +38,7 @@ PROJECT = f"franca-backup-rehearsal-{os.getpid()}"
 APP = "franca/app:rehearsal-backup"
 CADDY = "franca/caddy:rehearsal-backup"
 BACKUP = "franca/backup:rehearsal"
+UPDATER = "franca/updater:rehearsal-backup"
 
 
 def main() -> int:
@@ -43,9 +46,12 @@ def main() -> int:
     build_image("app", APP, "1.0.0")
     build_image("caddy", CADDY)
     build_image("backup", BACKUP)
+    build_image("updater", UPDATER)
     checks = Checks()
     with tempfile.TemporaryDirectory() as folder:
         bundle = Path(folder)
+        # The updater's container runs as user 10003 and reads the bundle folder.
+        bundle.chmod(0o755)
         copy_compose_file(bundle)
         key_folder = write_secrets(bundle / "secrets")
         backups = bundle / "disk-j"
@@ -60,12 +66,18 @@ def main() -> int:
                 "FRANCA_APP_IMAGE": APP,
                 "FRANCA_CADDY_IMAGE": CADDY,
                 "FRANCA_BACKUP_IMAGE": BACKUP,
+                "FRANCA_UPDATER_IMAGE": UPDATER,
                 "FRANCA_PORT": str(port),
                 "FRANCA_SECRETS_DIR": str(key_folder),
                 "FRANCA_BACKUP_DIR": str(backups),
-                "COMPOSE_PROFILES": "backups",
+                "FRANCA_BUNDLE_DIR": str(bundle),
+                "FRANCA_DOCKER_GID": docker_group(),
+                # The updater runs docker compose for this bundle, under the same project name.
+                "COMPOSE_PROJECT_NAME": PROJECT,
+                "COMPOSE_PROFILES": "backups,updates",
             },
         )
+        (bundle / ".env").chmod(0o644)
         compose = compose_command(bundle, PROJECT)
 
         def in_app(script: str) -> str:
@@ -82,7 +94,7 @@ def main() -> int:
             "import sqlite3; print(sqlite3.connect('/data/franca.db').execute('SELECT count(*) FROM identity_invitation').fetchone()[0])"
         )
         try:
-            sh(*compose, "up", "--detach", "--no-build", "--wait", "--wait-timeout", "120", "app", "caddy")
+            sh(*compose, "up", "--detach", "--no-build", "--wait", "--wait-timeout", "120", "app", "caddy", "socket-proxy", "updater")
             in_app(
                 "import sqlite3; c = sqlite3.connect('/data/franca.db'); "
                 'c.execute("INSERT INTO identity_invitation (email_norm, created_at, expires_at) '
@@ -95,7 +107,17 @@ def main() -> int:
             tested = in_backup("restore-test")
             checks.check(tested.returncode == 0, "the restore test passes")
             report = json.loads(tested.stdout.strip().splitlines()[-1]) if tested.stdout.strip() else {}
+            if tested.returncode != 0:
+                print(f"info: {report}", flush=True)
             checks.check(bool(report.get("schema")), "the restore test reads the schema version of the restored database")
+            checks.check(
+                report.get("appVersion") == "1.0.0",
+                "in the restore test, the app starts on the restored copy in a one-off container and its health check answers",
+            )
+            started = sh(*compose, "logs", "--no-color", "updater", check=False).stdout
+            checks.check("restore-check-not-run" not in started, "the updater starts the one-off container without an error")
+            left = in_backup_shell("ls -A /restore-test")
+            checks.check(left.returncode == 0 and not left.stdout.strip(), "the restored copy is removed after the app check")
 
             look = in_backup_shell("test -f /backups/restic/config && echo repository")
             checks.check("repository" in look.stdout, "the backup folder has a restic repository")

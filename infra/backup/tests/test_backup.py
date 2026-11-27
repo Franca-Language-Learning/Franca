@@ -156,6 +156,109 @@ def test_the_staging_copy_is_removed_afterwards(tmp_path: Path) -> None:
 # --- the restore test
 
 
+class FakeUpdater:
+    """Stands in for the updater, which starts the app on the restored copy in a one-off container. It is called
+    where the backup waits (Backup.sleep), and answers the request in the folder as the one-off container does."""
+
+    def __init__(self, folder: Path, passed: bool = True, answers: bool = True, message: str = "") -> None:
+        self.folder = folder
+        self.passed = passed
+        self.answers = answers
+        self.message = message
+        self.copies: list[bytes] = []
+        self.waits = 0
+
+    def __call__(self, _seconds: float) -> None:
+        self.waits += 1
+        request = self.folder / "request.json"
+        if not self.answers or not request.exists():
+            return
+        self.copies.append((self.folder / "franca.db").read_bytes())
+        answer = {"id": json.loads(request.read_text(encoding="utf-8"))["id"], "passed": self.passed, "version": "1.4.0"}
+        answer["message"] = self.message or ("The app started on the restored copy" if self.passed else "The migrations failed")
+        (self.folder / "answer.json").write_text(json.dumps(answer), encoding="utf-8")
+
+
+def with_app_check(backup: fb.Backup, tmp_path: Path, **options: bool | str) -> FakeUpdater:
+    folder = tmp_path / "restore-check"
+    folder.mkdir()
+    updater = FakeUpdater(folder, **options)  # type: ignore[arg-type]
+    backup.app_check_dir = folder
+    backup.sleep = updater
+    ticks = iter(range(0, 100_000, 10))
+    backup.clock = lambda: float(next(ticks))
+    return updater
+
+
+def test_the_restore_test_starts_the_app_on_the_restored_copy(tmp_path: Path) -> None:
+    backup, restic = make(tmp_path)
+    backup.back_up(NOW)
+    updater = with_app_check(backup, tmp_path)
+
+    assert backup.restore_test(NOW) == "restore-test-passed"
+
+    # The copy that the app was started on is the restored database, after its integrity and schema checks.
+    assert updater.copies == [(restic.store / "franca.db").read_bytes()]
+    report = status(tmp_path, "restore-test.json")
+    assert report["schema"] == "0002"
+    assert report["appVersion"] == "1.4.0"
+    assert "app" in report["message"]
+    assert list(updater.folder.iterdir()) == []
+
+
+def test_an_app_that_does_not_start_on_the_restored_copy_fails_the_restore_test(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    backup.back_up(NOW)
+    updater = with_app_check(backup, tmp_path, passed=False, message="The migrations failed on the restored copy")
+
+    assert backup.restore_test(NOW) == "restore-test-failed"
+
+    assert "The migrations failed on the restored copy" in status(tmp_path, "restore-test.json")["message"]
+    assert list(updater.folder.iterdir()) == []
+
+
+def test_without_an_answer_from_the_updater_the_restore_test_fails_after_the_wait(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    backup.back_up(NOW)
+    updater = with_app_check(backup, tmp_path, answers=False)
+
+    assert backup.restore_test(NOW) == "restore-test-failed"
+
+    message = status(tmp_path, "restore-test.json")["message"]
+    assert "15 minutes" in message
+    assert "updater" in message
+    # The fake clock moves 10 seconds a call; the backup waits 10 seconds between looks.
+    assert 40 <= updater.waits <= 100
+    assert list(updater.folder.iterdir()) == []
+
+
+def test_an_answer_to_an_older_request_is_not_taken_as_the_answer(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    backup.back_up(NOW)
+    updater = with_app_check(backup, tmp_path, answers=False)
+    (updater.folder / "answer.json").write_text(json.dumps({"id": "an-older-request", "passed": True}), encoding="utf-8")
+
+    assert backup.restore_test(NOW) == "restore-test-failed"
+
+
+def test_a_damaged_backup_is_not_given_to_the_app(tmp_path: Path) -> None:
+    backup, restic = make(tmp_path)
+    backup.back_up(NOW)
+    (restic.store / "franca.db").write_bytes(b"not a database")
+    updater = with_app_check(backup, tmp_path)
+
+    assert backup.restore_test(NOW) == "restore-test-failed"
+
+    assert updater.copies == []
+
+
+def test_the_service_uses_the_shared_folder_for_the_app_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    backup = fb.from_environment({})
+
+    assert backup.app_check_dir == Path("/restore-test")
+    assert fb.APP_CHECK_WAIT == timedelta(minutes=15)
+
+
 def test_the_restore_test_restores_the_latest_backup_and_checks_it(tmp_path: Path) -> None:
     backup, restic = make(tmp_path)
     backup.back_up(NOW)

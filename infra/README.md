@@ -64,7 +64,14 @@ At 03:30 UTC (an hour after the update check), a copy of the database is added t
 - one a week for 8 weeks
 - one a month for 12 months
 
-Once a month the latest backup is restored into a scratch folder and checked, and all of the repository's data is read back.
+Once a month the latest backup is restored into a scratch folder, its database is checked (integrity and schema version), and all of the repository's data is read back. Then the app is started on the restored copy:
+
+1. The backup puts the copy in the `restore-test` volume with a request.
+2. The updater looks for a request every minute. It starts the app image on the copy in a one-off container, the `restore-check` service, with `docker compose run`, as it does for snapshots. The container has no network.
+3. In that container the migrations are run on the copy, the app is started, and `/api/v1/health` is called on the container's own loopback address. The answer is written beside the copy.
+4. The backup waits up to 15 minutes for the answer and then empties the folder. Without an answer, or with a failed one, the restore test fails and an alert is sent.
+
+The updater starts the one-off container because it reaches Docker already, through the socket proxy. The backup container is not given the Docker API, because a container that can start containers has the same power as root on the PC, and the backup holds the backup password and all learner data. The app check needs the `updates` profile, which the installer switches on.
 
 The backup password is the `backup_password` secret. The installer writes it and shows it to the owner once, to keep in a password manager; without it the backups cannot be read. `docs/restoring-a-backup.md` has the steps for a restore. The backup and restore-test results are in the `backup-status` volume, in `backup.json` and `restore-test.json`.
 

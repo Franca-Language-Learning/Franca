@@ -863,6 +863,130 @@ def test_an_error_in_the_nightly_update_does_not_stop_the_proxy_check_at_the_nex
     assert service.wake == NOW + timedelta(days=1)
 
 
+# --- the app on the restored copy, for the backup's monthly restore test (story E01-008)
+
+SERVER_SOURCE = Path(__file__).resolve().parents[3] / "server" / "src"
+
+
+def restore_check(tmp_path: Path) -> tuple[fu.Updater, list[Sequence[str]], Path]:
+    folder = tmp_path / "restore-test"
+    folder.mkdir()
+    commands: list[Sequence[str]] = []
+
+    def run(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    updater, _log, _verifier = make(tmp_path, NEW)
+    updater.compose = fu.Compose(tmp_path, run=run, project_name="franca")
+    updater.restore_test_dir = folder
+    return updater, commands, folder
+
+
+def test_without_a_request_no_container_is_started(tmp_path: Path) -> None:
+    updater, commands, _folder = restore_check(tmp_path)
+
+    updater.check_restored_copy()
+
+    assert commands == []
+
+
+def test_a_request_starts_the_app_on_the_restored_copy_in_a_one_off_container_once(tmp_path: Path) -> None:
+    updater, commands, folder = restore_check(tmp_path)
+    (folder / "request.json").write_text(json.dumps({"id": "2026-12-07T03:30:00+00:00-ab12"}), encoding="utf-8")
+
+    updater.check_restored_copy()
+    updater.check_restored_copy()
+
+    assert len(commands) == 1
+    command = list(commands[0])
+    assert command[:6] == ["docker", "compose", "--project-directory", str(tmp_path), "--project-name", "franca"]
+    assert command[6:12] == ["run", "--rm", "--no-deps", "--entrypoint", "python", "restore-check"]
+    assert command[12] == "-c"
+
+
+def test_a_request_that_has_its_answer_is_not_started_again(tmp_path: Path) -> None:
+    updater, commands, folder = restore_check(tmp_path)
+    (folder / "request.json").write_text(json.dumps({"id": "one"}), encoding="utf-8")
+    (folder / "answer.json").write_text(json.dumps({"id": "one", "passed": True}), encoding="utf-8")
+
+    updater.check_restored_copy()
+
+    assert commands == []
+
+
+def test_a_one_off_container_that_cannot_start_is_printed_and_the_updater_goes_on(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    updater, _commands, folder = restore_check(tmp_path)
+    updater.compose = fu.Compose(tmp_path, run=lambda command: subprocess.CompletedProcess(command, 1, "", "no such image\n"))
+    (folder / "request.json").write_text(json.dumps({"id": "one"}), encoding="utf-8")
+
+    updater.check_restored_copy()
+
+    assert "restore-check-not-run" in capsys.readouterr().out
+
+
+def test_the_service_looks_for_a_request_each_minute(tmp_path: Path) -> None:
+    updater, commands, folder = restore_check(tmp_path)
+    service = fu.Service(updater, "02:30", wake=NOW + timedelta(hours=5))
+    service.tick(NOW)
+    (folder / "request.json").write_text(json.dumps({"id": "one"}), encoding="utf-8")
+
+    service.tick(NOW + timedelta(minutes=1))
+
+    assert len(commands) == 1
+
+
+def run_check_script(folder: Path, port: int) -> dict[str, object]:
+    """Runs the script of the one-off container on this computer, with the server's code, as the container would."""
+    script = fu.restore_check_script(str(folder), port)
+    environment = {
+        "PATH": str(Path(sys.executable).parent) + ":/usr/bin:/bin",
+        "PYTHONPATH": str(SERVER_SOURCE),
+        "FRANCA_ENVIRONMENT": "development",
+    }
+    subprocess.run([sys.executable, "-c", script], env=environment, timeout=120, check=True, capture_output=True)
+    answer: dict[str, object] = json.loads((folder / "answer.json").read_text(encoding="utf-8"))
+    return answer
+
+
+def free_port() -> int:
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port: int = probe.getsockname()[1]
+        return port
+
+
+def test_the_script_starts_the_app_on_a_restored_copy_and_reads_its_health_answer(tmp_path: Path) -> None:
+    folder = tmp_path / "restore-test"
+    folder.mkdir()
+    environment = {"PYTHONPATH": str(SERVER_SOURCE), "FRANCA_DATABASE_PATH": str(folder / "franca.db"), "PATH": "/usr/bin:/bin"}
+    subprocess.run([sys.executable, "-m", "franca.platform.migrate"], env=environment, check=True, capture_output=True)
+    (folder / "request.json").write_text(json.dumps({"id": "one"}), encoding="utf-8")
+
+    answer = run_check_script(folder, free_port())
+
+    assert answer["id"] == "one"
+    assert answer["passed"] is True, answer
+    assert answer["version"] == "0.1.0-dev"
+
+
+def test_the_script_reports_a_copy_the_app_cannot_start_on(tmp_path: Path) -> None:
+    folder = tmp_path / "restore-test"
+    folder.mkdir()
+    (folder / "franca.db").write_bytes(b"not a database, but long enough to be read as a file " * 100)
+    (folder / "request.json").write_text(json.dumps({"id": "two"}), encoding="utf-8")
+
+    answer = run_check_script(folder, free_port())
+
+    assert answer["id"] == "two"
+    assert answer["passed"] is False
+    assert answer["message"]
+
+
 class FlakyOpener:
     """Stands in for urlopen: raises the given errors in turn, then answers with the body."""
 
