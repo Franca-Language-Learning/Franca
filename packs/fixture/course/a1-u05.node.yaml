@@ -1,0 +1,11 @@
+# A fixture unit node, with its can-do descriptor and a goal.
+key: fx:unit:a1-u05
+type: unit
+parent: fx:level:a1
+position: 4
+level: a1
+title: {tl: Fixture boodschappen, en: Fixture shopping}
+estimated_minutes: 240
+can_dos: [fx:can-do:a1-shop]
+goals:
+  living: 0.8

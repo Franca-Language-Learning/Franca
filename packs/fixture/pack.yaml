@@ -1,0 +1,69 @@
+# The made-up pack "fx" for the public tests (story E03-001). There is an example of each type of pack file in this
+# folder. The text is placeholder text. The real Dutch pack is kept in the private content repository.
+language: fx
+version: 0.1.0
+name_en: Fixture language
+script: Latn
+direction: ltr
+varieties:
+  - code: fx-north
+    name_en: Northern fixture
+    productive: true
+  - code: fx-south
+    name_en: Southern fixture
+    productive: false
+    receptive_from: a2
+typology:
+  word_order: v2
+  grammatical_gender: true
+fonts: [Fixture Sans]
+reading_aids: [stress-marks]
+speakers:
+  - key: speaker-one
+    display_name: Speaker one
+    variety: fx-north
+    voice: recorded
+  - key: speaker-two
+    display_name: Speaker two
+    variety: fx-north
+    voice: synthetic
+paradigm_cells:
+  - key: plural
+    upos: NOUN
+    form_type: plural
+    ud_feats: Number=Plur
+    label: {tl: fixture plural, en: plural}
+  - key: past.sg
+    upos: VERB
+    form_type: finite
+    ud_feats: Number=Sing|Tense=Past
+    label: {tl: fixture past singular, en: past singular}
+  - key: imperative
+    upos: VERB
+    form_type: imperative
+    ud_feats: Mood=Imp
+    label: {tl: fixture imperative, en: imperative}
+verb_classes:
+  - key: irregular
+    label: {tl: fixture irregular, en: irregular}
+decks:
+  - key: shop
+    title: {tl: Fixture shop, en: In the shop}
+    items: [fx:lexeme:zakje, fx:chunk:nodig-hebben]
+goals:
+  - key: living
+    name: {tl: Fixture daily life, en: Daily life and services}
+  - key: work
+    name: {tl: Fixture work, en: Work}
+    offered: false
+exams:
+  - key: fixture-exam-a2
+    name: {tl: Fixture exam A2, en: Fixture exam A2}
+    issuer: Fixture issuer
+    level: a2
+    skills: listening, reading, writing, speaking
+    checked_on: "2026-11-21"
+    level_exam: fx:level:a2
+    available: false
+confusable_pairs:
+  - [fx:grammar:niet-geen, fx:grammar:word-order-v2]

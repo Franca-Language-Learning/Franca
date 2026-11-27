@@ -1,0 +1,6 @@
+# A fixture level node, at the root of the course tree.
+key: fx:level:a1
+type: level
+position: 0
+level: a1
+title: {tl: Fixture niveau A1, en: Level A1}

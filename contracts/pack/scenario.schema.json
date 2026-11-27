@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://franca.local/spec/scenario.schema.json",
+  "title": "Franca scenario (scenarios/<key>.yaml)",
+  "description": "A role-play situation for the AI conversation partner. Scenarios with the same slot (course node and slot number) are alternatives for one place in the course, and the learner's goals are used to choose between them (decision of 21 November 2026). Imported into catalogue_scenario_v and catalogue_goal_link_v.",
+  "type": "object",
+  "required": ["key", "title", "setting_en", "goal_en", "roles_en", "level"],
+  "additionalProperties": false,
+  "properties": {
+    "key": { "$ref": "common.schema.json#/$defs/item_key" },
+    "title": { "$ref": "common.schema.json#/$defs/bilingual" },
+    "setting_en": { "$ref": "common.schema.json#/$defs/text" },
+    "goal_en": { "description": "What the learner has to get done.", "$ref": "common.schema.json#/$defs/text" },
+    "roles_en": {
+      "description": "The learner's role (a) and the partner's role (b).",
+      "type": "object",
+      "required": ["a", "b"],
+      "additionalProperties": false,
+      "properties": {
+        "a": { "$ref": "common.schema.json#/$defs/text" },
+        "b": { "$ref": "common.schema.json#/$defs/text" }
+      }
+    },
+    "register": { "enum": ["neutral", "informal", "formal"], "default": "neutral" },
+    "level": { "$ref": "common.schema.json#/$defs/level" },
+    "can_do": {
+      "description": "The can-do descriptor that the scenario is evidence for.",
+      "$ref": "common.schema.json#/$defs/item_key"
+    },
+    "variety": { "$ref": "common.schema.json#/$defs/variety" },
+    "slot": {
+      "description": "The place in the course this scenario is one of the alternatives for.",
+      "type": "object",
+      "required": ["node", "number"],
+      "additionalProperties": false,
+      "properties": {
+        "node": { "$ref": "common.schema.json#/$defs/node_key" },
+        "number": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "goals": { "$ref": "common.schema.json#/$defs/goals" }
+  }
+}

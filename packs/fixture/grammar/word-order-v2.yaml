@@ -1,0 +1,8 @@
+# A fixture grammar point that niet-geen.yaml requires and that pack.yaml pairs with it as easily confused.
+key: fx:grammar:word-order-v2
+title: {tl: Fixture woordvolgorde, en: Fixture verb-second word order}
+level: a1
+explanations:
+  - depth: short
+    section: concept
+    body_en_md: Fixture explanation.

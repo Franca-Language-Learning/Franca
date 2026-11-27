@@ -41,7 +41,7 @@ dev = [
 package = false
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "../contracts/db/tests", "../tools/tests", "../infra/updater/tests", "../infra/backup/tests", "../infra/tests", "../installer/linux/tests"]
+testpaths = ["tests", "../contracts/db/tests", "../contracts/pack/tests", "../tools/tests", "../infra/updater/tests", "../infra/backup/tests", "../infra/tests", "../installer/linux/tests"]
 addopts = "-q --strict-markers"
 pythonpath = ["src"]
 

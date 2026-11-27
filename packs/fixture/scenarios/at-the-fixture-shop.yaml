@@ -1,0 +1,17 @@
+# A fixture scenario for the AI conversation partner, as one of the alternatives for a slot in a unit.
+key: fx:scenario:at-the-fixture-shop
+title: {tl: Fixture in de winkel, en: At the fixture shop}
+setting_en: A small shop in a fixture town.
+goal_en: Buy two things and pay.
+roles_en:
+  a: A customer.
+  b: A shopkeeper.
+register: formal
+level: a1
+can_do: fx:can-do:a1-shop
+variety: fx-north
+slot:
+  node: fx:unit:a1-u05
+  number: 1
+goals:
+  living: 1

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://franca.local/spec/chunk.schema.json",
+  "title": "Franca chunk (chunks/<key>.yaml)",
+  "description": "A phrase or formula that is taught as a whole, with its parts. Imported into catalogue_chunk_v and catalogue_chunk_part_v.",
+  "type": "object",
+  "required": ["key", "text_tl", "gloss_en"],
+  "additionalProperties": false,
+  "properties": {
+    "key": { "$ref": "common.schema.json#/$defs/item_key" },
+    "text_tl": { "$ref": "common.schema.json#/$defs/text" },
+    "gloss_en": { "description": "What the chunk means.", "$ref": "common.schema.json#/$defs/text" },
+    "literal_en": {
+      "description": "A word-for-word translation, where it helps.",
+      "$ref": "common.schema.json#/$defs/text"
+    },
+    "function_en": {
+      "description": "What the chunk is used for, for example to ask for something politely.",
+      "$ref": "common.schema.json#/$defs/text"
+    },
+    "register": { "$ref": "common.schema.json#/$defs/register", "default": "neutral" },
+    "level": { "$ref": "common.schema.json#/$defs/level" },
+    "parts": {
+      "description": "The words of the chunk in order, each linked to its lexeme where there is one.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["surface"],
+        "additionalProperties": false,
+        "properties": {
+          "surface": { "$ref": "common.schema.json#/$defs/text" },
+          "lexeme": { "$ref": "common.schema.json#/$defs/item_key" }
+        }
+      }
+    },
+    "pronunciations": { "$ref": "common.schema.json#/$defs/pronunciations" }
+  }
+}

@@ -1,0 +1,16 @@
+# A fixture chunk with its parts.
+key: fx:chunk:nodig-hebben
+text_tl: iets nodig hebben
+gloss_en: to need something
+literal_en: something necessary have
+function_en: To say what you need.
+register: neutral
+level: a1
+parts:
+  - surface: iets
+  - surface: nodig
+  - surface: hebben
+    lexeme: fx:lexeme:hebben
+pronunciations:
+  - variety: fx-north
+    ipa: its ˈnoːdəx ˈɦɛbə

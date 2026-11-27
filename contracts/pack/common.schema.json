@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://franca.local/spec/common.schema.json",
+  "title": "Shared definitions for Franca pack files",
+  "description": "Definitions that the pack file schemas refer to. The lists of allowed values are the same as the CHECK constraints of the catalogue tables in contracts/db/schema.sql and the reference data in contracts/db/seed.sql. They are compared with those files by the tests in contracts/pack/tests.",
+  "$defs": {
+    "item_key": {
+      "description": "language:type:slug, for example nl:lexeme:zakje or nl:grammar:niet-geen. The type is the middle part of the key, and it is mapped onto an item kind by the pack builder, from the type of file that the item is defined in. A variety or script subtag may follow the language. Lexeme keys follow the rule in server/src/franca/catalogue/item_keys.py. Up to 139 characters, so that a key with a sense or step suffix (#<slug>) stays within the 200 characters that the database allows.",
+      "type": "string",
+      "pattern": "^[a-z]{2,3}(-[a-z0-9]{2,8})?:[a-z]+(-[a-z]+)*:[a-z0-9]+(-[a-z0-9]+)*$",
+      "maxLength": 139
+    },
+    "node_key": {
+      "description": "The key of a course node or a lesson, for example nl:unit:a1-u05 or nl:lesson:a1-u05-l03.",
+      "type": "string",
+      "pattern": "^[a-z]{2,3}(-[a-z0-9]{2,8})?:(level|stage|unit|lesson|module):[a-z0-9]+(-[a-z0-9]+)*$",
+      "maxLength": 139
+    },
+    "slug": {
+      "description": "A short name of lowercase letters, digits and hyphens, unique within its file.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "maxLength": 60
+    },
+    "variety": {
+      "description": "A variety code that pack.yaml lists, for example nl-be.",
+      "type": "string",
+      "pattern": "^[a-z]{2,3}(-[a-z0-9]{2,8})*$",
+      "minLength": 2,
+      "maxLength": 20
+    },
+    "speaker": {
+      "description": "A speaker key that pack.yaml lists.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "sha256": {
+      "description": "The SHA-256 of a media file, in lowercase hexadecimal. The file itself is in the media store, and its record is in media/.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "level": { "enum": ["orientation", "pre-a1", "a1", "a2", "b1", "b2", "c1", "c2", "professional"] },
+    "register": { "enum": ["neutral", "informal", "formal", "vulgar", "dated", "technical"] },
+    "review_status": {
+      "description": "draft until a native-language reviewer has checked the entry.",
+      "enum": ["draft", "native_checked"],
+      "default": "draft"
+    },
+    "upos": {
+      "description": "The Universal Dependencies part of speech.",
+      "enum": [
+        "ADJ",
+        "ADP",
+        "ADV",
+        "AUX",
+        "CCONJ",
+        "DET",
+        "INTJ",
+        "NOUN",
+        "NUM",
+        "PART",
+        "PRON",
+        "PROPN",
+        "SCONJ",
+        "VERB",
+        "X"
+      ]
+    },
+    "mime": {
+      "enum": [
+        "audio/ogg",
+        "audio/mpeg",
+        "audio/mp4",
+        "audio/wav",
+        "video/mp4",
+        "video/webm",
+        "image/webp",
+        "image/png",
+        "image/jpeg",
+        "image/svg+xml",
+        "application/epub+zip",
+        "text/vtt",
+        "application/pdf"
+      ]
+    },
+    "rights_scope": {
+      "description": "private: only in the owner's own installation. shareable: may be in a pack that is passed on.",
+      "enum": ["private", "shareable"]
+    },
+    "licence": {
+      "description": "A licence code from the app's licence list (catalogue_licence in contracts/db/seed.sql).",
+      "enum": [
+        "owned-copy",
+        "franca-original",
+        "public-domain",
+        "CC0-1.0",
+        "CC-BY-4.0",
+        "CC-BY-SA-4.0",
+        "int-noncommercial"
+      ]
+    },
+    "goal_key": {
+      "description": "A learner goal from the app's list (study_goal in contracts/db/seed.sql).",
+      "enum": ["living", "social", "travel", "work", "study", "media", "exam", "field"]
+    },
+    "ui_element": {
+      "description": "An interface element from the app's list (catalogue_ui_element in contracts/db/seed.sql).",
+      "enum": [
+        "course",
+        "practise",
+        "words",
+        "library",
+        "conversations",
+        "notes",
+        "more",
+        "progress",
+        "together",
+        "settings",
+        "today",
+        "review",
+        "lookups",
+        "mix",
+        "flashcards",
+        "step_by_step",
+        "hint",
+        "answer",
+        "to_check",
+        "transcript",
+        "listen_n"
+      ]
+    },
+    "error_type": {
+      "description": "An error type from the app's list (catalogue_error_type in contracts/db/seed.sql).",
+      "enum": [
+        "word_order",
+        "agreement",
+        "gender",
+        "tense",
+        "verb_form",
+        "spelling",
+        "word_choice",
+        "missing_word",
+        "extra_word",
+        "register",
+        "vowel",
+        "consonant",
+        "prosody"
+      ]
+    },
+    "text": { "description": "Text that is not empty.", "type": "string", "minLength": 1 },
+    "markdown": {
+      "description": "Markdown. It is rendered to sanitised HTML by the pack builder.",
+      "type": "string",
+      "minLength": 1
+    },
+    "bilingual": {
+      "description": "The same text in the target language (tl) and in English (en).",
+      "type": "object",
+      "required": ["tl", "en"],
+      "additionalProperties": false,
+      "properties": { "tl": { "$ref": "#/$defs/text" }, "en": { "$ref": "#/$defs/text" } }
+    },
+    "english_first": {
+      "description": "Text in English (en), with the target-language text (tl) where there is one.",
+      "type": "object",
+      "required": ["en"],
+      "additionalProperties": false,
+      "properties": { "en": { "$ref": "#/$defs/text" }, "tl": { "$ref": "#/$defs/text" } }
+    },
+    "example": {
+      "description": "An example sentence with its English translation, and a recording where there is one.",
+      "type": "object",
+      "required": ["tl", "en"],
+      "additionalProperties": false,
+      "properties": {
+        "tl": { "$ref": "#/$defs/text" },
+        "en": { "$ref": "#/$defs/text" },
+        "media": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "pronunciation": {
+      "description": "How an item is said in one variety. There is a phonemic transcription or a recording by a named speaker, or both.",
+      "type": "object",
+      "required": ["variety"],
+      "additionalProperties": false,
+      "properties": {
+        "variety": { "$ref": "#/$defs/variety" },
+        "ipa": { "$ref": "#/$defs/text" },
+        "speaker": { "$ref": "#/$defs/speaker" },
+        "media": { "$ref": "#/$defs/sha256" }
+      },
+      "anyOf": [{ "required": ["ipa"] }, { "required": ["media"] }],
+      "dependentRequired": { "media": ["speaker"], "speaker": ["media"] }
+    },
+    "pronunciations": { "type": "array", "items": { "$ref": "#/$defs/pronunciation" } },
+    "goals": {
+      "description": "The learner goals the item is meant for, with a weight from 0 (exclusive) to 1. An item with no goals is offered to learners whatever their goals.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/goal_key" },
+      "additionalProperties": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+    }
+  }
+}
