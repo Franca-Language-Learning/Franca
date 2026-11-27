@@ -112,6 +112,11 @@ def statuses(base: str) -> dict[str, list[dict[str, Any]]]:
     return {entry["key"]: entry.get("results") or [] for entry in listed}
 
 
+def container_health(container: str) -> str:
+    """The health status that Docker reports for a container, such as healthy or starting."""
+    return sh("docker", "inspect", "-f", "{{.State.Health.Status}}", container, check=False).stdout.strip()
+
+
 def wait_for(condition: Any, seconds: float) -> bool:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -234,8 +239,7 @@ def main() -> int:
                 name = f"{PROJECT}-bad-ping"
                 sh("docker", "run", "--detach", "--name", name, "-v", secrets, STATUS)
                 try:
-                    state = lambda: sh("docker", "inspect", "-f", "{{.State.Health.Status}}", name, check=False).stdout.strip()  # noqa: E731
-                    healthy_without_heartbeat = wait_for(lambda: state() == "healthy", 90)
+                    healthy_without_heartbeat = wait_for(lambda: container_health(name) == "healthy", 90)
                     logged = sh("docker", "logs", name, check=False)
                     checks.check(
                         healthy_without_heartbeat
@@ -269,7 +273,7 @@ def main() -> int:
             sh(*compose, "stop", "ntfy")
             time.sleep(15)
             during = sh(*compose, "logs", "--no-color", "status", check=False)
-            status_health = sh("docker", "inspect", "-f", "{{.State.Health.Status}}", status_id, check=False).stdout.strip()
+            status_health = container_health(status_id)
             checks.check(
                 status_health == "healthy"
                 and "the heartbeat to healthchecks.io could not be sent" in during.stderr + during.stdout

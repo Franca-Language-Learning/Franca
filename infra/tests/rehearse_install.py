@@ -58,7 +58,8 @@ services:
   status:
     environment:
       FRANCA_NTFY_URL: http://127.0.0.1:9
-    extra_hosts: ["hc-ping.com:127.0.0.1"]
+    extra_hosts:
+      hc-ping.com: 127.0.0.1
 networks:
   rehearsal:
     external: true
