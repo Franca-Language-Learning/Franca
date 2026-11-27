@@ -51,7 +51,7 @@ check_python() {
     step "Server, contract and tool tests"
     uv run pytest
     step "Shell scripts"
-    uv run shellcheck ../tools/*.sh ../.githooks/* ../scripts/* ../client/scripts/*.sh ../infra/tests/*.sh
+    uv run shellcheck ../tools/*.sh ../.githooks/* ../scripts/* ../client/scripts/*.sh ../infra/tests/*.sh ../infra/*/entrypoint.sh
     step "Workflow security"
     # In the pipeline, zizmor also asks GitHub about the actions that the workflows use, with the job's token (GH_TOKEN).
     if [ -n "${GITHUB_ACTIONS:-}" ]; then
