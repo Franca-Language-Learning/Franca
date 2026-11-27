@@ -321,10 +321,10 @@ def test_a_module_with_a_path_outside_its_folder_is_refused(tmp_path: Path, name
     assert not (tmp_path / "cache" / "outside.txt").exists()
 
 
-def test_a_download_that_is_neither_a_tar_gz_nor_a_zip_file_is_refused(tmp_path: Path) -> None:
+def test_a_download_of_another_kind_is_refused(tmp_path: Path) -> None:
     data = b"<html>not a package</html>"
     (program,) = ip.read_programs(module_programs_file(tmp_path, data)).values()
-    with pytest.raises(ip.InstallError, match="neither"):
+    with pytest.raises(ip.InstallError, match="is not a .tar.gz file"):
         ip.install(program, tmp_path / "cache", fetch=Downloads(data))
 
 

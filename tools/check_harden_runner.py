@@ -3,8 +3,8 @@
 Harden-Runner (step-security/harden-runner) logs a job's network connections. In block mode, a connection to a host that
 is not in the job's allowed-endpoints is refused. These problems are reported for the jobs in .github/workflows:
 
-  - the job calls a reusable workflow (uses: at job level). The steps of a reusable workflow run in a job that is
-    written in another repository, so no Harden-Runner step can be added to it. The jobs in
+  - the job calls a reusable workflow (uses: at job level). The steps of a reusable workflow are in the called
+    workflow file, often in another repository, so no Harden-Runner step can be added to the calling job. The jobs in
     REUSABLE_WORKFLOW_EXCEPTIONS are not reported, and each of them has a reason. An exception for a job that does
     not call a reusable workflow, or that was removed from its workflow file, is reported, so that the list is kept
     short;
@@ -101,7 +101,7 @@ def workflow_files(root: Path) -> list[Path]:
 
 
 def all_jobs(root: Path) -> Iterator[tuple[str, str, Any]]:
-    """Each job in the workflows, as (workflow file name, job id, the job as written)."""
+    """The jobs in the workflows, as (workflow file name, job id, the job as written)."""
     for path in workflow_files(root):
         workflow = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         for job_id, job in (workflow.get("jobs") or {}).items():
@@ -133,7 +133,9 @@ def reusable_workflow_problems(root: Path) -> list[Problem]:
             if reason is None:
                 problems.append(Problem(workflow, job_id, "the job calls a reusable workflow, which has no Harden-Runner step"))
             elif not reason.strip():
-                problems.append(Problem(workflow, job_id, "the job is on the list of exceptions for reusable workflows with no reason"))
+                problems.append(
+                    Problem(workflow, job_id, "the job is on the list of exceptions for reusable workflows, and its reason is empty")
+                )
         elif reason is not None:
             problems.append(
                 Problem(workflow, job_id, "the job is on the list of exceptions for reusable workflows, and it does not call one")

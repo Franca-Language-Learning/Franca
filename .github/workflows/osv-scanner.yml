@@ -6,8 +6,10 @@
 # ignored in an osv-scanner.toml file next to a lockfile are left out by OSV-Scanner. There is no such file yet.
 #
 # On a pull request and in the merge queue, the job fails when there is a known vulnerability rated high or critical
-# with a fixed version, and the other findings are listed in the log. The rule is in tools/check_osv_results.py. On main and on the
-# daily schedule, the results are uploaded to code scanning too, and the same rule applies.
+# with a fixed version, or a known malicious package, and the other findings are listed in the log. The rule is in
+# tools/check_osv_results.py. On main and on the daily schedule, the results are uploaded to code scanning too, and the
+# same rule applies. OSV-Scanner is run with tools/run_osv_scanner.py, and the job fails when OSV-Scanner stops with an
+# error or logs one, for example for a lockfile that it could not read. Partial results are not judged.
 #
 # The jobs scan-pr and scan-main call Google's reusable workflow, which has no Harden-Runner step. They are removed in
 # a later pull request, after the owner has replaced "scan-pr / osv-scan" with "OSV scan" in the required checks.
@@ -48,14 +50,10 @@ jobs:
       - name: Scan the lockfiles and fail on a high finding with a fix
         run: |
           osv_scanner="$(python3 -I tools/install_program.py osv-scanner)"
-          # OSV-Scanner exits with 1 when it finds a known vulnerability. A higher exit code means that the scan did
-          # not finish, and then there are no results to read.
-          status=0
-          "$osv_scanner" scan source --recursive --format json --output-file "$RUNNER_TEMP/osv-results.json" . || status=$?
-          if [ "$status" -gt 1 ]; then
-            echo "::error::OSV-Scanner did not finish (exit code $status). The reason is above."
-            exit "$status"
-          fi
+          # OSV-Scanner exits with 1 when it finds a known vulnerability, also when it has logged an error. A higher
+          # exit code is an error, for example 128 when no lockfile is found. The step fails on an error of either
+          # kind before the results are read. The exit codes are in tools/run_osv_scanner.py.
+          python3 -I tools/run_osv_scanner.py "$osv_scanner" json "$RUNNER_TEMP/osv-results.json"
           python3 -I tools/check_osv_results.py "$RUNNER_TEMP/osv-results.json"
 
   osv-scan-main:
@@ -80,30 +78,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Scan the lockfiles for code scanning
+      - name: Scan the lockfiles
         run: |
           osv_scanner="$(python3 -I tools/install_program.py osv-scanner)"
-          # Exit code 1 means that a known vulnerability was found. A higher exit code means that the scan did not finish.
-          status=0
-          "$osv_scanner" scan source --recursive --format sarif --output-file "$RUNNER_TEMP/osv-results.sarif" . || status=$?
-          if [ "$status" -gt 1 ]; then
-            echo "::error::OSV-Scanner did not finish (exit code $status). The reason is above."
-            exit "$status"
-          fi
+          # OSV-Scanner writes one format per run, so it is run twice, one run straight after the other: SARIF for code
+          # scanning and JSON for the rule. The step fails when OSV-Scanner stops with an error or logs one, as in
+          # osv-scan, and then nothing is uploaded.
+          python3 -I tools/run_osv_scanner.py "$osv_scanner" sarif "$RUNNER_TEMP/osv-results.sarif"
+          python3 -I tools/run_osv_scanner.py "$osv_scanner" json "$RUNNER_TEMP/osv-results.json"
       - name: Upload the results to code scanning
         uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: ${{ runner.temp }}/osv-results.sarif
+      # After the upload, so that the results are in the Security tab when the rule fails the job.
       - name: Fail on a high finding with a fix
-        run: |
-          osv_scanner="$(python3 -I tools/install_program.py osv-scanner)"
-          status=0
-          "$osv_scanner" scan source --recursive --format json --output-file "$RUNNER_TEMP/osv-results.json" . || status=$?
-          if [ "$status" -gt 1 ]; then
-            echo "::error::OSV-Scanner did not finish (exit code $status). The reason is above."
-            exit "$status"
-          fi
-          python3 -I tools/check_osv_results.py "$RUNNER_TEMP/osv-results.json"
+        run: python3 -I tools/check_osv_results.py "$RUNNER_TEMP/osv-results.json"
 
   scan-pr:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'

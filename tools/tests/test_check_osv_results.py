@@ -2,7 +2,8 @@
 
 OSV-Scanner exits with 1 for any known vulnerability, so its exit code does not tell a finding that has to be fixed
 before a merge from one that can wait. The script reads OSV-Scanner's JSON output, and the job fails for a finding
-that is rated high or critical and has a fixed version. The OSV records in these tests are made up.
+that is rated high or critical and has a fixed version, and for a known malicious package. The OSV records in these
+tests are made up.
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ def record(
     fixed: str | None = "2.0.1",
     label: str | None = None,
     aliases: tuple[str, ...] = (),
+    database_specific: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """A made-up OSV record for one package, with a fixed version or none, and a severity label or none."""
     events: list[dict[str, str]] = [{"introduced": "0"}]
@@ -51,6 +53,8 @@ def record(
     }
     if label:
         found["database_specific"] = {"severity": label}
+    if database_specific is not None:
+        found["database_specific"] = database_specific
     return found
 
 
@@ -62,6 +66,7 @@ def scan(
     ecosystem: str = "PyPI",
     path: str = "/work/uv.lock",
     grouped: bool = True,
+    group_aliases: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """OSV-Scanner's JSON output for one package in one lockfile. The records are one group: one vulnerability under
     several IDs, with the highest CVSS score that OSV-Scanner worked out for it."""
@@ -70,7 +75,8 @@ def scan(
         "vulnerabilities": list(records),
     }
     if grouped:
-        found["groups"] = [{"ids": [r["id"] for r in records], "aliases": [r["id"] for r in records], "max_severity": max_severity}]
+        ids = [r["id"] for r in records]
+        found["groups"] = [{"ids": ids, "aliases": [*ids, *group_aliases], "max_severity": max_severity}]
     return {"results": [{"source": {"path": path, "type": "lockfile"}, "packages": [found]}]}
 
 
@@ -103,8 +109,51 @@ def test_with_no_cvss_score_a_lower_label_or_no_label_does_not_fail_the_job(labe
     assert blocking(scan(record("GHSA-0005", label=label))) == []
 
 
-def test_a_cvss_score_is_read_before_the_label() -> None:
-    assert blocking(scan(record("GHSA-0006", label="HIGH"), max_severity="5.3")) == []
+def test_a_high_label_fails_the_job_whatever_the_cvss_score() -> None:
+    # OSV-Scanner gives no score for a record with a CVSS vector it cannot read, so a lower score from another record
+    # of the group can be the only one. The label is read as well.
+    assert blocking(scan(record("GHSA-0006", label="HIGH"), max_severity="5.3")) == ["GHSA-0006"]
+
+
+def test_a_finding_with_a_score_and_a_label_is_listed_with_both() -> None:
+    (finding,) = osv.findings(scan(record("GHSA-0022", label="HIGH"), max_severity="5.3"))
+    assert "GHSA-0022 in example-package 2.0.0 (PyPI, /work/uv.lock): CVSS 5.3, label HIGH, fixed in 2.0.1" == str(finding)
+
+
+def test_a_null_label_is_no_label() -> None:
+    (finding,) = osv.findings(scan(record("GHSA-0018", database_specific={"severity": None})))
+    assert finding.label is None
+    assert "no severity given" in str(finding)
+
+
+# --- Known malicious packages
+
+
+def test_a_malicious_package_fails_the_job_with_no_severity_and_no_fixed_version() -> None:
+    assert blocking(scan(record("MAL-2026-0001", fixed=None))) == ["MAL-2026-0001"]
+
+
+def test_a_finding_with_a_malicious_alias_fails_the_job() -> None:
+    output = scan(record("GHSA-0019", fixed=None, label="LOW"), group_aliases=("MAL-2026-0002",))
+    assert blocking(output) == ["GHSA-0019"]
+
+
+def test_a_record_from_the_malicious_packages_data_fails_the_job() -> None:
+    origins = {"malicious-packages-origins": [{"source": "made-up", "id": "x"}]}
+    assert blocking(scan(record("GHSA-0020", fixed=None, database_specific=origins))) == ["GHSA-0020"]
+
+
+def test_a_malicious_package_is_named_as_such_in_the_log(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    results = tmp_path / "results.json"
+    results.write_text(json.dumps(scan(record("MAL-2026-0003", fixed=None))), encoding="utf-8")
+
+    assert osv.main([str(results)]) == 1
+    printed = capsys.readouterr().out
+    assert (
+        "MAL-2026-0003 in example-package 2.0.0 (PyPI, /work/uv.lock): known malicious package, no severity given, no fixed version"
+        in printed
+    )
+    assert "remove" in printed
 
 
 def test_the_records_of_one_vulnerability_are_one_finding() -> None:
@@ -129,9 +178,22 @@ def test_npm_package_names_are_compared_as_written() -> None:
     assert blocking(output) == []
 
 
-def test_without_groups_each_record_is_a_finding() -> None:
-    output = scan(record("GHSA-0011", label="HIGH"), record("GHSA-0012", label="LOW"), grouped=False)
-    assert [(f.ids, f.blocks_merge) for f in osv.findings(output)] == [(("GHSA-0011",), True), (("GHSA-0012",), False)]
+def test_vulnerabilities_without_groups_cannot_be_read(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    results = tmp_path / "results.json"
+    results.write_text(json.dumps(scan(record("GHSA-0011", label="HIGH"), grouped=False)), encoding="utf-8")
+
+    assert osv.main([str(results)]) == osv.EXIT_UNREADABLE
+    assert "no groups" in capsys.readouterr().err
+
+
+def test_a_record_in_no_group_cannot_be_read(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    output = scan(record("GHSA-0012", label="LOW"), max_severity="3.0")
+    output["results"][0]["packages"][0]["vulnerabilities"].append(record("GHSA-0021", label="CRITICAL"))
+    results = tmp_path / "results.json"
+    results.write_text(json.dumps(output), encoding="utf-8")
+
+    assert osv.main([str(results)]) == osv.EXIT_UNREADABLE
+    assert "GHSA-0021 is in no group" in capsys.readouterr().err
 
 
 def test_no_results_means_no_findings() -> None:
@@ -197,7 +259,31 @@ def test_text_from_the_records_cannot_start_a_workflow_command(
     assert all(not line.startswith("::add-mask") for line in capsys.readouterr().out.splitlines())
 
 
-@pytest.mark.parametrize("content", ["not json", "[]", '{"results": {}}'], ids=["not JSON", "a list", "results not a list"])
+@pytest.mark.parametrize(
+    "content",
+    [
+        "not json",
+        "[]",
+        '{"results": {}}',
+        "{}",
+        '{"foo": 1}',
+        '{"results": [1]}',
+        '{"results": [{"packages": "abc"}]}',
+        '{"results": [{"packages": [{"vulnerabilities": ["x"]}]}]}',
+        '{"results": [{"packages": [{"vulnerabilities": [{"id": "x", "affected": "x"}], "groups": [{"ids": ["x"]}]}]}]}',
+    ],
+    ids=[
+        "not JSON",
+        "a list",
+        "results not a list",
+        "no results key",
+        "another key",
+        "a result that is a number",
+        "packages that are a string",
+        "a vulnerability that is a string",
+        "affected that is a string",
+    ],
+)
 def test_output_that_cannot_be_read_is_reported(capsys: pytest.CaptureFixture[str], tmp_path: Path, content: str) -> None:
     results = tmp_path / "results.json"
     results.write_text(content, encoding="utf-8")

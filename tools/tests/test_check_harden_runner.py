@@ -207,7 +207,7 @@ def test_an_exception_needs_a_reason(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(check_harden_runner, "REUSABLE_WORKFLOW_EXCEPTIONS", {("other.yml", "reused"): " "})
 
     assert problems_in(tmp_path, ("other.yml", REUSABLE)) == [
-        "other.yml, job reused: the job is on the list of exceptions for reusable workflows with no reason"
+        "other.yml, job reused: the job is on the list of exceptions for reusable workflows, and its reason is empty"
     ]
 
 

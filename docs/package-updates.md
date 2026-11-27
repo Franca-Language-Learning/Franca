@@ -31,12 +31,21 @@ The uv version is pinned in `required-version` in `pyproject.toml`. The same ver
 
 The packages in `uv.lock` and `pnpm-lock.yaml` are checked with [OSV-Scanner](https://github.com/google/osv-scanner) in the workflow `.github/workflows/osv-scanner.yml`. OSV-Scanner is downloaded from its release page and checked against its SHA-256 in `tools/programs.txt`, like gitleaks. A lockfile that is added later is found too, because the checkout is scanned with its subfolders.
 
-- On a pull request and in the merge queue, the check is called "OSV scan". It fails when a package has a known vulnerability rated high or critical and a fixed version exists. Other findings are listed in the job's log and do not stop the merge.
-- On main, and on the daily schedule at 03:41 UTC, the job "OSV scan of main" uploads the results to code scanning, where they can be read in the repository's Security tab. The same rule applies, so this job fails when a new advisory is published for a package that is already merged.
+- On a pull request and in the merge queue, the check is called "OSV scan". It fails when a package has a known vulnerability rated high or critical and a fixed version exists, or when a package is a known malicious package. Other findings are listed in the job's log and do not stop the merge. Because the lockfiles are scanned as they are, a new advisory for a package that is already merged also stops pull requests that do not change that package, until the package is updated.
+- On main, and on the daily schedule at 03:41 UTC, the results of the job "OSV scan of main" are uploaded to code scanning, where they can be read in the repository's Security tab. The same rule applies, so this job fails when a new advisory is published for a package that is already merged.
 
-A finding is rated high or critical when its CVSS score is 7.0 or more. When there is no CVSS score, the label that the advisory database gives (HIGH or CRITICAL) is read. The rule, with its details, is at the top of `tools/check_osv_results.py`.
+A finding is rated high or critical when its CVSS score is 7.0 or more, or when the advisory database's own label is HIGH or CRITICAL on one of its records. The label is read when there is a lower score too. A known malicious package (an ID that starts with `MAL-`) fails the job whatever its severity, and whether or not there is a fixed version. The rule, with its details, is at the top of `tools/check_osv_results.py`.
 
-To fix a finding, update the package to the fixed version. If the fixed release is younger than seven days, follow "Installing a security fix sooner" above. When a finding does not apply to Franca and no fix can be installed yet, it can be ignored in an `osv-scanner.toml` file next to the lockfile, with the vulnerability's ID, a date when the exception ends (`ignoreUntil`) and the reason. There is no such file yet.
+When OSV-Scanner cannot read a lockfile, or logs another error, the job fails and the results are not judged. The error is in the job's log, above the line that starts with `run_osv_scanner:`.
+
+To fix a finding, update the package to the fixed version. If the fixed release is younger than seven days, follow "Installing a security fix sooner" above. A known malicious package has to be removed, or replaced with a version that is not affected. When a finding does not apply to Franca and no fix can be installed yet, it can be ignored in an `osv-scanner.toml` file next to the lockfile. There is no such file yet. An entry looks like this:
+
+```toml
+[[IgnoredVulns]]
+id = "GHSA-xxxx-xxxx-xxxx"
+ignoreUntil = 2027-01-31
+reason = "The affected function is not used by Franca."
+```
 
 ## Container images
 
@@ -111,7 +120,7 @@ The same command is run in the Container bundle job, so the digests can also be 
 
 ## Allowed endpoints in the pipeline
 
-Most jobs in the pipeline start with Harden-Runner in block mode (story E01-013). A connection from a job to a host that is not on the job's list of allowed endpoints is refused. The list is `allowed-endpoints` under the Harden-Runner step of that job, in the workflow file in `.github/workflows/`. Some of GitHub's own hosts, such as the storage for logs and artifacts, are allowed by Harden-Runner without being listed. The GitHub hosts that a job calls, such as github.com, are listed anyway. The jobs in `release.yml` are in audit mode until the first release, and their lists will be written from that release's logs. A job that calls a reusable workflow from another repository cannot have a Harden-Runner step. The two jobs in `osv-scanner.yml` that call Google's reusable workflow, `scan-pr` and `scan-main`, are kept until the owner has replaced their required check, and are then removed.
+Most jobs in the pipeline start with Harden-Runner in block mode (story E01-013). A connection from a job to a host that is not on the job's list of allowed endpoints is refused. The list is `allowed-endpoints` under the Harden-Runner step of that job, in the workflow file in `.github/workflows/`. Some of GitHub's own hosts, such as the storage for logs and artifacts, are allowed by Harden-Runner without being listed. The GitHub hosts that a job calls, such as github.com, are listed anyway. The jobs in `release.yml` are in audit mode until the first release, and their lists will be written from that release's logs. A job that calls a reusable workflow cannot have a Harden-Runner step of its own. The two jobs in `osv-scanner.yml` that call Google's reusable workflow, `scan-pr` and `scan-main`, are kept until the owner has replaced the required check "scan-pr / osv-scan" with "OSV scan", and are then removed.
 
 After a change that adds a new place to download from, such as a package index or an image registry, a job can fail because a connection was refused. To find the host and add it:
 

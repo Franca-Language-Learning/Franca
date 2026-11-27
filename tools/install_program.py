@@ -245,7 +245,7 @@ def install(program: Program, cache: Path, fetch: Fetch = download, this_platfor
     elif start.startswith(ELF_START):
         _copy_program(archive, target)
     else:
-        raise InstallError(f"{program.file_name} is neither a .tar.gz file, a zip file nor a Linux program (ELF)")
+        raise InstallError(f"{program.file_name} is not a .tar.gz file, a zip file or a Linux program (ELF)")
     return target
 
 
