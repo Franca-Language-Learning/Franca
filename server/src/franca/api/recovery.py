@@ -6,11 +6,11 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import Engine
 from starlette.concurrency import run_in_threadpool
 
 from franca import identity
-from franca.api.auth import Db, Me, RecentlySignedIn, SignedIn, session_token, set_session_cookie
+from franca.api.auth import Me
+from franca.api.dependencies import NOT_SIGNED_IN, Db, RecentlySignedIn, SignedIn, engine_of, session_token, set_session_cookie
 from franca.platform import Settings, utc_now
 
 NOT_ACCEPTED = "recovery-code-not-accepted"
@@ -107,14 +107,13 @@ def too_many() -> JSONResponse:
 def recovery_router(settings: Settings) -> APIRouter:
     router = APIRouter(tags=["identity"])
     limiter = AttemptLimiter(WINDOW_SECONDS)
-    unauthorised: dict[int | str, dict[str, str]] = {401: {"description": "Not signed in"}}
 
     @router.get(
         "/recovery-codes",
         operation_id="getRecoveryCodeStatus",
         summary="How many of the signed-in learner's recovery codes are left",
         response_model=RecoveryCodeStatusOut,
-        responses=unauthorised,
+        responses=NOT_SIGNED_IN,
     )
     def code_status(db: Db, learner: SignedIn) -> RecoveryCodeStatusOut:
         found = identity.recovery_code_status(db, learner)
@@ -126,7 +125,7 @@ def recovery_router(settings: Settings) -> APIRouter:
         summary="Makes ten new recovery codes; the old ones stop working",
         status_code=status.HTTP_201_CREATED,
         response_model=RecoveryCodes,
-        responses={**unauthorised, 403: {"description": "The learner signed in more than 15 minutes ago (sign-in-again)"}},
+        responses={**NOT_SIGNED_IN, 403: {"description": "The learner signed in more than 15 minutes ago (sign-in-again)"}},
     )
     def make_codes(response: Response, db: Db, learner: RecentlySignedIn) -> RecoveryCodes:
         response.headers["Cache-Control"] = "no-store"
@@ -146,7 +145,7 @@ def recovery_router(settings: Settings) -> APIRouter:
     )
     async def sign_in(body: RecoverySignIn, request: Request) -> Response:
         earlier = session_token(request)
-        engine: Engine = request.app.state.engine
+        engine = engine_of(request)
         address = identity.normalise_email(body.email)
         computer = request.client.host if request.client else "unknown"
         if not limiter.allow(("computer", computer), COMPUTER_TRIES) or not limiter.allow(("address", address), identity.MAX_FAILURES):
@@ -181,7 +180,7 @@ def recovery_router(settings: Settings) -> APIRouter:
             limiter.record(("address", address))
             return JSONResponse({"detail": NOT_ACCEPTED}, status_code=status.HTTP_401_UNAUTHORIZED)
         learner, token = signed_in
-        answer = JSONResponse(Me(displayName=learner.display_name, role=learner.role).model_dump())
+        answer = JSONResponse(Me.of(learner).model_dump())
         set_session_cookie(answer, settings, token)
         return answer
 

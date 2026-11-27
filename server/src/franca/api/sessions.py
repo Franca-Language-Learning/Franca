@@ -1,12 +1,10 @@
 """Routes for the signed-in learner's devices (story E02-003): the list, and signing out one or all other devices."""
 
-from typing import Any
-
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from franca import identity
-from franca.api.auth import Db, SignedIn, session_token
+from franca.api.dependencies import NOT_SIGNED_IN, Db, SignedIn, session_token
 from franca.platform import utc_now
 
 
@@ -58,14 +56,13 @@ class SignedOut(BaseModel):
 
 def session_router() -> APIRouter:
     router = APIRouter(tags=["identity"])
-    unauthorised: dict[int | str, dict[str, Any]] = {401: {"description": "Not signed in"}}
 
     @router.get(
         "/sessions",
         operation_id="listSessions",
         summary="The devices the learner is signed in on",
         response_model=SessionList,
-        responses=unauthorised,
+        responses=NOT_SIGNED_IN,
     )
     def sessions(request: Request, db: Db, learner: SignedIn) -> SessionList:
         found = identity.list_sessions(db, learner, current_token=session_token(request), now=utc_now())
@@ -89,7 +86,7 @@ def session_router() -> APIRouter:
         summary="Signs out one of the learner's devices",
         status_code=status.HTTP_204_NO_CONTENT,
         response_class=Response,
-        responses={**unauthorised, 404: {"description": "The learner has no open session with this id"}},
+        responses={**NOT_SIGNED_IN, 404: {"description": "The learner has no open session with this id"}},
     )
     def sign_out_device(sessionId: int, db: Db, learner: SignedIn) -> Response:  # noqa: N803 - the name in the URL
         try:
@@ -103,7 +100,7 @@ def session_router() -> APIRouter:
         operation_id="signOutOtherDevices",
         summary="Signs out every device of the learner except this one",
         response_model=SignedOut,
-        responses=unauthorised,
+        responses=NOT_SIGNED_IN,
     )
     def sign_out_others(request: Request, db: Db, learner: SignedIn) -> SignedOut:
         # SignedIn has checked that the request has a valid session token.

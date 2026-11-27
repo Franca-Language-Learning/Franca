@@ -1,34 +1,36 @@
 """Routes for signing in with Google, the signed-in learner, signing out and invitations (story E02-001).
 
-Sign-in with Google uses OpenID Connect with PKCE through Authlib. Authlib checks the state, the nonce and the
-ID token's signature and expiry; the issuer and the audience are checked with the claims options below. The state of a sign-in in progress is kept in a short-lived signed
-cookie (franca_oauth); the sign-in session is a random token in the session cookie, of which only a hash is
-stored.
+Sign-in with Google uses OpenID Connect with PKCE through Authlib. Authlib checks the state, the nonce and the ID
+token's signature and expiry. The issuer and the audience are checked with the claims options below. The state of a
+sign-in in progress is kept in a short-lived signed cookie (franca_oauth). The sign-in session is a random token in the
+session cookie, of which only a hash is stored.
 """
 
-from collections.abc import Iterator
-from datetime import timedelta
-from typing import Annotated, Any
+from typing import Any
 
 import httpx2
 from authlib.integrations.starlette_client import OAuth, OAuthError
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from joserfc.errors import JoseError
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import Connection, Engine
 from sqlalchemy.exc import IntegrityError, OperationalError
 from starlette.concurrency import run_in_threadpool
 
 from franca import identity
-from franca.platform import Settings, iso, utc_now
+from franca.api.dependencies import (
+    API_PREFIX,
+    NOT_SIGNED_IN,
+    Db,
+    SignedIn,
+    engine_of,
+    session_cookie_name,
+    session_token,
+    set_session_cookie,
+)
+from franca.platform import Settings, utc_now
 
-SESSION_COOKIE = "franca_session"
-# Over https the cookie names start with __Host-, so the browser accepts them only from this host, over https, for
-# the whole site. Other computers in the same tailnet share the site (tailXXXX.ts.net) and could otherwise set them.
-SECURE_PREFIX = "__Host-"
 PREVIOUS_SESSION_KEY = "previous_session"
-RECENT_SIGN_IN = timedelta(minutes=15)
 GOOGLE_ISSUER = "https://accounts.google.com"
 GOOGLE_DISCOVERY = f"{GOOGLE_ISSUER}/.well-known/openid-configuration"
 # Errors from Google, the network, or the checks of the ID token. Each one ends the sign-in with error=failed.
@@ -40,6 +42,10 @@ class Me(BaseModel):
 
     displayName: str  # noqa: N815 (the API uses camelCase)
     role: str
+
+    @classmethod
+    def of(cls, learner: identity.Learner) -> Me:
+        return cls(displayName=learner.display_name, role=learner.role)
 
 
 class InvitationRequest(BaseModel):
@@ -93,70 +99,9 @@ def _invitation(invitation: identity.Invitation) -> InvitationOut:
     return InvitationOut(email=invitation.email, createdAt=invitation.created_at, expiresAt=invitation.expires_at, status=invitation.status)
 
 
-def connection(request: Request) -> Iterator[Connection]:
-    engine: Engine = request.app.state.engine
-    with engine.begin() as conn:
-        yield conn
-
-
-# scope="function": the transaction is committed before the response is sent, so a browser that follows a
-# redirect at once finds the new session.
-Db = Annotated[Connection, Depends(connection, scope="function")]
-
-
-def session_cookie_name(settings: Settings) -> str:
-    return SECURE_PREFIX + SESSION_COOKIE if settings.cookies_secure else SESSION_COOKIE
-
-
-def session_token(request: Request) -> str | None:
-    """The session token in the request's cookie, if there is one."""
-    return request.cookies.get(session_cookie_name(request.app.state.settings)) or None
-
-
-def set_session_cookie(response: Response, settings: Settings, token: str) -> None:
-    response.set_cookie(
-        session_cookie_name(settings),
-        token,
-        max_age=identity.SESSION_DAYS * 24 * 3600,
-        httponly=True,
-        secure=settings.cookies_secure,
-        # Strict: the browser does not send the cookie with a request that another site starts.
-        samesite="strict",
-        path="/",
-    )
-
-
-def current_session(request: Request, response: Response, db: Db) -> identity.SessionCheck:
-    token = session_token(request)
-    check = identity.learner_for_session(db, token, utc_now()) if token else None
-    if check is None or token is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not signed in")
-    if check.extended:
-        # The session was extended in the database, so the cookie in the browser is extended to match.
-        set_session_cookie(response, request.app.state.settings, token)
-    return check
-
-
-def current_learner(check: Annotated[identity.SessionCheck, Depends(current_session)]) -> identity.Learner:
-    return check.learner
-
-
-def recently_signed_in(check: Annotated[identity.SessionCheck, Depends(current_session)]) -> identity.Learner:
-    """The learner, if they signed in within the last RECENT_SIGN_IN. Steps that add a way in need this, so that
-    someone with a stolen session cookie cannot add one."""
-    if check.signed_in_at < iso(utc_now() - RECENT_SIGN_IN):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "sign-in-again")
-    return check.learner
-
-
 def _session_id_of(request: Request, token: str) -> int | None:
-    engine: Engine = request.app.state.engine
-    with engine.begin() as connection:
+    with engine_of(request).begin() as connection:
         return identity.session_id_for_token(connection, token, utc_now())
-
-
-SignedIn = Annotated[identity.Learner, Depends(current_learner)]
-RecentlySignedIn = Annotated[identity.Learner, Depends(recently_signed_in)]
 
 
 def auth_router(settings: Settings, oauth: OAuth | None) -> APIRouter:
@@ -176,7 +121,7 @@ def auth_router(settings: Settings, oauth: OAuth | None) -> APIRouter:
     async def start(request: Request) -> Any:
         if oauth is None:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Sign-in with Google is not configured")
-        redirect_uri = f"{settings.public_url}/api/v1/auth/google/callback"
+        redirect_uri = f"{settings.public_url}{API_PREFIX}/auth/google/callback"
         # Google sends the browser back from another site, so the Strict session cookie is not sent to the callback.
         # The session that is open now is noted here, where the cookie is sent, and the callback ends it.
         token = session_token(request)
@@ -239,11 +184,9 @@ def auth_router(settings: Settings, oauth: OAuth | None) -> APIRouter:
         set_session_cookie(response, settings, new_token)
         return response
 
-    @router.get(
-        "/me", operation_id="getMe", summary="The signed-in learner", response_model=Me, responses={401: {"description": "Not signed in"}}
-    )
+    @router.get("/me", operation_id="getMe", summary="The signed-in learner", response_model=Me, responses=NOT_SIGNED_IN)
     def me(learner: SignedIn) -> Me:
-        return Me(displayName=learner.display_name, role=learner.role)
+        return Me.of(learner)
 
     @router.post(
         "/auth/sign-out",
@@ -266,7 +209,7 @@ def auth_router(settings: Settings, oauth: OAuth | None) -> APIRouter:
         summary="Invites a learner by e-mail address (owner only)",
         status_code=status.HTTP_201_CREATED,
         response_model=InvitationOut,
-        responses={401: {"description": "Not signed in"}, 403: {"description": "Only the owner can invite learners"}},
+        responses={**NOT_SIGNED_IN, 403: {"description": "Only the owner can invite learners"}},
     )
     def create_invitation(body: InvitationRequest, db: Db, learner: SignedIn) -> InvitationOut:
         try:
@@ -279,7 +222,7 @@ def auth_router(settings: Settings, oauth: OAuth | None) -> APIRouter:
         operation_id="listInvitations",
         summary="The invitations, newest first (owner only)",
         response_model=InvitationList,
-        responses={401: {"description": "Not signed in"}, 403: {"description": "Only the owner can see invitations"}},
+        responses={**NOT_SIGNED_IN, 403: {"description": "Only the owner can see invitations"}},
     )
     def invitations(db: Db, learner: SignedIn) -> InvitationList:
         try:
@@ -308,7 +251,6 @@ def google_oauth(settings: Settings, transport: Any = None) -> OAuth | None:
     return oauth
 
 
-def install(app: FastAPI, settings: Settings, engine: Engine, transport: Any = None) -> APIRouter:
-    app.state.engine = engine
-    app.state.settings = settings
+def google_router(settings: Settings, transport: Any = None) -> APIRouter:
+    """The routes of this module. transport is for tests: an HTTP transport that answers in place of Google."""
     return auth_router(settings, google_oauth(settings, transport))

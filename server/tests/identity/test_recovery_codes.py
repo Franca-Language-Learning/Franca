@@ -1,21 +1,19 @@
 """Recovery codes: ten single-use codes for signing in when the phone with the passkey is lost (story E02-002)."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import pytest
+from identity_helpers import NOW, OWNER_EMAIL, sign_in
 from sqlalchemy import Connection, text
 
 from franca import identity
 from franca.identity import recovery
 
-NOW = datetime(2026, 12, 1, 9, 0, tzinfo=UTC)
-EMAIL = "owner@example.org"
+EMAIL = OWNER_EMAIL
 
 
 def owner(connection: Connection) -> identity.Learner:
-    return identity.sign_in_with_google(
-        connection, subject="g-owner", email=EMAIL, email_verified=True, name="Nik", owner_email=EMAIL, now=NOW
-    )
+    return sign_in(connection)
 
 
 def events(connection: Connection) -> list[str]:
