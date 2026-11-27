@@ -3,6 +3,9 @@
 
 It needs Docker with Compose and builds the images itself. Headscale, an open-source Tailscale control server, is used
 in place of Tailscale's own, so no account is needed. A second Tailscale container is used in place of a phone.
+Nothing in the rehearsal is sent to a host on the internet: the devices use the relay (DERP) and STUN server in
+Headscale, not Tailscale's, and send no logs to Tailscale, and Caddy has its own local certificate authority in place of
+Let's Encrypt. In the Container bundle job, where the rehearsal runs, connections to those hosts are refused.
 
 The rehearsal:
 1. starts Headscale and makes a sign-up key;
@@ -13,7 +16,8 @@ The rehearsal:
 5. checks that Caddy's user can reach tailscaled through the shared socket and may ask for a certificate, and that
    another user may not;
 6. checks that no container publishes a port beyond the PC's loopback;
-7. checks that the tailscale container runs as a user, with a read-only file system and no capabilities.
+7. checks that the tailscale container runs as a user, with a read-only file system and no capabilities;
+8. checks that the phone's relay map has Headscale's relay only.
 
 Headscale cannot issue certificates, so the certificate itself is tried at the installer rehearsal on the PC.
 """
@@ -29,16 +33,19 @@ from pathlib import Path
 from rehearsal import (
     HEADSCALE,
     ROOT,
+    TAILSCALE_REHEARSAL_ENVIRONMENT,
     Checks,
     build_image,
     check_hardened,
     compose_command,
     copy_compose_file,
+    environment_lines,
     free_port,
     headscale_config,
     sh,
     tear_down,
     write_env,
+    write_rehearsal_caddyfile,
     write_secrets,
 )
 
@@ -52,13 +59,17 @@ PHONE = "tailscale/tailscale:v1.104.7@sha256:72c1e19e0aedca96b8533bbb0b436856441
 LOGIN_SERVER = "http://headscale:8080"
 
 # Headscale and the phone are added to the bundle for the rehearsal only. The tailscale container is pointed at
-# Headscale in place of Tailscale's control server.
+# Headscale in place of Tailscale's control server. Caddy reads the rehearsal's Caddyfile, which is written to the
+# bundle folder.
 OVERRIDE = f"""\
 services:
+  caddy:
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
   tailscale:
     environment:
       TS_EXTRA_ARGS: --login-server={LOGIN_SERVER}
-    depends_on:
+{environment_lines(TAILSCALE_REHEARSAL_ENVIRONMENT, 6)}    depends_on:
       headscale:
         condition: service_healthy
   headscale:
@@ -89,7 +100,7 @@ services:
       TS_HOSTNAME: phone
       TS_USERSPACE: "true"
       TS_STATE_DIR: /var/lib/tailscale
-    secrets: [tailscale_authkey]
+{environment_lines(TAILSCALE_REHEARSAL_ENVIRONMENT, 6)}    secrets: [tailscale_authkey]
     tmpfs: [/var/lib/tailscale]
     networks: [internal]
 """
@@ -108,6 +119,7 @@ def main() -> int:
         copy_compose_file(bundle, OVERRIDE)
         (bundle / "headscale").mkdir()
         (bundle / "headscale" / "config.yaml").write_text(headscale_config(), encoding="utf-8")
+        write_rehearsal_caddyfile(bundle / "caddy")
         key_folder = write_secrets(bundle / "secrets")
         write_env(
             bundle / ".env",
@@ -205,6 +217,13 @@ def main() -> int:
 
             settings = check_hardened(checks, compose, "tailscale", "tailscale")
             checks.check(not settings["HostConfig"]["Devices"], "tailscale has no devices such as /dev/net/tun")
+
+            # Region 999 is Headscale's own relay (derp.server.region_id in headscale_config).
+            relays = sh(*compose, "exec", "-T", "phone", "tailscale", "debug", "derp-map", check=False)
+            regions = set((json.loads(relays.stdout or "{}").get("Regions") or {}).keys())
+            checks.check(regions == {"999"}, "the phone's relay map has Headscale's relay only")
+            if regions != {"999"}:
+                print(f"info: the relay map has regions {sorted(regions)}, errors {relays.stderr[:300]!r}", flush=True)
         finally:
             tear_down(compose, show_logs=bool(checks.failures))
     return checks.exit_code()

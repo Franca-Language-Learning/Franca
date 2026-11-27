@@ -2,6 +2,11 @@
 # code scanning is run through GitHub's default setup. The python and client parts of scripts/check are run in this
 # workflow, so the same commands are run in the pipeline and in a local check.
 # Actions are pinned to a full commit SHA, with the release tag in a comment; Renovate updates both.
+#
+# Harden-Runner is in block mode in each job, so a connection to a host that is not in the job's allowed-endpoints is
+# refused. GitHub's own hosts are allowed by Harden-Runner without a list. Jobs that need neither sudo nor Docker have
+# both switched off. tools/check_harden_runner.py checks the settings, and docs/package-updates.md says how to add an
+# endpoint.
 name: CI
 
 on:
@@ -26,7 +31,16 @@ jobs:
     steps:
       - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
-          egress-policy: audit
+          egress-policy: block
+          disable-sudo-and-containers: true
+          allowed-endpoints: >
+            api.github.com:443
+            cdn.powershellgallery.com:443
+            files.pythonhosted.org:443
+            github.com:443
+            release-assets.githubusercontent.com:443
+            releases.astral.sh:443
+            www.powershellgallery.com:443
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -35,7 +49,8 @@ jobs:
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           enable-cache: false
-      # The locked packages and the start-up file check, ruff, mypy, import-linter, the tests, shellcheck and zizmor.
+      # The locked packages and the start-up file check, ruff, mypy, import-linter, the tests, shellcheck, zizmor and the
+      # Harden-Runner check.
       - name: Python checks (scripts/check python)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -67,7 +82,13 @@ jobs:
     steps:
       - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
-          egress-policy: audit
+          egress-policy: block
+          disable-sudo-and-containers: true
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+            registry.npmjs.org:443
+            release-assets.githubusercontent.com:443
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -90,7 +111,16 @@ jobs:
     steps:
       - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
-          egress-policy: audit
+          egress-policy: block
+          allowed-endpoints: >
+            *.data.mcr.microsoft.com:443
+            api.github.com:443
+            files.pythonhosted.org:443
+            github.com:443
+            mcr.microsoft.com:443
+            registry.npmjs.org:443
+            release-assets.githubusercontent.com:443
+            releases.astral.sh:443
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -143,9 +173,33 @@ jobs:
     permissions:
       contents: read
     steps:
+      # The hosts are for the image builds (Docker Hub, ghcr.io, lscr.io, Debian, Alpine, PyPI, npm and Go's module
+      # proxy), for Grype's database on anchore.io, and for the action that installs Grype (raw.githubusercontent.com).
+      # No host on the internet is needed by the rehearsals.
       - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
-          egress-policy: audit
+          egress-policy: block
+          allowed-endpoints: >
+            auth.docker.io:443
+            deb.debian.org:80
+            dl-cdn.alpinelinux.org:443
+            docker-images-prod.s3.dualstack.us-east-1.amazonaws.com:443
+            files.pythonhosted.org:443
+            ghcr.io:443
+            github.com:443
+            grype.anchore.io:443
+            lscr.io:443
+            pkg-containers.githubusercontent.com:443
+            production.cloudfront.docker.com:443
+            proxy.golang.org:443
+            raw.githubusercontent.com:443
+            registry-1.docker.io:443
+            registry.npmjs.org:443
+            release-assets.githubusercontent.com:443
+            releases.astral.sh:443
+            storage.googleapis.com:443
+            sum.golang.org:443
+            toolbox-data.anchore.io:443
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -196,9 +250,13 @@ jobs:
     permissions:
       contents: read
     steps:
+      # The oasdiff action runs in a container, so only sudo is switched off.
       - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
-          egress-policy: audit
+          egress-policy: block
+          disable-sudo: true
+          allowed-endpoints: >
+            github.com:443
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -225,7 +283,12 @@ jobs:
     steps:
       - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
-          egress-policy: audit
+          egress-policy: block
+          disable-sudo-and-containers: true
+          allowed-endpoints: >
+            api.github.com:443
+            api.securityscorecards.dev:443
+            github.com:443
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

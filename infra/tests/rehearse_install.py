@@ -4,7 +4,8 @@
 It needs Docker with Compose, sudo without a password and uv, and builds the images itself. The installer runs as root
 with Python 3.13, the version in the Franca WSL system. Headscale is used in place of Tailscale's control server, and a
 small web server in this script is used in place of ntfy.sh. Inside the bundle, hc-ping.com is pointed at the status
-container's own loopback address, so no heartbeat reaches healthchecks.io. The Windows part (Install-Franca.ps1) is
+container's own loopback address, so no heartbeat reaches healthchecks.io. As in the tailnet rehearsal, nothing is sent
+to Tailscale or to a public certificate authority (see rehearse_tailnet.py). The Windows part (Install-Franca.ps1) is
 tried on the owner's PC.
 
 The rehearsal:
@@ -29,31 +30,40 @@ from pathlib import Path
 from rehearsal import (
     HEADSCALE,
     ROOT,
+    TAILSCALE_REHEARSAL_ENVIRONMENT,
     Checks,
     build_image,
     check_hardened,
     compose_command,
+    environment_lines,
     headscale_config,
     services_not_healthy,
     sh,
     tear_down,
+    write_rehearsal_caddyfile,
 )
 
 PROJECT = f"franca-install-rehearsal-{os.getpid()}"
 NETWORK = f"franca-install-rehearsal-{os.getpid()}"
 HEADSCALE_NAME = f"franca-install-headscale-{os.getpid()}"
 # A ping address in the form the installer accepts, with a random id. The rehearsal checks that it is kept as a secret
-# and not shown. hc-ping.com is pointed at the loopback address in OVERRIDE, so no heartbeat leaves the computer.
+# and not shown. hc-ping.com is pointed at the loopback address in override(), so no heartbeat leaves the computer.
 PING_URL = "https://hc-ping.com/{}-{}-{}-{}-{}".format(*(os.urandom(n).hex() for n in (4, 2, 2, 2, 6)))
 IMAGES = {service: f"franca/{service}:rehearsal-install" for service in ("app", "caddy", "updater", "backup", "tailscale", "status")}
 
-# The bundle's tailscale container is pointed at Headscale, which runs outside the bundle on its own network.
-OVERRIDE = f"""\
+
+def override(caddyfile: Path) -> str:
+    """The rehearsal's additions to the bundle. The bundle's tailscale container is pointed at Headscale, which runs
+    outside the bundle on its own network, and Caddy reads the rehearsal's Caddyfile from the given path."""
+    return f"""\
 services:
+  caddy:
+    volumes:
+      - {caddyfile}:/etc/caddy/Caddyfile:ro
   tailscale:
     environment:
       TS_EXTRA_ARGS: --login-server=http://headscale:8080
-    networks: [internal, rehearsal]
+{environment_lines(TAILSCALE_REHEARSAL_ENVIRONMENT, 6)}    networks: [internal, rehearsal]
   # Headscale issues no certificates, so the HTTPS check fails. Its alerts go nowhere, not to ntfy.sh.
   status:
     environment:
@@ -113,7 +123,7 @@ def main() -> int:
         disk = work / "disk-j"
         disk.mkdir()
         bundle.mkdir()
-        (bundle / "compose.override.yaml").write_text(OVERRIDE, encoding="utf-8")
+        (bundle / "compose.override.yaml").write_text(override(write_rehearsal_caddyfile(work / "caddy")), encoding="utf-8")
         (work / "headscale").mkdir()
         (work / "headscale" / "config.yaml").write_text(headscale_config(base_domain="rehearsal.ts.net"), encoding="utf-8")
         release = work / "release.json"

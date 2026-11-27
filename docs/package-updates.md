@@ -97,3 +97,16 @@ python3 -I tools/check_pins.py --resolve
 ```
 
 The same command is run in the Container bundle job, so the digests can also be read from its log.
+
+## Connections from the pipeline
+
+Each job in the pipeline starts with Harden-Runner in block mode (story E01-013). A connection from the job to a host that is not on the job's list of allowed endpoints is refused. The list is `allowed-endpoints` under the Harden-Runner step of that job, in the workflow file in `.github/workflows/`. GitHub's own hosts, such as github.com and the storage for logs and artifacts, are allowed by Harden-Runner without being listed. The jobs in `release.yml` are in audit mode until the first release, and their lists are written from that release's logs. The OSV-Scanner workflow is run from Google's reusable workflow, which has no Harden-Runner step.
+
+After a change that adds a package source, an image registry or a download address, a job can fail because a connection was refused. To find the host and add it:
+
+1. Open the failed job from the pull request's **Checks** tab. A blocked call is shown as an annotation at the top of the job's summary: "DNS resolution for domain … was blocked" or "Traffic to IP Address … was blocked".
+2. For more detail, open the step **Post Run step-security/harden-runner** at the end of the job's log. The blocked host is given on the lines with `domain not allowed:` or `ip address dropped:`. Each connection is on a line starting `endpoint called`, with the name of the program that made it.
+3. Check that the job needs the host. A call that only sends telemetry or checks for updates can stay blocked if the job passes without it.
+4. In a pull request, add the host as `host:port` (for example `files.pythonhosted.org:443`) to the list of that job, in alphabetical order, one per line. A wildcard such as `*.data.mcr.microsoft.com:443` is accepted for hosts that change from run to run. Say in the pull request why the host is needed.
+
+The check in `tools/check_harden_runner.py` is part of `scripts/check python`. A job in audit mode outside `release.yml` is reported as a problem, and so is a list that is empty or out of order. The list is written as a folded block (`allowed-endpoints: >`), because Harden-Runner reads the endpoints as one line with spaces between them, and a `|` block is reported too.
