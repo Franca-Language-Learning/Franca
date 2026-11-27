@@ -116,3 +116,25 @@ def test_the_headscale_settings_are_valid_yaml(base_domain: str | None) -> None:
     assert settings["dns"]["magic_dns"] is (base_domain is not None)
     assert settings["dns"].get("base_domain") == base_domain
     assert settings["dns"]["override_local_dns"] is False
+
+
+def test_a_service_counts_as_healthy_only_when_it_is_running_and_its_health_check_passes() -> None:
+    listed = ["app running healthy", "caddy running healthy", "socket-proxy running", "backup running unhealthy", "updater exited"]
+
+    assert rehearsal.services_not_healthy(listed, ["app", "caddy", "socket-proxy", "backup", "updater", "status"]) == [
+        "socket-proxy: running, with no health check",
+        "backup: running, unhealthy",
+        "updater: exited",
+        "status: not started",
+    ]
+
+
+def test_all_services_running_and_healthy_gives_no_problem() -> None:
+    assert rehearsal.services_not_healthy(["app running healthy"], ["app"]) == []
+
+
+def test_the_docker_group_is_the_group_of_the_socket(tmp_path: Path) -> None:
+    socket = tmp_path / "docker.sock"
+    socket.touch()
+
+    assert rehearsal.docker_group(socket) == str(socket.stat().st_gid)

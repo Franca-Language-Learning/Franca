@@ -92,19 +92,20 @@ From step 19 on, the commands are typed in the bundle folder. If you close the t
     cd /mnt/user/appdata/franca
     ```
 
-19. Change the paths in `.env` to the new places:
+19. Change the paths in `.env` to the new places, and write the group of the server's Docker socket, which the socket proxy runs in:
 
     ```
     sed -i 's#/opt/franca#/mnt/user/appdata/franca#g; s#/mnt/j/franca-backups#/mnt/user/franca-backups#' .env
+    sed -i "s#^FRANCA_DOCKER_GID=.*#FRANCA_DOCKER_GID=$(stat -c %g /var/run/docker.sock)#" .env
     ```
 
 20. Check the result:
 
     ```
-    grep -E 'BUNDLE_DIR|SECRETS_DIR|BACKUP_DIR' .env
+    grep -E 'BUNDLE_DIR|SECRETS_DIR|BACKUP_DIR|DOCKER_GID' .env
     ```
 
-    There are three lines. `FRANCA_BUNDLE_DIR` is `/mnt/user/appdata/franca`, `FRANCA_SECRETS_DIR` is `/mnt/user/appdata/franca/secrets` and `FRANCA_BACKUP_DIR` is `/mnt/user/franca-backups`.
+    There are four lines. `FRANCA_BUNDLE_DIR` is `/mnt/user/appdata/franca`, `FRANCA_SECRETS_DIR` is `/mnt/user/appdata/franca/secrets` and `FRANCA_BACKUP_DIR` is `/mnt/user/franca-backups`. `FRANCA_DOCKER_GID` is a number.
 
 ## On the server: starting Franca and restoring the backup
 

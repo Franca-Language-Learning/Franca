@@ -111,6 +111,31 @@ def tear_down(compose: Sequence[str], show_logs: bool, tail: int = 60) -> None:
     sh(*compose, "down", "--volumes", "--remove-orphans", check=False)
 
 
+def services_not_healthy(listed: Sequence[str], services: Sequence[str]) -> list[str]:
+    """The services that are not running with a passing health check, each with what is wrong. listed has one line per
+    container, as `docker compose ps --format "{{.Service}} {{.State}} {{.Health}}"` writes it. A container with no
+    health check has an empty health field, and counts as a problem."""
+    states = {fields[0]: fields[1:] for fields in (line.split() for line in listed) if fields}
+    problems: list[str] = []
+    for service in services:
+        state = states.get(service)
+        if state is None:
+            problems.append(f"{service}: not started")
+        elif state[:1] != ["running"]:
+            problems.append(f"{service}: {' '.join(state)}")
+        elif state[1:] == []:
+            problems.append(f"{service}: running, with no health check")
+        elif state[1:] != ["healthy"]:
+            problems.append(f"{service}: running, {' '.join(state[1:])}")
+    return problems
+
+
+def docker_group(socket: Path = Path("/var/run/docker.sock")) -> str:
+    """The number of the group that owns Docker's socket, for FRANCA_DOCKER_GID in .env. The socket proxy runs in this
+    group, as a user other than root."""
+    return str(socket.stat().st_gid)
+
+
 def check_hardened(checks: Checks, compose: Sequence[str], service: str, name: str) -> dict[str, Any]:
     """Checks that a service's container runs as a user other than root, with a read-only file system and no
     capabilities. Returns the container's settings as docker inspect shows them, for further checks."""

@@ -18,6 +18,9 @@ Franca is checked every minute, and again after the nightly update and backup (s
 |---|---|
 | Franca/App | The app does not answer. Wait a few minutes. If no "resolved" message follows, restart the PC. |
 | Franca/Web server | The web server does not answer. Wait a few minutes. If no "resolved" message follows, restart the PC. |
+| Franca/Sign-in page | The sign-in page cannot be opened. Wait a few minutes. If no "resolved" message follows, restart the PC. |
+| Franca/Signed-in API | The part of Franca behind the sign-in does not answer as it should. Wait a few minutes. If no "resolved" message follows, restart the PC. |
+| Franca/Socket proxy | The updater cannot reach Docker, so the nightly update cannot run. Restart the PC. If the alert comes back, run the installer again. If it still comes back, ask for help. |
 | Franca/HTTPS on the Tailscale name | Franca cannot be opened over HTTPS, or its certificate is about to expire. Check that HTTPS certificates are still switched on in the Tailscale admin console (see `docs/private-network.md`). |
 | Franca/Tailscale | The tailscale container has stopped or is not signed in to your tailnet. Restart the PC. If the alert comes back, check the `franca` machine in the Tailscale admin console. |
 | Nightly/Update | The nightly update failed, has not succeeded for a day, or the updater has stopped. The version that was running is kept. |

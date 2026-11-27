@@ -67,6 +67,37 @@ def test_the_app_check_reads_the_health_answer(gatus: dict[str, Any]) -> None:
     assert "[BODY].status == ok" in app["conditions"]
 
 
+def test_the_sign_in_page_is_checked_through_the_web_server_every_minute(gatus: dict[str, Any]) -> None:
+    page = endpoint(gatus, "Sign-in page")
+    assert page["url"] == "http://caddy:8080/sign-in"
+    assert page["interval"] == "1m"
+    assert "[STATUS] == 200" in page["conditions"]
+    # The client's page with its built script, not an error page from Caddy.
+    assert '[BODY] == pat(*<div id="root">*)' in page["conditions"]
+    assert "[BODY] == pat(*/assets/*.js*)" in page["conditions"]
+    assert [alert["type"] for alert in page["alerts"]] == ["ntfy"]
+
+
+def test_an_api_route_that_needs_a_session_answers_401_without_one(gatus: dict[str, Any]) -> None:
+    api = endpoint(gatus, "Signed-in API")
+    assert api["url"] == "http://caddy:8080/api/v1/me"
+    assert api["interval"] == "1m"
+    assert api["conditions"] == ["[STATUS] == 401"]
+    assert [alert["type"] for alert in api["alerts"]] == ["ntfy"]
+
+
+def test_the_socket_proxy_is_reported_by_the_updater_and_a_missed_report_is_an_alert(
+    gatus: dict[str, Any], compose: dict[str, Any]
+) -> None:
+    proxy = external(gatus, "Socket proxy")
+    assert proxy["group"] == "Franca"
+    assert proxy["token"] == "${STATUS_PUSH_TOKEN}"  # noqa: S105 - the name of a variable, not a token
+    assert proxy["heartbeat"]["interval"] == "10m"
+    assert [alert["type"] for alert in proxy["alerts"]] == ["ntfy"]
+    # Gatus is kept off the proxy's network: a container that can reach the proxy can start containers.
+    assert "docker-api" not in compose["services"]["status"]["networks"]
+
+
 def test_https_on_the_tailscale_name_is_checked_with_its_certificate(gatus: dict[str, Any]) -> None:
     https = endpoint(gatus, "HTTPS on the Tailscale name")
     assert https["url"] == "https://${FRANCA_TAILSCALE_NAME}:8443/healthz"

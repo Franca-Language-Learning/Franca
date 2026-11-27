@@ -52,6 +52,8 @@ The result is in the `updater-status` volume, in `updater.json`. Health monitori
 
 The updater reaches Docker only through the socket proxy. Calls about containers, images, networks and volumes, and calls to start and stop containers, are let through the proxy. Exec, build, swarm, plugin, secret and system calls are blocked. There is no check on what a new container can reach, so someone who took control of the updater could still start a container with access to the PC. For that reason the updater's image is signed and checked in the same way as the app's images.
 
+The socket proxy runs as user 10006, in the group that owns Docker's socket. The installer writes that group's number to `FRANCA_DOCKER_GID` in `.env`. Without it, the group `nogroup` (65534) is used, which cannot open the socket, so the proxy's health check fails. When the socket belongs to group 0 (Docker installed without a `docker` group), the proxy runs in group 0. Its file system is read-only, so this group has no other use there. Without the socket, the installer stops with a message before anything is started. The health check asks the proxy for `/_ping`, which the proxy passes on to Docker, so a passing check means that the proxy can reach Docker. The proxy has a read-only file system, no capabilities, `no-new-privileges`, and a network of its own that has no way out and that only the updater joins. Membership of Docker's group is the same as root on the PC for anyone who can send calls through the socket, so the limits that matter are the refused calls and the network.
+
 The installer switches the updater on with `COMPOSE_PROFILES=updates` in `.env`, and writes the path of the bundle folder to `FRANCA_BUNDLE_DIR`, so that the updater sees the bundle at the same path as Docker does. The updater runs as user 10003 and writes `.env`, so that user has to be able to write to the bundle folder. On the Windows PC, the folder has to be given as a path that Docker's Linux containers can use; the installer (story E01-011) chooses that path and is tested on the PC.
 
 ## Backups
@@ -94,6 +96,9 @@ The `status` container runs Gatus, an open-source health checker, in the `monito
 |---|---|---|
 | The app answers its health check | Every minute | After three failures in a row |
 | The web server (Caddy) answers | Every minute | After three failures in a row |
+| The sign-in page can be opened through Caddy | Every minute | After three failures in a row |
+| An API route that needs a session (`/api/v1/me`) answers 401 without one, through Caddy | Every minute | After three failures in a row |
+| The updater can reach Docker through the socket proxy | Reported by the updater every minute | After three failed reports in a row, or when no report comes for 10 minutes three times in a row |
 | HTTPS on the Tailscale name works, and the certificate has more than 14 days left | Every minute, with the private network on | After three failures in a row |
 | The tailscale container is running and signed in to the tailnet | Every minute, with the private network on | After three failures in a row |
 | The last nightly update succeeded, less than 26 hours ago | Reported by the updater after each run and every hour | At once |
@@ -107,7 +112,9 @@ The updater and the backup report each run with the token in the `status_push_to
 
 The dashboard is at http://127.0.0.1:8081 on the PC (`FRANCA_STATUS_PORT`). The history of the checks is kept in the `status-data` volume. When a release has a new status image and the `monitoring` profile is on, the updater starts it after the app is healthy and waits for its health check, as for the tailscale image.
 
-Some faults are not watched yet. The socket proxy is used by the updater alone, so a fault there shows as a failed update. When the status container itself, Docker or the PC stops, no alert can be sent from the PC. An outside check for that is planned with story E01-012. The Tailscale check shows whether the container is running and signed in. It does not show whether the PC can be reached from other devices on the tailnet.
+The status container is not on the socket proxy's network, because a container that can reach the proxy can start containers. The updater, which is on that network, checks the proxy instead and reports the result. The speech part of the sign-in path is checked when the speech container exists (stories E09 and E12).
+
+Some faults are not watched yet. When the status container itself, Docker or the PC stops, no alert can be sent from the PC. An outside check for that is planned with story E01-012. The Tailscale check shows whether the container is running and signed in. It does not show whether the PC can be reached from other devices on the tailnet.
 
 `docs/health-alerts.md` has the owner's steps for the ntfy app.
 
