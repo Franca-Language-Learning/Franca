@@ -23,6 +23,7 @@ strict_scripts=(
     ../tools/check_harden_runner.py
     ../tools/install_program.py
     ../tools/update_pester_hash.py
+    ../tools/validate_pack.py
     ../infra/updater/franca_updater.py
     ../infra/backup/franca_backup.py
     ../infra/tests/rehearse_update.py
@@ -85,6 +86,8 @@ check_python() {
     PYTHONPATH=src uv run lint-imports
     step "Server, contract and tool tests"
     uv run pytest
+    step "Fixture pack"
+    uv run python -I ../tools/validate_pack.py ../packs/fixture
     step "Shell scripts"
     uv run shellcheck ../tools/*.sh ../.githooks/* ../scripts/* ../client/scripts/*.sh ../infra/tests/*.sh ../infra/*/entrypoint.sh
     step "Workflow security"
