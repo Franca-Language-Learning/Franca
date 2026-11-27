@@ -108,6 +108,8 @@ services:
     # HAProxy in this image runs as any user that can open Docker's socket, so it runs as a user of its own, in the
     # group that owns the socket. The installer writes that group's number to .env (FRANCA_DOCKER_GID). Without it,
     # the group nogroup (65534) is used, which cannot open the socket, so the health check fails and the fault is seen.
+    # When the socket belongs to group 0 (Docker installed without a docker group), the proxy runs in group 0. Its file
+    # system is read-only, so this group has no other use there.
     user: "10006:10006"
     group_add: ["${FRANCA_DOCKER_GID:-65534}"]
     # The proxy answers /_ping by asking Docker, so this check fails when the proxy cannot open the socket.

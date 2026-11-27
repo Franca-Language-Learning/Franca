@@ -25,6 +25,7 @@ Python standard library, the docker CLI with the compose plugin, and cosign.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
@@ -426,8 +427,8 @@ def docker_api_probe(docker_host: str) -> DockerApiProbe:
         try:
             with urllib.request.urlopen(url, timeout=5) as response:  # noqa: S310 - a fixed address inside the bundle
                 answer = response.read(100)
-        except OSError as error:
-            return f"The socket proxy does not answer: {error}"
+        except (OSError, http.client.HTTPException, ValueError) as error:
+            return f"The socket proxy does not answer as expected: {error!r}"
         if answer.strip() != b"OK":
             return f"The socket proxy gave an unexpected answer to /_ping: {answer[:60]!r}"
         return None
@@ -714,11 +715,20 @@ def next_run(now: datetime, at: str) -> datetime:
     return candidate if candidate > now else candidate + timedelta(days=1)
 
 
+def _step(name: str, action: Callable[[], object]) -> None:
+    """Runs one part of the loop. An error is printed with the part's name, and the loop goes on."""
+    try:
+        action()
+    except Exception as error:  # noqa: BLE001 - the other parts of the loop still run
+        print(json.dumps({"result": "error", "step": name, "message": repr(error)}), flush=True)
+
+
 @dataclass(slots=True)
 class Service:
-    """The updater's loop. tick is called every minute (CHECK_EVERY): the socket proxy is checked each time, the
-    update is run at the time of day `at`, and the state is reported to health monitoring after each run and every
-    hour (see Updater.report_state)."""
+    """The updater's loop. tick is called every minute (CHECK_EVERY). Each time, the socket proxy is checked. The
+    update is run at the time of day `at`. The state is reported to health monitoring after each run and every hour
+    (see Updater.report_state). Each part runs on its own: an error in one part is printed, and the other parts
+    still run."""
 
     updater: Updater
     at: str
@@ -726,14 +736,14 @@ class Service:
     report_after: datetime = datetime.min.replace(tzinfo=UTC)
 
     def tick(self, now: datetime) -> None:
-        self.updater.report_docker_api()
+        _step("socket proxy check", self.updater.report_docker_api)
         if now >= self.wake:
             self.wake = next_run(now, self.at)
-            self.updater.run_once(now)
             self.report_after = now + REPORT_EVERY
+            _step("nightly update", lambda: self.updater.run_once(now))
         elif now >= self.report_after:
-            self.updater.report_state(now)
             self.report_after = now + REPORT_EVERY
+            _step("state report", lambda: self.updater.report_state(now))
 
     def seconds_to_sleep(self, now: datetime) -> float:
         return max(1.0, min(float(CHECK_EVERY), (self.wake - now).total_seconds()))

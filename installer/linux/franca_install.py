@@ -187,6 +187,13 @@ def check_no_links(bundle: Path) -> None:
 # --- the bundle's files
 
 
+def check_docker_socket(socket: Path = DOCKER_SOCKET) -> None:
+    """The socket proxy needs Docker's socket and its group (FRANCA_DOCKER_GID). Without the socket, the installer stops
+    here, before anything is started."""
+    if not socket.exists():
+        raise InstallError(f"Docker's socket {socket} was not found. Restart the PC and run the installer again.")
+
+
 def write_env(
     bundle: Path,
     release: fu.Release,
@@ -196,7 +203,8 @@ def write_env(
     docker_socket: Path = DOCKER_SOCKET,
 ) -> None:
     """Writes .env. The Compose project is named franca, unless the rehearsal names another one. The group that owns
-    Docker's socket is written as FRANCA_DOCKER_GID, for the socket proxy."""
+    Docker's socket is written as FRANCA_DOCKER_GID, for the socket proxy. When the socket belongs to group 0 (Docker
+    installed without a docker group), that is 0."""
     env = fu.EnvFile(bundle / ".env")
     values = {
         "COMPOSE_PROJECT_NAME": project or env.read().get("COMPOSE_PROJECT_NAME") or "franca",
@@ -354,6 +362,7 @@ def install(
     project: str | None = None,
 ) -> dict[str, str]:
     """Writes the bundle and starts it. Returns what the owner is shown at the end."""
+    check_docker_socket()
     bundle.mkdir(parents=True, exist_ok=True)
     check_no_links(bundle)
     for leftover in (bundle / "compose.yaml.new", bundle / ".env.new"):

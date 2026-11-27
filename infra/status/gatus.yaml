@@ -58,7 +58,8 @@ endpoints:
       - type: ntfy
         description: The web server (Caddy) does not answer.
 
-  # The sign-in page is a page of the client, served by Caddy. An error page from Caddy has no root element.
+  # The sign-in page is a route of the client, so Caddy serves the client's page for it. The page has to have the root
+  # element and name the client's built script. An error page from Caddy has neither.
   - name: Sign-in page
     group: Franca
     url: http://caddy:8080/sign-in
@@ -66,6 +67,7 @@ endpoints:
     conditions:
       - "[STATUS] == 200"
       - '[BODY] == pat(*<div id="root">*)'
+      - "[BODY] == pat(*/assets/*.js*)"
     alerts:
       - type: ntfy
         description: The sign-in page cannot be opened.
