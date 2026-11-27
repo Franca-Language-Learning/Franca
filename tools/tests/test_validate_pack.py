@@ -1,8 +1,8 @@
 """Tests for tools/validate_pack.py (defect D17 of the M0 re-test, criterion E01-014 #9).
 
 The values in these tests are made up, and PACK_VALUE and PACK_KEY must not be in the output. The reason is in the
-module docstring. Some of the cases come from the review of pull request #38, which tried the command on broken copies
-of the fixture pack.
+module docstring. Some of the cases come from the reviews of pull request #38, in which the command was run on broken
+copies of the fixture pack.
 """
 
 from __future__ import annotations
@@ -334,6 +334,69 @@ def test_a_file_over_the_size_limit_is_reported_and_not_read(
 def test_the_size_limit_is_well_above_the_fixture_files() -> None:
     largest = max(path.stat().st_size for path in FIXTURE.rglob("*.yaml"))
     assert largest * 10 < validate_pack.MAX_FILE_BYTES
+
+
+# --- aliases
+
+
+def nested_aliases(levels: int) -> str:
+    """YAML lines for anchors l0 to l<levels - 1>, each a list of ten aliases of the one before, so that the last stands for
+    10 ** levels values."""
+    return "".join(f"l{i}: &l{i} [" + ", ".join([f"*l{i - 1}" if i else PACK_VALUE] * 10) + "]\n" for i in range(levels))
+
+
+def test_aliases_that_stand_for_too_many_values_are_reported(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # About 1 KB of YAML that stands for 10 ** 9 values. Without the limit, jsonschema runs out of memory on it.
+    folder = pack(tmp_path, {"strings/ui.yaml": nested_aliases(9) + "element_names: *l8\n", "pack.yaml": "{}\n"})
+    code, lines, _err = run(capsys, str(folder))
+    assert code == 1
+    assert problems(lines) == ['pack.yaml: required at ""', "strings/ui.yaml: too-large"]
+
+
+def test_the_limit_on_values_counts_each_alias_in_full(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Three levels stand for 1,111 values in l0 to l2, with 1,000 more for the alias in element_names and the keys.
+    monkeypatch.setattr(validate_pack, "MAX_VALUES", 2_000)
+    folder = pack(tmp_path, {"strings/a.yaml": nested_aliases(3), "strings/b.yaml": nested_aliases(3) + "element_names: *l2\n"})
+    code, lines, _err = run(capsys, str(folder))
+    assert code == 1
+    assert problems(lines) == ['strings/a.yaml: additionalProperties at ""', "strings/b.yaml: too-large"]
+
+
+@pytest.mark.parametrize(
+    "value", [f"&r [*r, {PACK_VALUE}]", f"&r {{{PACK_KEY}: *r}}", f"&r {{<<: *r, {PACK_KEY}: 1}}"], ids=["list", "mapping", "merge"]
+)
+def test_a_value_that_contains_itself_is_reported(tmp_path: Path, capsys: pytest.CaptureFixture[str], value: str) -> None:
+    code, lines, _err = run(capsys, str(pack(tmp_path, {"strings/ui.yaml": f"element_names: {value}\n"})))
+    assert (code, problems(lines)) == (1, ["strings/ui.yaml: too-large"])
+
+
+def test_the_limit_on_values_is_well_above_the_fixture_files() -> None:
+    for path in FIXTURE.rglob("*.yaml"):
+        root = yaml.compose(path.read_text(encoding="utf-8"), Loader=validate_pack.PackLoader)
+        assert validate_pack.expanded_size(root) * 100 < validate_pack.MAX_VALUES, path
+
+
+# --- files that are not regular files
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no named pipes on this system")
+def test_a_named_pipe_is_reported_and_not_opened(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # Opening a named pipe waits for a writer, so the test would hang if the pipe were opened.
+    folder = pack(tmp_path, {"pack.yaml": fixture_text("pack.yaml")})
+    (folder / "strings").mkdir()
+    os.mkfifo(folder / "strings" / "ui.yaml")
+    os.mkfifo(folder / "notes.txt")
+    code, lines, _err = run(capsys, str(folder))
+    assert code == 1
+    assert lines == ["strings/ui.yaml: not-a-file", "Files checked: 2. Problems: 1."]
+
+
+def test_a_folder_with_a_yaml_name_is_entered_and_not_checked(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    folder = pack(tmp_path, {"pack.yaml": fixture_text("pack.yaml"), "lexicon.yaml/a.txt": "\n"})
+    code, lines, _err = run(capsys, str(folder))
+    assert (code, lines) == (0, ["Files checked: 1. Problems: 0."])
 
 
 # --- symlinks

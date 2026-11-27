@@ -5,20 +5,23 @@ under the folder are checked against the schema for their path (FILE_TYPES below
 date such as 2026-13-45 is a problem. A YAML mapping with a duplicate key is a problem, and so is a key that is read as
 something other than text, such as 2026 or yes. A file whose path matches no file type is reported as an unknown file
 type. A *.yml or *.YAML file is reported in the same way, so that a misnamed file is not passed over. A symlink is
-reported and not followed, and a file over MAX_FILE_BYTES is reported and not read. The checks across files, such as
-keys that refer to other files, belong to the pack builder (story E03-002) and are not made here.
+reported and not followed. A YAML-named entry that is not a regular file, such as a named pipe, is reported and not
+opened. A file over 5 MB (MAX_FILE_BYTES) is reported as too-large and not read, and so is a file with more than a
+million values (MAX_VALUES) when each alias (*name) is counted in full. The checks across files, such as keys that refer
+to other files, belong to the pack builder (story E03-002) and are not made here.
 
 The real packs are kept in the private repository Franca-Content, and this command is run on them in that
-repository's pipeline. More people can read the log of that pipeline than the pack, so apart from the file paths there
-is no text from the pack in the output. A problem is printed as one line in the form `<path>: <rule> at <place>`, where
-the path is relative to the pack folder. The place is a JSON pointer, with * in place of a key that the schemas do not
-name, or for a YAML error a line and column. The error messages of jsonschema and PyYAML quote values and lines from
-the file, so they are not printed, and neither is the message of an unexpected error. The last line has the number of
-files checked and the number of problems.
+repository's pipeline. The log of that pipeline can be read by people with access to Franca-Content, who can read the
+pack as well. Apart from the file paths, there is no text from the pack in the output, so a log can be shared, for
+example in an issue, without sharing course text. A problem is printed as one line in the form
+`<path>: <rule> at <place>`, where the path is relative to the pack folder. The place is a JSON pointer, with * in place
+of a key that the schemas do not name, or for a YAML error a line and column. The error messages of jsonschema and
+PyYAML quote values and lines from the file, so they are not printed, and neither is the message of an unexpected
+error. The last line has the number of files checked and the number of problems.
 
 Rule names are the JSON Schema keywords, such as required or enum, and these names for problems found outside the
 schemas: duplicate-key, non-string-key, yaml-syntax, yaml-value, too-deep, too-large, encoding, unreadable, symlink,
-unknown-file-type, unresolvable-ref and internal-error-<type>.
+not-a-file, unknown-file-type, unresolvable-ref and internal-error-<type>.
 
 File paths are printed with escapes for characters that cannot be printed, such as \x0a for a new line, and with ./ in
 front of a path that starts with ::, so that a file name cannot start a new line or a GitHub Actions workflow command.
@@ -84,6 +87,11 @@ MERGE_TAG = "tag:yaml.org,2002:merge"
 HIDDEN = "*"
 YAML_SUFFIXES = {".yaml", ".yml"}
 MAX_FILE_BYTES = 5 * 1024 * 1024  # No pack file is near this size. A larger file is a mistake and is not read.
+
+# The number of values in a document when each alias (*name) is counted in full. A few hundred bytes of aliases can
+# stand for billions of values, and jsonschema copies a value that fails a rule into its error message, even though the
+# message is not printed. A document over this limit is reported as too-large and is not checked against its schema.
+MAX_VALUES = 1_000_000
 
 
 @dataclass(frozen=True)
@@ -227,7 +235,8 @@ class UnreadableValue(Exception):
     """A YAML value that PyYAML could not turn into a Python value, with the place of its node.
 
     PyYAML's constructors raise ValueError, AttributeError and others for values such as !!int abc or an unquoted
-    2026-13-45. Those messages quote the value, so they are replaced with this error, which has the place only.
+    2026-13-45. Some of those messages quote the value, so they are replaced with this error, which has the place and
+    no message.
     """
 
     def __init__(self, mark: yaml.Mark) -> None:
@@ -244,7 +253,7 @@ class PackLoader(yaml.SafeLoader):
         except yaml.YAMLError, RecursionError, UnreadableValue:
             raise
         except Exception:
-            # Neither the message nor the type of the error is kept, because the message quotes the value.
+            # Neither the message nor the type of the error is kept, because the message can quote the value.
             raise UnreadableValue(node.start_mark) from None
 
 
@@ -279,6 +288,33 @@ def key_problems(root: yaml.Node, names: frozenset[str]) -> Iterator[tuple[str, 
     yield from walk(root, [])
 
 
+def expanded_size(root: yaml.Node) -> int:
+    """The number of values in a composed YAML document, keys included, with each alias counted in full.
+
+    The count stops at MAX_VALUES + 1. A node that contains itself, such as &a [*a], counts as MAX_VALUES + 1.
+    """
+    over = MAX_VALUES + 1
+    sizes: dict[int, int] = {}
+
+    def size(node: yaml.Node) -> int:
+        if id(node) not in sizes:
+            # Written before the children are counted, so that a node met again inside itself counts as over the limit.
+            sizes[id(node)] = over
+            if isinstance(node, yaml.SequenceNode):
+                children = list(node.value)
+            elif isinstance(node, yaml.MappingNode):
+                children = [child for pair in node.value for child in pair]
+            else:
+                children = []
+            total = 1
+            for child in children:
+                total = min(total + size(child), over)
+            sizes[id(node)] = total
+        return sizes[id(node)]
+
+    return size(root)
+
+
 # --- checking files
 
 
@@ -294,6 +330,8 @@ def load(text: str, names: frozenset[str]) -> tuple[Any, list[tuple[str, str | N
         found = [(rule, pointer(path)) for rule, path in key_problems(root, names)]
         if found:
             return None, list(dict.fromkeys(found))
+        if expanded_size(root) > MAX_VALUES:
+            return None, [("too-large", None)]
         return loader.construct_document(root), []
     except yaml.YAMLError as error:
         return None, [("yaml-syntax", yaml_place(error, text))]
@@ -316,6 +354,9 @@ def check_file(path: Path, relative: str, schemas: Path) -> list[Problem]:
     if path.is_symlink():
         # A symlink can point outside the pack, so it is not read.
         return [Problem(relative, "symlink")]
+    if not path.is_file():
+        # A named pipe, socket or device file. It is not opened, because opening a named pipe waits for a writer.
+        return [Problem(relative, "not-a-file")]
     schema = schema_for(relative)
     if schema is None:
         return [Problem(relative, "unknown-file-type")]
@@ -351,8 +392,11 @@ def unique[T: Hashable](items: Iterator[T]) -> list[T]:
 
 
 def pack_files(folder: Path) -> list[Path]:
-    """The YAML files in a pack folder, with any symlinks, whatever their names. Symlinked folders are not entered."""
-    return sorted(path for path in folder.rglob("*") if path.is_symlink() or (path.suffix.lower() in YAML_SUFFIXES and path.is_file()))
+    """The YAML-named entries in a pack folder that are not folders, and any symlinks, whatever their names.
+
+    Symlinked folders are not entered.
+    """
+    return sorted(path for path in folder.rglob("*") if path.is_symlink() or (path.suffix.lower() in YAML_SUFFIXES and not path.is_dir()))
 
 
 def check_pack(folder: Path, schemas: Path = SCHEMAS) -> Report:
