@@ -98,11 +98,24 @@
       "automerge": false
     },
     {
-      "description": "There are no release dates for Renovate on registries other than Docker Hub, so the seven-day rule is not applied to these images, and their updates are reviewed before they are merged. An update to mcr.microsoft.com/playwright cannot be merged before the matching @playwright/test update, because the two versions are compared in infra/tests/test_browser_image.py.",
+      "description": "The socket proxy image on lscr.io is published on Docker Hub as linuxserver/socket-proxy with the same digests, so versions and digests are looked up there, and the seven-day rule is applied. The socket proxy can reach the Docker socket, so its updates are reviewed before they are merged.",
       "matchPackageNames": [
-        "mcr.microsoft.com/playwright",
-        "lscr.io/linuxserver/socket-proxy",
+        "lscr.io/linuxserver/socket-proxy"
+      ],
+      "overridePackageName": "docker.io/linuxserver/socket-proxy",
+      "automerge": false
+    },
+    {
+      "description": "The uv image on ghcr.io is published on Docker Hub as astral/uv with the same digests, so versions and digests are looked up there, and the seven-day rule is applied.",
+      "matchPackageNames": [
         "ghcr.io/astral-sh/uv"
+      ],
+      "overridePackageName": "docker.io/astral/uv"
+    },
+    {
+      "description": "Renovate has release dates for Docker Hub only, and Playwright's image is on mcr.microsoft.com alone, so the seven-day rule cannot be applied to it. Its updates are reviewed before they are merged, and an update cannot be merged before the matching @playwright/test update, which waits seven days, because the two versions are compared in infra/tests/test_browser_image.py.",
+      "matchPackageNames": [
+        "mcr.microsoft.com/playwright"
       ],
       "minimumReleaseAgeBehaviour": "timestamp-optional",
       "automerge": false
@@ -125,30 +138,62 @@
       "automerge": false
     },
     {
-      "description": "The cosign program downloaded by the installer is checked against a hash, and the hash is updated by a person.",
-      "matchPackageNames": [
-        "sigstore/cosign"
-      ],
-      "automerge": false
-    },
-    {
       "description": "Node.js in the pipeline (.nvmrc) and in caddy.Dockerfile are updated together.",
       "matchDepNames": [
         "node"
       ],
       "groupName": "Node.js"
+    },
+    {
+      "description": "Renovate cannot read a hash for Pester from the PowerShell Gallery, so its version is updated by Renovate and its hash in tools/programs.txt with tools/update_pester_hash.py (docs/package-updates.md). The job \"Server, contracts and tools\" fails until the hash is updated.",
+      "matchPackageNames": [
+        "Pester"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "Programs that run in the release job, check signatures or check the code (Grype, Syft, gitleaks, PSScriptAnalyzer, Pester and the installer's cosign) are reviewed by a person before they are merged, after the seven-day wait.",
+      "matchDepNames": [
+        "anchore/grype",
+        "anchore/syft",
+        "gitleaks/gitleaks",
+        "PowerShell/PSScriptAnalyzer",
+        "Pester",
+        "sigstore/cosign"
+      ],
+      "matchFileNames": [
+        "tools/programs.txt",
+        "installer/**"
+      ],
+      "automerge": false,
+      "addLabels": [
+        "needs-review"
+      ]
+    },
+    {
+      "description": "A new hash for a program without a new version means that the release file was replaced, so it is not merged by Renovate.",
+      "matchFileNames": [
+        "tools/programs.txt",
+        "installer/**"
+      ],
+      "matchUpdateTypes": [
+        "digest"
+      ],
+      "automerge": false,
+      "addLabels": [
+        "needs-review"
+      ]
     }
   ],
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Versions marked with a renovate comment in pyproject.toml and the workflows: uv, and the Grype and Syft versions of the scan and SBOM actions.",
+      "description": "The uv version in required-version in pyproject.toml, marked with a renovate comment.",
       "managerFilePatterns": [
-        "/^\\.github/workflows/.+\\.ya?ml$/",
         "/^pyproject\\.toml$/"
       ],
       "matchStrings": [
-        "(?:(?:grype-|syft-)?version: |required-version = )\"(?:==)?(?<currentValue>[0-9v][^\"]*)\" # renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)"
+        "required-version = \"(?:==)?(?<currentValue>[0-9][^\"]*)\" # renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)"
       ]
     },
     {
@@ -201,17 +246,18 @@
     },
     {
       "customType": "regex",
-      "description": "Programs downloaded by the installer, marked with a renovate comment. Their hashes are updated by a person. Until that is done, the cosign check in the Container bundle job fails on the update.",
+      "description": "cosign, downloaded by the installer: the version in the address, and the SHA-256 on the next line. Renovate finds the file with that hash in the current release, and writes the hash of the same file in the new release. The download is checked against the hash in the Container bundle job.",
       "managerFilePatterns": [
         "/^installer/.+\\.py$/"
       ],
       "matchStrings": [
-        "/releases/download/(?<currentValue>v[^/]+)/[^\"]*\"  # renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)"
-      ]
+        "/releases/download/(?<currentValue>v[^/]+)/[^\"]*\"  # renovate: datasource=\\S+ depName=(?<depName>\\S+)\\n\\w+_SHA256 = \"(?<currentDigest>[a-f0-9]{64})\""
+      ],
+      "datasourceTemplate": "github-release-attachments"
     },
     {
       "customType": "regex",
-      "description": "Programs downloaded in the pipeline and by scripts/check, pinned by the SHA-256 of the release file in tools/programs.txt. Renovate finds the file with that hash in the current release, and writes the hash of the same file in the new release.",
+      "description": "Programs from GitHub releases in tools/programs.txt, pinned by the SHA-256 of the release file. Renovate finds the file with that hash in the current release, and writes the hash of the same file in the new release.",
       "managerFilePatterns": [
         "/^tools/programs\\.txt$/"
       ],
@@ -219,6 +265,18 @@
         "\\n[\\w.-]+ +(?<currentValue>[\\w.-]+) +(?<currentDigest>[a-f0-9]{64}) +https://github\\.com/(?<depName>[\\w.-]+/[\\w.-]+)/releases/download/"
       ],
       "datasourceTemplate": "github-release-attachments"
+    },
+    {
+      "customType": "regex",
+      "description": "PowerShell modules from the PowerShell Gallery in tools/programs.txt. Renovate updates the version. The hash is updated with tools/update_pester_hash.py (docs/package-updates.md).",
+      "managerFilePatterns": [
+        "/^tools/programs\\.txt$/"
+      ],
+      "matchStrings": [
+        "\\n(?<depName>[\\w.-]+) +(?<currentValue>[\\w.-]+) +[a-f0-9]{64} +https://www\\.powershellgallery\\.com/api/v2/package/"
+      ],
+      "datasourceTemplate": "nuget",
+      "registryUrlTemplate": "https://www.powershellgallery.com/api/v2/"
     }
   ]
 }
