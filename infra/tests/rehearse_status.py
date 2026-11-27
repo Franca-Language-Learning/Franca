@@ -264,11 +264,13 @@ def main() -> int:
             seen_curl, seen_address = False, False
             deadline = time.monotonic() + 20
             while time.monotonic() < deadline and not (seen_curl and seen_address):
-                listed = sh("docker", "top", status_id, "-eo", "args", check=False).stdout
+                # docker top needs the pid column to pick the container's processes from the list.
+                listed = sh("docker", "top", status_id, "-o", "pid,args", check=False).stdout
                 seen_curl = seen_curl or "curl" in listed
                 seen_address = seen_address or PING_PATH in listed
                 time.sleep(0.3)
-            checks.check(seen_curl and not seen_address, "while a heartbeat is sent, the ping address is not in the process list")
+            checks.check(seen_curl, "curl is seen in the status container's process list while a heartbeat is sent")
+            checks.check(not seen_address, "while a heartbeat is sent, the ping address is not in the process list")
 
             sh(*compose, "stop", "ntfy")
             time.sleep(15)
