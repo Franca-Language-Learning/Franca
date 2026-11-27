@@ -67,6 +67,132 @@ def test_an_answer_that_cannot_be_right_is_refused_with_a_message(tmp_path: Path
         answers(tmp_path, **{field: value})
 
 
+def test_the_heartbeat_address_is_optional(tmp_path: Path) -> None:
+    assert answers(tmp_path).healthchecks_ping_url == ""
+    given = answers(tmp_path, healthchecks_ping_url=" https://hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b ")
+    assert given.healthchecks_ping_url == "https://hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "http://hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b",
+        "https://hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b?x=1",
+        "https://hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b/fail",
+        "https://example.org/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b",
+        "https://hc-ping.com.example.org/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b",
+        "https://hc-ping.com/abc123",
+        "hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b",
+        "https://hc-ping.com/",
+    ],
+)
+def test_a_heartbeat_address_that_cannot_be_right_is_refused(tmp_path: Path, value: str) -> None:
+    with pytest.raises(fi.InstallError, match="healthchecks.io"):
+        answers(tmp_path, healthchecks_ping_url=value)
+
+
+def test_the_heartbeat_address_is_written_as_a_secret_and_not_to_env(tmp_path: Path) -> None:
+    url = "https://hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b"
+    given = answers(tmp_path, healthchecks_ping_url=url)
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+
+    fi.write_secrets(bundle / "secrets", given)
+    fi.write_env(bundle, RELEASE, given, tailscale_name=None)
+
+    assert (bundle / "secrets" / "healthchecks_ping_url").read_text(encoding="utf-8") == url
+    assert oct((bundle / "secrets" / "healthchecks_ping_url").stat().st_mode & 0o777) == "0o644"
+    assert url not in (bundle / ".env").read_text(encoding="utf-8")
+    assert "0f5a7c2e" not in repr(given)
+
+
+PING_URL = "https://hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b"
+
+
+def test_without_a_heartbeat_address_on_a_first_installation_the_secret_file_is_empty(tmp_path: Path) -> None:
+    folder = tmp_path / "secrets"
+
+    fi.write_secrets(folder, answers(tmp_path))
+
+    assert (folder / "healthchecks_ping_url").read_text(encoding="utf-8") == ""
+
+
+def test_an_empty_answer_in_a_later_run_keeps_the_saved_address(tmp_path: Path) -> None:
+    folder = tmp_path / "secrets"
+    fi.write_secrets(folder, answers(tmp_path, healthchecks_ping_url=PING_URL))
+
+    fi.write_secrets(folder, answers(tmp_path))
+
+    assert (folder / "healthchecks_ping_url").read_text(encoding="utf-8") == PING_URL
+
+
+@pytest.mark.parametrize("value", ["off", " OFF "])
+def test_off_switches_the_heartbeat_off(tmp_path: Path, value: str) -> None:
+    folder = tmp_path / "secrets"
+    fi.write_secrets(folder, answers(tmp_path, healthchecks_ping_url=PING_URL))
+
+    fi.write_secrets(folder, answers(tmp_path, healthchecks_ping_url=value))
+
+    assert (folder / "healthchecks_ping_url").read_text(encoding="utf-8") == ""
+
+
+def test_the_refusal_of_a_heartbeat_address_says_what_to_do_after_the_questions(tmp_path: Path) -> None:
+    with pytest.raises(fi.InstallError) as refused:
+        answers(tmp_path, healthchecks_ping_url="https://example.org/x")
+
+    message = str(refused.value)
+    assert "Run the installer again" in message
+    assert "type off" in message
+    assert "press Enter for no heartbeat" not in message
+
+
+# --- a later run without a new Tailscale auth key
+
+
+def test_the_tailscale_auth_key_may_be_empty(tmp_path: Path) -> None:
+    assert answers(tmp_path, tailscale_authkey="").tailscale_authkey == ""
+
+
+class Volumes:
+    """Answers docker volume inspect: the volumes in `present` exist."""
+
+    def __init__(self, present: set[str]) -> None:
+        self.present = present
+        self.commands: list[list[str]] = []
+
+    def __call__(self, command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        self.commands.append(list(command))
+        found = command[:3] == ["docker", "volume", "inspect"] and command[3] in self.present
+        return subprocess.CompletedProcess(command, 0 if found else 1, "", "" if found else "no such volume\n")
+
+
+def test_without_a_key_the_installer_needs_the_saved_tailscale_state(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+
+    with pytest.raises(fi.InstallError, match="tskey-auth-"):
+        fi.check_tailscale_key(answers(tmp_path, tailscale_authkey=""), bundle, run=Volumes(set()))
+
+
+def test_without_a_key_the_saved_tailscale_state_of_this_project_is_used(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / ".env").write_text("COMPOSE_PROJECT_NAME=franca-test\n", encoding="utf-8")
+    volumes = Volumes({"franca-test_tailscale-state"})
+
+    fi.check_tailscale_key(answers(tmp_path, tailscale_authkey=""), bundle, run=volumes)
+
+    assert volumes.commands == [["docker", "volume", "inspect", "franca-test_tailscale-state"]]
+
+
+def test_with_a_key_the_saved_state_is_not_looked_at(tmp_path: Path) -> None:
+    volumes = Volumes(set())
+
+    fi.check_tailscale_key(answers(tmp_path), tmp_path, run=volumes)
+
+    assert volumes.commands == []
+
+
 def test_the_answers_are_not_shown_in_their_text_form(tmp_path: Path) -> None:
     given = answers(tmp_path)
     assert "GOCSPX" not in repr(given)
@@ -319,6 +445,61 @@ def test_the_key_is_emptied_even_when_the_start_fails(tmp_path: Path) -> None:
         fi.start_bundle(bundle, RELEASE, answers(tmp_path), run=FakeDocker(dns_name=""))
 
     assert (bundle / "secrets" / "tailscale_authkey").read_text() == ""
+
+
+class TailscaleFails(FakeDocker):
+    """docker compose up for tailscale fails, as when the saved Tailscale state is no longer accepted."""
+
+    def __call__(self, command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        if "up" in command and "tailscale" in command:
+            self.commands.append(list(command))
+            return subprocess.CompletedProcess(list(command), 1, "", "container is unhealthy\n")
+        return super().__call__(command)
+
+
+def test_without_a_key_a_failed_join_says_to_make_a_new_key(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    given = answers(tmp_path, tailscale_authkey="")
+    fi.write_secrets(bundle / "secrets", given)
+
+    with pytest.raises(fi.InstallError, match="could not sign in to your tailnet with the saved Tailscale state") as refused:
+        fi.start_bundle(bundle, RELEASE, given, run=TailscaleFails())
+
+    assert "steps 5 to 8 of docs/private-network.md" in str(refused.value)
+
+
+def test_with_a_key_a_failed_join_gives_the_reason(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    fi.write_secrets(bundle / "secrets", answers(tmp_path))
+
+    with pytest.raises(fi.InstallError, match="Joining the tailnet failed: container is unhealthy"):
+        fi.start_bundle(bundle, RELEASE, answers(tmp_path), run=TailscaleFails())
+
+
+class Stop(Exception):
+    """Ends install() in a test once the checks before any change have run."""
+
+
+def test_the_installation_checks_dockers_socket_and_the_tailscale_key_before_anything_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    called: list[str] = []
+    monkeypatch.setattr(fi, "check_docker_socket", lambda *_args: called.append("docker socket"))
+
+    def check_key(*_args: object) -> None:
+        called.append("tailscale key")
+        raise Stop
+
+    monkeypatch.setattr(fi, "check_tailscale_key", check_key)
+    bundle = tmp_path / "bundle"
+
+    with pytest.raises(Stop):
+        fi.install(answers(tmp_path), bundle, RELEASE, ROOT / "infra" / "compose.yaml", run=FakeDocker())
+
+    assert called == ["docker socket", "tailscale key"]
+    assert not (bundle / "secrets").exists()
 
 
 def test_a_tailnet_without_https_names_is_reported(tmp_path: Path) -> None:

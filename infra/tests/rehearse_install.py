@@ -3,8 +3,9 @@
 
 It needs Docker with Compose, sudo without a password and uv, and builds the images itself. The installer runs as root
 with Python 3.13, the version in the Franca WSL system. Headscale is used in place of Tailscale's control server, and a
-small web server in this script is used in place of ntfy.sh. The Windows part (Install-Franca.ps1) is tried on the
-owner's PC.
+small web server in this script is used in place of ntfy.sh. Inside the bundle, hc-ping.com is pointed at the status
+container's own loopback address, so no heartbeat reaches healthchecks.io. The Windows part (Install-Franca.ps1) is
+tried on the owner's PC.
 
 The rehearsal:
 1. starts Headscale and makes a sign-up key;
@@ -12,7 +13,8 @@ The rehearsal:
 3. checks that each service of the bundle is running and has a passing health check, that the socket proxy runs as a
    user other than root, that the PC's Tailscale name is in .env, that the used key is gone, that the secrets and the
    backup folder have the right owners and permissions, and that a test alert was sent;
-4. runs the installer again with a new key and checks that the backup password is kept and not shown again.
+4. runs the installer again with no Tailscale auth key and no ping address, and checks that the saved Tailscale state
+   is used, that the backup password is kept and not shown again, and that the saved ping address is kept.
 """
 
 import http.server
@@ -40,6 +42,9 @@ from rehearsal import (
 PROJECT = f"franca-install-rehearsal-{os.getpid()}"
 NETWORK = f"franca-install-rehearsal-{os.getpid()}"
 HEADSCALE_NAME = f"franca-install-headscale-{os.getpid()}"
+# A ping address in the form the installer accepts, with a random id. The rehearsal checks that it is kept as a secret
+# and not shown. hc-ping.com is pointed at the loopback address in OVERRIDE, so no heartbeat leaves the computer.
+PING_URL = "https://hc-ping.com/{}-{}-{}-{}-{}".format(*(os.urandom(n).hex() for n in (4, 2, 2, 2, 6)))
 IMAGES = {service: f"franca/{service}:rehearsal-install" for service in ("app", "caddy", "updater", "backup", "tailscale", "status")}
 
 # The bundle's tailscale container is pointed at Headscale, which runs outside the bundle on its own network.
@@ -53,6 +58,8 @@ services:
   status:
     environment:
       FRANCA_NTFY_URL: http://127.0.0.1:9
+    extra_hosts:
+      hc-ping.com: 127.0.0.1
 networks:
   rehearsal:
     external: true
@@ -113,13 +120,14 @@ def main() -> int:
         release.write_text(json.dumps({"version": "1.0.0", "images": IMAGES}), encoding="utf-8")
         compose = ["sudo", *compose_command(bundle)]
 
-        def run_installer(key: str) -> subprocess.CompletedProcess[str]:
+        def run_installer(key: str, ping_url: str = PING_URL) -> subprocess.CompletedProcess[str]:
             answers = {
                 "owner_email": "owner@example.org",
                 "google_client_id": "123-rehearsal.apps.googleusercontent.com",
                 "google_client_secret": "rehearsal-client-secret",
                 "tailscale_authkey": key,
                 "backup_dir": str(disk / "franca-backups"),
+                "healthchecks_ping_url": ping_url,
             }
             command = [python, "installer/linux/franca_install.py", "--bundle-dir", str(bundle), "--compose-file", "infra/compose.yaml"]
             command += ["--release-file", str(release), "--skip-docker", "--ntfy-url", ntfy_url, "--project-name", PROJECT]
@@ -151,7 +159,10 @@ def main() -> int:
 
             env = sh("sudo", "cat", str(bundle / ".env")).stdout
             checks.check("FRANCA_PUBLIC_URL=https://franca.rehearsal.ts.net" in env, ".env has the public address on the Tailscale name")
-            checks.check("rehearsal-client-secret" not in env, ".env has no secret in it")
+            checks.check("rehearsal-client-secret" not in env and PING_URL not in env, ".env has no secret in it")
+            ping_secret = sh("sudo", "cat", str(bundle / "secrets" / "healthchecks_ping_url")).stdout
+            checks.check(ping_secret == PING_URL, "the healthchecks.io ping address is kept as a secret")
+            checks.check(PING_URL not in installed.stdout + installed.stderr, "the installer does not show the ping address")
             key_left = sh("sudo", "cat", str(bundle / "secrets" / "tailscale_authkey")).stdout
             checks.check(key_left == "", "the used auth key is not kept")
             modes = sh("sudo", "stat", "-c", "%n %a %u", str(bundle), str(bundle / "secrets"), str(disk / "franca-backups")).stdout
@@ -170,13 +181,21 @@ def main() -> int:
             env_values = dict(line.split("=", 1) for line in env.splitlines() if "=" in line)
             checks.check(bool(env_values.get("FRANCA_DOCKER_GID", "").isdigit()), ".env names the group of Docker's socket")
             check_hardened(checks, compose, "socket-proxy", "the socket proxy")
+            status_log = sh(*compose, "logs", "--no-color", "status", check=False)
+            checks.check(PING_URL not in status_log.stdout + status_log.stderr, "the ping address is not in the status container's log")
             topic = shown.get("ntfy_topic", "")
             checks.check(any(path == f"/{topic}" and "test alert" in body for path, body in AlertRecorder.received), "a test alert is sent")
 
-            again = run_installer(new_key())
-            checks.check(again.returncode == 0, "the installer can be run again")
+            # A later run, as when the owner changes an answer: no new Tailscale key, and Enter at the ping question.
+            again = run_installer("", ping_url="")
+            checks.check(again.returncode == 0, "the installer can be run again without a new Tailscale auth key")
+            if again.returncode != 0:
+                print(again.stdout[-2000:], again.stderr[-2000:], sep="\n")
             shown_again = json.loads(again.stdout.strip().splitlines()[-1]) if again.stdout.strip() else {}
+            checks.check(shown_again.get("address") == "https://franca.rehearsal.ts.net", "the second run uses the saved Tailscale state")
             checks.check("backup_password" not in shown_again, "a second run keeps the backup password and does not show it")
+            kept = sh("sudo", "cat", str(bundle / "secrets" / "healthchecks_ping_url")).stdout
+            checks.check(kept == PING_URL, "an empty answer at the ping question keeps the saved address")
         finally:
             tear_down(compose, show_logs=bool(checks.failures), tail=40)
             sh("docker", "rm", "--force", HEADSCALE_NAME, check=False)

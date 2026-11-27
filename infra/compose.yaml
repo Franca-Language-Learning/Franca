@@ -221,7 +221,10 @@ services:
       FRANCA_NTFY_URL: ${FRANCA_NTFY_URL:-https://ntfy.sh}
       # The checks of HTTPS and Tailscale are made only when the tailnet profile is on.
       FRANCA_PROFILES: ${COMPOSE_PROFILES:-}
-    secrets: [ntfy_topic, status_push_token]
+      # Seconds between heartbeats to healthchecks.io, while Gatus answers (story E01-012). The ping address is the
+      # healthchecks_ping_url secret; with an empty file, no heartbeat is sent.
+      FRANCA_HEARTBEAT_SECONDS: ${FRANCA_HEARTBEAT_SECONDS:-300}
+    secrets: [ntfy_topic, status_push_token, healthchecks_ping_url]
     ports:
       - "127.0.0.1:${FRANCA_STATUS_PORT:-8081}:8080"
     volumes:
@@ -246,6 +249,10 @@ secrets:
   # The token with which the updater and the backup report to the status container.
   status_push_token:
     file: ${FRANCA_SECRETS_DIR:-./secrets}/status_push_token
+  # The ping address of the owner's check on healthchecks.io, which sends an alert when the heartbeats stop, for
+  # example when the PC is off. It has a random id, so it is a secret. The file may be empty: then no heartbeat is sent.
+  healthchecks_ping_url:
+    file: ${FRANCA_SECRETS_DIR:-./secrets}/healthchecks_ping_url
 
 volumes:
   updater-status:

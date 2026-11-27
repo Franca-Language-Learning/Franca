@@ -2,7 +2,7 @@
     python3 infra/tests/rehearse_status.py
 
 It needs Docker with Compose and builds the images itself. A small web server that records what it is sent is used in
-place of ntfy.sh, so no alert leaves the computer.
+place of ntfy.sh and of healthchecks.io, so no alert or heartbeat leaves the computer.
 
 The rehearsal:
 1. starts the app, Caddy and the status container with the monitoring profile;
@@ -11,8 +11,14 @@ The rehearsal:
 3. checks that a report from a nightly job is accepted with the push token and refused without it;
 4. reports a failed update and checks that an alert reaches the stand-in for ntfy, on the owner's topic;
 5. stops the app and checks that an alert is sent after three failed checks;
-6. checks that the start script refuses a topic that could change Gatus's configuration;
-7. checks that the status container runs as a user, with a read-only file system and no capabilities.
+6. checks that the start script refuses a topic that could change Gatus's configuration, and that a ping address
+   that is not a plain web address turns the heartbeat off without stopping Gatus or showing the address;
+7. checks that the status container runs as a user, with a read-only file system and no capabilities, and that its
+   curl can use https;
+8. checks that heartbeats reach the stand-in for healthchecks.io, that the ping address is not in the container's log
+   or in its process list while a heartbeat is sent, that Gatus stays healthy while the stand-in cannot be reached and
+   the heartbeats come back afterwards, and that the heartbeats stop when the status container stops (healthchecks.io
+   then sends an alert).
 """
 
 import json
@@ -48,13 +54,19 @@ APP = "franca/app:rehearsal-status"
 CADDY = "franca/caddy:rehearsal-status"
 STATUS = "franca/status:rehearsal"
 TOPIC = "franca-rehearsal-alerts"
+# The ping address of the check on healthchecks.io has a random id, as the real one does.
+PING_PATH = f"/ping/{os.urandom(16).hex()}"
 
-# A web server that prints each POST it gets as a line of JSON, in place of ntfy.sh. It answers GET requests, so that
-# the app image's health check, which the stand-in inherits, passes.
+# A web server that prints each POST it gets as a line of JSON, in place of ntfy.sh, and each GET under /ping/, in place
+# of healthchecks.io. It answers a heartbeat after two seconds, so that curl can be seen in the process list. It answers
+# other GET requests, so that the app image's health check, which the stand-in inherits, passes.
 RECORDER = """
-import http.server, json, sys
+import http.server, json, sys, time
 class Recorder(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path.startswith("/ping/"):
+            print(json.dumps({"ping": self.path}), flush=True)
+            time.sleep(2)
         self.send_response(200)
         self.end_headers()
     def do_POST(self):
@@ -100,6 +112,11 @@ def statuses(base: str) -> dict[str, list[dict[str, Any]]]:
     return {entry["key"]: entry.get("results") or [] for entry in listed}
 
 
+def container_health(container: str) -> str:
+    """The health status that Docker reports for a container, such as healthy or starting."""
+    return sh("docker", "inspect", "-f", "{{.State.Health.Status}}", container, check=False).stdout.strip()
+
+
 def wait_for(condition: Any, seconds: float) -> bool:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -119,7 +136,9 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as folder:
         bundle = Path(folder)
         copy_compose_file(bundle, OVERRIDE)
-        key_folder = write_secrets(bundle / "secrets", {"ntfy_topic": TOPIC, "status_push_token": token})
+        key_folder = write_secrets(
+            bundle / "secrets", {"ntfy_topic": TOPIC, "status_push_token": token, "healthchecks_ping_url": f"http://ntfy:8000{PING_PATH}"}
+        )
         port = free_port()
         write_env(
             bundle / ".env",
@@ -132,16 +151,23 @@ def main() -> int:
                 "FRANCA_STATUS_PORT": str(port),
                 "FRANCA_SECRETS_DIR": str(key_folder),
                 "FRANCA_NTFY_URL": "http://ntfy:8000",
+                "FRANCA_HEARTBEAT_SECONDS": "5",
                 "COMPOSE_PROFILES": "monitoring",
             },
         )
         compose = compose_command(bundle, PROJECT)
         base = f"http://127.0.0.1:{port}"
 
-        def alerts() -> list[dict[str, Any]]:
+        def recorded() -> list[dict[str, str]]:
             lines = sh(*compose, "logs", "--no-color", "--no-log-prefix", "ntfy", check=False).stdout.splitlines()
-            sent = [json.loads(line) for line in lines if line.startswith("{")]
+            return [json.loads(line) for line in lines if line.startswith("{")]
+
+        def alerts() -> list[dict[str, Any]]:
+            sent = [entry for entry in recorded() if "body" in entry]
             return [json.loads(entry["body"]) for entry in sent if entry["body"].startswith("{")]
+
+        def heartbeats() -> int:
+            return sum(1 for entry in recorded() if entry.get("ping") == PING_PATH)
 
         def healthy(key: str) -> bool:
             results = statuses(base).get(key, [])
@@ -208,8 +234,62 @@ def main() -> int:
                     refused.returncode != 0 and "FRANCA_NTFY_URL" in refused.stderr,
                     "the start script refuses a value with a line break in it",
                 )
+                (Path(bad) / "healthchecks_ping_url").write_text("https://hc-ping.com/abc?x=$(id)", encoding="utf-8")
+                (Path(bad) / "healthchecks_ping_url").chmod(0o644)
+                name = f"{PROJECT}-bad-ping"
+                sh("docker", "run", "--detach", "--name", name, "-v", secrets, STATUS)
+                try:
+                    healthy_without_heartbeat = wait_for(lambda: container_health(name) == "healthy", 90)
+                    logged = sh("docker", "logs", name, check=False)
+                    checks.check(
+                        healthy_without_heartbeat
+                        and "the heartbeat is off" in logged.stderr
+                        and "abc" not in logged.stdout + logged.stderr,
+                        "a ping address that is not a plain web address turns the heartbeat off, Gatus keeps running, and the address is not shown",
+                    )
+                finally:
+                    sh("docker", "rm", "--force", name, check=False)
 
             check_hardened(checks, compose, "status", "the status container")
+            https = sh("docker", "run", "--rm", "--entrypoint", "sh", STATUS, "-c", "curl --version | grep -q https", check=False)
+            checks.check(https.returncode == 0, "curl in the status image can use https")
+
+            checks.check(wait_for(lambda: heartbeats() >= 2, 60), "heartbeats reach the stand-in for healthchecks.io")
+            log = sh(*compose, "logs", "--no-color", "status", check=False)
+            checks.check(PING_PATH not in log.stdout + log.stderr, "the ping address is not in the status container's log")
+
+            # The process list is read many times while heartbeats are sent. The stand-in answers after two seconds, so
+            # curl is running at some of these moments.
+            status_id = sh(*compose, "ps", "--quiet", "status").stdout.strip()
+            seen_curl, seen_address = False, False
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline and not (seen_curl and seen_address):
+                # docker top needs the pid column to pick the container's processes from the list.
+                listed = sh("docker", "top", status_id, "-o", "pid,args", check=False).stdout
+                seen_curl = seen_curl or "curl" in listed
+                seen_address = seen_address or PING_PATH in listed
+                time.sleep(0.3)
+            checks.check(seen_curl, "curl is seen in the status container's process list while a heartbeat is sent")
+            checks.check(not seen_address, "while a heartbeat is sent, the ping address is not in the process list")
+
+            sh(*compose, "stop", "ntfy")
+            time.sleep(15)
+            during = sh(*compose, "logs", "--no-color", "status", check=False)
+            status_health = container_health(status_id)
+            checks.check(
+                status_health == "healthy"
+                and "the heartbeat to healthchecks.io could not be sent" in during.stderr + during.stdout
+                and PING_PATH not in during.stderr + during.stdout,
+                "while healthchecks.io cannot be reached, Gatus stays healthy and the failed heartbeat is logged without the address",
+            )
+            sh(*compose, "start", "ntfy")
+            before = heartbeats()
+            checks.check(wait_for(lambda: heartbeats() > before, 60), "the heartbeats come back when healthchecks.io can be reached again")
+
+            sh(*compose, "stop", "status")
+            stopped_at = heartbeats()
+            time.sleep(15)
+            checks.check(heartbeats() == stopped_at, "no heartbeat is sent while the status container is stopped")
         finally:
             tear_down(compose, show_logs=bool(checks.failures))
     return checks.exit_code()

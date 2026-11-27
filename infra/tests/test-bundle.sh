@@ -16,6 +16,7 @@ head -c 32 /dev/urandom | base64 > "$FRANCA_SECRETS_DIR/backup_password"
 : > "$FRANCA_SECRETS_DIR/tailscale_authkey"  # the tailnet is rehearsed separately, in rehearse_tailnet.py
 : > "$FRANCA_SECRETS_DIR/ntfy_topic"  # the monitoring is rehearsed separately, in rehearse_status.py
 : > "$FRANCA_SECRETS_DIR/status_push_token"
+: > "$FRANCA_SECRETS_DIR/healthchecks_ping_url"  # no heartbeat in this test
 # Compose mounts secret files with their own permissions, so the app's user (10001) has to be able to read them.
 chmod 0644 "$FRANCA_SECRETS_DIR"/*
 compose=(docker compose -f infra/compose.yaml)

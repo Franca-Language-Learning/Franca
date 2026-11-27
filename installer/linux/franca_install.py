@@ -6,10 +6,12 @@ The steps:
 2. cosign is downloaded and checked against its published checksum.
 3. The latest release is read from GitHub, and the signature of each image is checked with cosign, as the updater
    does each night (franca_updater.py, which is installed beside this file).
-4. The secrets are written: the answers from the owner, and a backup password, an ntfy topic, a push token and a
+4. The secrets are written: the answers from the owner (with the optional healthchecks.io ping address), and a
+   backup password, an ntfy topic, a push token and a
    session secret, which are made here. The backup password and the topic are shown once.
 5. compose.yaml and .env are written to the bundle folder, and the disk marker to the backup folder.
-6. The tailscale container is started first. When it has joined the tailnet, the PC's Tailscale name is read and
+6. The tailscale container is started first. Without an auth key, it signs in with the state saved by an earlier
+   installation. When it has joined the tailnet, the PC's Tailscale name is read and
    written to .env, the auth key file is emptied, and the rest of the bundle is started.
 7. A test alert is sent to the ntfy topic.
 
@@ -53,6 +55,12 @@ DOCKER_SOCKET = Path("/var/run/docker.sock")
 # The same patterns as the status container's start script (infra/status/entrypoint.sh).
 TOPIC_PATTERN = re.compile(r"[A-Za-z0-9_-]{16,64}")
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{32,128}")
+# The ping address of the owner's check on healthchecks.io: https://hc-ping.com/ followed by the check's id (a UUID).
+# Other hosts are refused. The status container's start script has a looser pattern, so the rehearsal can use a
+# stand-in.
+# The answer that switches the heartbeat off. When the answer is empty, the address saved by an earlier run is kept.
+PING_OFF = "off"
+PING_URL_PATTERN = re.compile(r"https://hc-ping\.com/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
 Run = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
 Fetch = Callable[[str], bytes]
@@ -86,6 +94,9 @@ class Answers:
     tailscale_authkey: str = field(repr=False)
     backup_dir: Path
     tailscale_hostname: str = "franca"
+    # Optional (story E01-012). When the answer is empty, the address saved by an earlier run is kept, or there is no
+    # heartbeat on a first installation. With "off", the heartbeat is switched off.
+    healthchecks_ping_url: str = field(default="", repr=False)
 
     @classmethod
     def from_json(cls, text: str) -> Answers:
@@ -98,6 +109,7 @@ class Answers:
                 tailscale_authkey=str(given["tailscale_authkey"]).strip(),
                 backup_dir=Path(str(given["backup_dir"]).strip()),
                 tailscale_hostname=str(given.get("tailscale_hostname", "franca")).strip(),
+                healthchecks_ping_url=str(given.get("healthchecks_ping_url") or "").strip(),
             )
         except (ValueError, KeyError, TypeError) as error:
             raise InstallError(f"The answers could not be read: {error}") from error
@@ -111,13 +123,21 @@ class Answers:
             raise InstallError("The Google client ID has to end in .apps.googleusercontent.com.")
         if not re.fullmatch(r"[A-Za-z0-9_-]{8,200}", self.google_client_secret):
             raise InstallError("The Google client secret has unexpected characters. Copy it again from the Google console.")
-        # Headscale, a self-hosted control server that the rehearsal uses, gives keys that start with hskey-auth-.
-        if not re.fullmatch(r"(?:tskey|hskey)-auth-[A-Za-z0-9_-]{4,200}", self.tailscale_authkey):
+        # Headscale, a self-hosted control server that the rehearsal uses, gives keys that start with hskey-auth-. The
+        # key may be empty when the PC has joined the tailnet before (check_tailscale_key).
+        if self.tailscale_authkey and not re.fullmatch(r"(?:tskey|hskey)-auth-[A-Za-z0-9_-]{4,200}", self.tailscale_authkey):
             raise InstallError("The Tailscale auth key has to start with tskey-auth-.")
         if not self.backup_dir.is_absolute():
             raise InstallError("The backup folder has to be a full path, such as /mnt/j/franca-backups.")
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", self.tailscale_hostname):
             raise InstallError("The Tailscale machine name can have lowercase letters, digits and hyphens only.")
+        ping = self.healthchecks_ping_url
+        if ping and ping.lower() != PING_OFF and not PING_URL_PATTERN.fullmatch(ping):
+            raise InstallError(
+                "The healthchecks.io ping address has to be https://hc-ping.com/ followed by the check's id, such as "
+                "https://hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b. Run the installer again and paste the address from "
+                "the check's page. To install without the heartbeat, type off at the question about the ping address."
+            )
 
 
 # --- secrets
@@ -137,6 +157,15 @@ def _write_private(path: Path, value: str) -> None:
     os.replace(temporary, path)
 
 
+def _write_ping_url(path: Path, answer: str) -> None:
+    """Writes the healthchecks.io ping address. With "off", the file is emptied. When the answer is empty, the saved
+    address is kept, so the heartbeat is not switched off by mistake in a later run of the installer."""
+    if answer.lower() == PING_OFF:
+        _write_private(path, "")
+    elif answer or not path.is_file():
+        _write_private(path, answer)
+
+
 NOT_YET_SHOWN = ".not-yet-shown"
 SHOWN_ONCE = ("backup_password", "ntfy_topic")
 
@@ -149,6 +178,7 @@ def write_secrets(folder: Path, answers: Answers) -> dict[str, str]:
     folder.chmod(0o700)
     _write_private(folder / "google_client_secret", answers.google_client_secret)
     _write_private(folder / "tailscale_authkey", answers.tailscale_authkey)
+    _write_ping_url(folder / "healthchecks_ping_url", answers.healthchecks_ping_url)
     generated: dict[str, Callable[[], str]] = {
         "session_secret": lambda: secrets.token_urlsafe(48),
         "backup_password": lambda: secrets.token_urlsafe(32),
@@ -185,6 +215,27 @@ def check_no_links(bundle: Path) -> None:
 
 
 # --- the bundle's files
+
+
+# The message when the PC was to sign in with the saved Tailscale state and that failed. docs/health-alerts.md and
+# docs/private-network.md have the same sentence.
+SAVED_STATE_REFUSED = (
+    "Franca could not sign in to your tailnet with the saved Tailscale state. Make a new auth key with steps 5 to 8 of "
+    "docs/private-network.md and run the installer again with that key."
+)
+
+
+def check_tailscale_key(answers: Answers, bundle: Path, run: Run = run_command, project: str | None = None) -> None:
+    """Without an auth key, the tailscale container signs in with the state saved at an earlier installation (the
+    tailscale-state volume). When there is no saved state, the installer stops here, before anything is changed."""
+    if answers.tailscale_authkey:
+        return
+    name = project or fu.EnvFile(bundle / ".env").read().get("COMPOSE_PROJECT_NAME") or "franca"
+    if run(["docker", "volume", "inspect", f"{name}_tailscale-state"]).returncode != 0:
+        raise InstallError(
+            "The Tailscale auth key is needed, because this PC has not joined your tailnet yet. Make a key with steps 5 to 8 "
+            "of docs/private-network.md (it starts with tskey-auth-) and run the installer again."
+        )
 
 
 def check_docker_socket(socket: Path = DOCKER_SOCKET) -> None:
@@ -330,6 +381,10 @@ def start_bundle(bundle: Path, release: fu.Release, answers: Answers, run: Run =
     try:
         _check(run(_compose(bundle, "up", "--detach", "--no-build", "--wait", "--wait-timeout", "180", "tailscale")), "Joining the tailnet")
         name = tailscale_name(bundle, run)
+    except InstallError as error:
+        if answers.tailscale_authkey:
+            raise
+        raise InstallError(SAVED_STATE_REFUSED) from error
     finally:
         # An auth key can be used once, so it is emptied here whether the PC joined the tailnet or not.
         _write_private(bundle / "secrets" / "tailscale_authkey", "")
@@ -365,6 +420,7 @@ def install(
     check_docker_socket()
     bundle.mkdir(parents=True, exist_ok=True)
     check_no_links(bundle)
+    check_tailscale_key(answers, bundle, run, project)
     for leftover in (bundle / "compose.yaml.new", bundle / ".env.new"):
         leftover.unlink(missing_ok=True)
     shutil.copyfile(compose_file, bundle / "compose.yaml.new")

@@ -46,8 +46,9 @@ def test_the_status_container_is_in_its_own_profile_and_hardened(compose: dict[s
     assert all(str(port).startswith("127.0.0.1:") for port in status.get("ports", []))
 
 
-def test_the_alert_topic_and_the_push_token_are_secrets(compose: dict[str, Any]) -> None:
-    assert set(compose["services"]["status"]["secrets"]) == {"ntfy_topic", "status_push_token"}
+def test_the_alert_topic_the_push_token_and_the_heartbeat_address_are_secrets(compose: dict[str, Any]) -> None:
+    assert set(compose["services"]["status"]["secrets"]) == {"ntfy_topic", "status_push_token", "healthchecks_ping_url"}
+    assert compose["secrets"]["healthchecks_ping_url"] == {"file": "${FRANCA_SECRETS_DIR:-./secrets}/healthchecks_ping_url"}
     text = GATUS_CONFIG.read_text()
     assert "${NTFY_TOPIC}" in text
     assert "${STATUS_PUSH_TOKEN}" in text
@@ -160,3 +161,55 @@ def test_the_tailnet_checks_need_the_tailnet_profile(compose: dict[str, Any]) ->
 
 def test_no_secret_value_is_in_the_config() -> None:
     assert not re.search(r"tk_[A-Za-z0-9]{20,}|token: [\"']?[A-Za-z0-9]{16,}", GATUS_CONFIG.read_text())
+
+
+# --- the heartbeat to healthchecks.io (story E01-012)
+#
+# These tests check the layout of the start script and the image file. The behaviour is rehearsed with real containers
+# in rehearse_status.py (heartbeats, the process list, the log, a bad setting, the network down).
+
+ENTRYPOINT = INFRA / "status" / "entrypoint.sh"
+DOCKERFILE = INFRA / "images" / "status.Dockerfile"
+
+
+def test_the_start_script_reads_the_heartbeat_address_as_an_optional_secret() -> None:
+    script = ENTRYPOINT.read_text()
+    assert "read_optional_secret healthchecks_ping_url" in script
+    assert 'if [ -n "$HEARTBEAT_URL" ]; then' in script
+
+
+def test_the_start_script_does_not_pass_the_address_to_gatus_or_write_it() -> None:
+    script = ENTRYPOINT.read_text()
+    exported = next(line for line in script.splitlines() if line.startswith("export "))
+    assert "HEARTBEAT_URL" not in exported
+    assert "HEARTBEAT" not in GATUS_CONFIG.read_text()
+    assert not [line for line in script.splitlines() if "echo" in line and "HEARTBEAT_URL" in line]
+
+
+def test_the_start_script_gives_the_address_to_curl_on_standard_input_not_on_its_command_line() -> None:
+    script = ENTRYPOINT.read_text()
+    # printf is built into the shell, so the address is in no process's command line. With -q first, curl reads no
+    # .curlrc file.
+    assert """printf 'url = "%s"\\n' "$1" | curl -q -fsS -m 10 -o /dev/null -K - 2>/dev/null""" in script
+    assert not [line for line in script.splitlines() if "wget" in line and '"$1"' in line]
+    assert "apk add --no-cache ca-certificates curl" in DOCKERFILE.read_text()
+
+
+def test_the_start_script_sends_heartbeats_while_gatus_answers_every_five_minutes_by_default(compose: dict[str, Any]) -> None:
+    script = ENTRYPOINT.read_text()
+    assert "wget -q -T 10 -O /dev/null http://127.0.0.1:8080/health" in script
+    assert compose["services"]["status"]["environment"]["FRANCA_HEARTBEAT_SECONDS"] == "${FRANCA_HEARTBEAT_SECONDS:-300}"
+
+
+def test_the_start_script_checks_the_address_and_the_interval_against_strict_patterns() -> None:
+    # The owner's check on healthchecks.io has a period of 5 minutes and a grace time of 10 minutes.
+    script = ENTRYPOINT.read_text()
+    assert "matches \"$HEARTBEAT_URL\" 'https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~-]+)+'" in script
+    assert "matches \"$FRANCA_HEARTBEAT_SECONDS\" '([5-9]|[1-9][0-9]|[12][0-9]{2}|300)'" in script
+
+
+def test_a_bad_heartbeat_setting_turns_the_heartbeat_off_and_leaves_gatus_running() -> None:
+    script = ENTRYPOINT.read_text()
+    heartbeat_part = script[script.index('HEARTBEAT_URL="$(read_optional_secret') : script.index("export ")]
+    assert "fail " not in heartbeat_part
+    assert "franca-status: the heartbeat is off:" in heartbeat_part
