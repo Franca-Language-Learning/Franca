@@ -100,7 +100,7 @@ The same command is run in the Container bundle job, so the digests can also be 
 
 ## Connections from the pipeline
 
-Each job in the pipeline starts with Harden-Runner in block mode (story E01-013). A connection from the job to a host that is not on the job's list of allowed endpoints is refused. The list is `allowed-endpoints` under the Harden-Runner step of that job, in the workflow file in `.github/workflows/`. GitHub's own hosts, such as github.com and the storage for logs and artifacts, are allowed by Harden-Runner without being listed. The jobs in `release.yml` are in audit mode until the first release, and their lists are written from that release's logs. The OSV-Scanner workflow is run from Google's reusable workflow, which has no Harden-Runner step.
+The jobs in the pipeline start with Harden-Runner in block mode (story E01-013). A connection from the job to a host that is not on the job's list of allowed endpoints is refused. The list is `allowed-endpoints` under the Harden-Runner step of that job, in the workflow file in `.github/workflows/`. GitHub's own hosts, such as github.com and the storage for logs and artifacts, are allowed by Harden-Runner without being listed. The jobs in `release.yml` are in audit mode until the first release, and their lists are written from that release's logs. The OSV-Scanner workflow is run from Google's reusable workflow, which has no Harden-Runner step.
 
 After a change that adds a package source, an image registry or a download address, a job can fail because a connection was refused. To find the host and add it:
 

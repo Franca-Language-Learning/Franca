@@ -3,10 +3,10 @@
 # workflow, so the same commands are run in the pipeline and in a local check.
 # Actions are pinned to a full commit SHA, with the release tag in a comment; Renovate updates both.
 #
-# Harden-Runner is in block mode in each job, so a connection to a host that is not in the job's allowed-endpoints is
-# refused. GitHub's own hosts are allowed by Harden-Runner without a list. Jobs that need neither sudo nor Docker have
-# both switched off. tools/check_harden_runner.py checks the settings, and docs/package-updates.md says how to add an
-# endpoint.
+# Harden-Runner is in block mode in the jobs of this workflow, so a connection to a host that is not in the job's
+# allowed-endpoints is refused. GitHub's own hosts are allowed by Harden-Runner without a list. Sudo and Docker are
+# switched off in the jobs that need neither. The settings are checked by tools/check_harden_runner.py, and the steps
+# for adding an endpoint are in docs/package-updates.md.
 name: CI
 
 on:

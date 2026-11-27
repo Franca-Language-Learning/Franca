@@ -17,7 +17,7 @@ results storage (productionresultssa*.blob.core.windows.net) and Azure's address
 
   uv run python -I tools/check_harden_runner.py    check the repository
 
-docs/package-updates.md, "Connections from the pipeline", says how to add an endpoint.
+The steps for adding an endpoint are in docs/package-updates.md, under "Connections from the pipeline".
 """
 
 from __future__ import annotations
@@ -115,7 +115,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
     for problem in problems:
         print(problem)
     if problems:
-        print(f"\n{len(problems)} problem(s) with Harden-Runner. docs/package-updates.md says how the lists are kept.")
+        print(
+            f'\n{len(problems)} problem(s) with Harden-Runner. The steps are in docs/package-updates.md, under "Connections from the pipeline".'
+        )
         return 1
     jobs = len(list(harden_runner_jobs(options.root)))
     print(f"Harden-Runner: {jobs} job(s) checked, with no problem.")

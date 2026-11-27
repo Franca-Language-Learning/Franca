@@ -4,8 +4,9 @@
 It needs Docker with Compose and builds the images itself. Headscale, an open-source Tailscale control server, is used
 in place of Tailscale's own, so no account is needed. A second Tailscale container is used in place of a phone.
 Nothing in the rehearsal is sent to a host on the internet: the devices use the relay (DERP) and STUN server in
-Headscale, not Tailscale's, and send no logs to Tailscale, and Caddy has its own local certificate authority in place of
-Let's Encrypt. In the Container bundle job, where the rehearsal runs, connections to those hosts are refused.
+Headscale, not Tailscale's, and send no logs to Tailscale. When tailscaled has no certificate for Caddy, Caddy uses its
+own local certificate authority in place of Let's Encrypt (see CADDY_REHEARSAL_TLS in rehearsal.py). In the Container
+bundle job, where the rehearsal runs, connections to those hosts are refused.
 
 The rehearsal:
 1. starts Headscale and makes a sign-up key;

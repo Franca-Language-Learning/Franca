@@ -37,9 +37,13 @@ TAILSCALE_REHEARSAL_ENVIRONMENT = {
     "TS_DEBUG_USE_DERP_HTTP": "true",
     "TS_DISABLE_PORTMAPPER": "true",
 }
-# Global options of Caddy in a rehearsal: certificates come from Caddy's own local authority, not from Let's Encrypt or
-# another public authority, and Caddy does not try to add that authority to the system's trusted certificates.
-CADDY_REHEARSAL_OPTIONS = ("local_certs", "skip_install_trust")
+# Additions to the bundle's Caddyfile for a rehearsal. For the Tailscale name, Caddy asks tailscaled for the certificate
+# first, as on the PC. When tailscaled has none, which is the case with Headscale, Caddy would try Let's Encrypt and
+# ZeroSSL next. In a rehearsal it uses its own local certificate authority in their place, and does not try to add that
+# authority to the system's trusted certificates.
+CADDY_REHEARSAL_GLOBAL_OPTIONS = "\tskip_install_trust\n"
+CADDY_REHEARSAL_TAILSCALE_SITE = "https://{$FRANCA_TAILSCALE_NAME}:8443 {\n"
+CADDY_REHEARSAL_TLS = "\ttls {\n\t\tget_certificate tailscale\n\t\tissuer internal\n\t}\n"
 
 
 def sh(*command: str, check: bool = True, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -175,10 +179,14 @@ def environment_lines(values: Mapping[str, str], indent: int) -> str:
 
 
 def rehearsal_caddyfile() -> str:
-    """The bundle's Caddyfile (infra/caddy/Caddyfile) with CADDY_REHEARSAL_OPTIONS at the start of its global options."""
+    """The bundle's Caddyfile (infra/caddy/Caddyfile) with CADDY_REHEARSAL_GLOBAL_OPTIONS at the start of its global
+    options, and CADDY_REHEARSAL_TLS at the start of the site on the Tailscale name."""
     lines = (ROOT / "infra" / "caddy" / "Caddyfile").read_text(encoding="utf-8").splitlines(keepends=True)
-    start = lines.index("{\n") + 1
-    return "".join(lines[:start] + [f"\t{option}\n" for option in CADDY_REHEARSAL_OPTIONS] + lines[start:])
+    site = lines.index(CADDY_REHEARSAL_TAILSCALE_SITE) + 1
+    lines[site:site] = [CADDY_REHEARSAL_TLS]
+    options = lines.index("{\n") + 1
+    lines[options:options] = [CADDY_REHEARSAL_GLOBAL_OPTIONS]
+    return "".join(lines)
 
 
 def write_rehearsal_caddyfile(folder: Path) -> Path:

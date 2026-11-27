@@ -149,14 +149,14 @@ def test_environment_lines_are_a_yaml_mapping_at_the_given_indent() -> None:
     assert yaml.safe_load("environment:\n" + lines) == {"environment": {"A": "true", "B": "--x=http://h:1"}}
 
 
-def test_the_rehearsal_caddyfile_has_local_certificates_and_is_otherwise_the_bundles() -> None:
+def test_the_rehearsal_caddyfile_has_no_public_certificate_authority_and_is_otherwise_the_bundles() -> None:
     bundle = (rehearsal.ROOT / "infra" / "caddy" / "Caddyfile").read_text(encoding="utf-8")
     rehearsed = rehearsal.rehearsal_caddyfile()
 
-    added = [line.strip() for line in rehearsed.splitlines() if line not in bundle.splitlines()]
-    assert added == ["local_certs", "skip_install_trust"]
-    assert rehearsed.splitlines()[rehearsed.splitlines().index("{") + 1].strip() == "local_certs"
-    assert "local_certs" not in bundle
+    assert "{\n\tskip_install_trust\n" in rehearsed
+    assert "https://{$FRANCA_TAILSCALE_NAME}:8443 {\n\ttls {\n\t\tget_certificate tailscale\n\t\tissuer internal\n\t}\n" in rehearsed
+    assert rehearsed.replace(rehearsal.CADDY_REHEARSAL_TLS, "").replace(rehearsal.CADDY_REHEARSAL_GLOBAL_OPTIONS, "") == bundle
+    assert "issuer internal" not in bundle
 
 
 def test_a_rehearsal_caddyfile_is_written_for_every_user_to_read(tmp_path: Path) -> None:
