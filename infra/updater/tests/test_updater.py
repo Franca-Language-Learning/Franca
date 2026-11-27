@@ -3,6 +3,7 @@
 The rehearsal against real containers is infra/tests/rehearse-update.sh.
 """
 
+import http.client
 import json
 import ssl
 import subprocess
@@ -722,6 +723,144 @@ def test_a_body_over_the_limit_is_refused(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(urllib.request, "urlopen", lambda request, timeout: FakeResponse(b"x" * 1_000_001))
     with pytest.raises(fu.UpdateError, match="larger than"):
         fu.http_fetch("https://example.org/release.json")
+
+
+# --- the socket proxy (stories E01-007 and E01-010)
+
+
+def test_the_docker_api_is_checked_at_the_proxys_ping_address(monkeypatch: pytest.MonkeyPatch) -> None:
+    asked: list[str] = []
+
+    def answer(url: str, timeout: float) -> FakeResponse:
+        asked.append(url)
+        return FakeResponse(b"OK")
+
+    monkeypatch.setattr(urllib.request, "urlopen", answer)
+
+    assert fu.docker_api_probe("tcp://socket-proxy:2375")() is None
+    assert asked == ["http://socket-proxy:2375/_ping"]
+
+
+def test_a_proxy_that_does_not_answer_gives_the_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(url: str, timeout: float) -> FakeResponse:
+        raise OSError("Connection refused")
+
+    monkeypatch.setattr(urllib.request, "urlopen", refuse)
+
+    problem = fu.docker_api_probe("tcp://socket-proxy:2375")()
+
+    assert problem is not None
+    assert "Connection refused" in problem
+
+
+def test_a_proxy_that_answers_something_else_is_a_problem(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout: FakeResponse(b"<html>Forbidden</html>"))
+
+    assert fu.docker_api_probe("tcp://socket-proxy:2375")() is not None
+
+
+@pytest.mark.parametrize(("problem", "success"), [(None, True), ("Connection refused", False)])
+def test_the_state_of_the_docker_api_is_reported(tmp_path: Path, problem: str | None, success: bool) -> None:
+    updater, _log, _verifier = make(tmp_path, NEW)
+    monitor = FakeMonitor()
+    updater.monitor = monitor
+    updater.docker_api = lambda: problem
+
+    updater.report_docker_api()
+
+    assert len(monitor.reports) == 1
+    key, reported, message = monitor.reports[0]
+    assert (key, reported) == ("franca_socket-proxy", success)
+    assert message
+    if problem:
+        assert problem in message
+
+
+def test_without_a_docker_api_probe_nothing_is_reported(tmp_path: Path) -> None:
+    updater, _log, _verifier = make(tmp_path, NEW)
+    monitor = FakeMonitor()
+    updater.monitor = monitor
+
+    updater.report_docker_api()
+
+    assert monitor.reports == []
+
+
+def test_the_service_checks_the_proxy_each_minute_reports_its_state_each_hour_and_updates_at_night(tmp_path: Path) -> None:
+    updater, _log, _verifier = make(tmp_path, NEW)
+    monitor = FakeMonitor()
+    updater.monitor = monitor
+    updater.docker_api = lambda: None
+    service = fu.Service(updater, "02:30", wake=NOW)
+
+    for minute in range(61):
+        service.tick(NOW - timedelta(hours=1) + timedelta(minutes=minute))
+    keys = [key for key, _success, _message in monitor.reports]
+
+    assert keys.count("franca_socket-proxy") == 61
+    # The first tick reports the state; the run at 02:30 reports it after the update.
+    assert keys.count("nightly_update") == 2
+    assert status(tmp_path)["result"] == "installed"
+    assert service.wake == NOW + timedelta(days=1)
+
+
+@pytest.mark.parametrize(("wake_in", "sleep"), [(timedelta(hours=5), 60.0), (timedelta(seconds=30), 30.0), (-timedelta(minutes=1), 1.0)])
+def test_the_service_sleeps_a_minute_at_most_and_wakes_for_the_update(tmp_path: Path, wake_in: timedelta, sleep: float) -> None:
+    updater, _log, _verifier = make(tmp_path, NEW)
+    service = fu.Service(updater, "02:30", wake=NOW + wake_in)
+
+    assert service.seconds_to_sleep(NOW) == sleep
+
+
+def test_a_garbled_answer_from_the_proxy_is_a_problem_and_not_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def garbled(url: str, timeout: float) -> FakeResponse:
+        raise http.client.BadStatusLine("garbage")
+
+    monkeypatch.setattr(urllib.request, "urlopen", garbled)
+
+    problem = fu.docker_api_probe("tcp://socket-proxy:2375")()
+
+    assert problem is not None
+    assert "garbage" in problem
+
+
+def test_an_error_in_the_proxy_check_does_not_stop_the_nightly_update(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    updater, _log, _verifier = make(tmp_path, NEW)
+    monitor = FakeMonitor()
+    updater.monitor = monitor
+
+    def broken() -> str | None:
+        raise http.client.BadStatusLine("garbage")
+
+    updater.docker_api = broken
+    service = fu.Service(updater, "02:30", wake=NOW)
+
+    service.tick(NOW)
+
+    assert status(tmp_path)["result"] == "installed"
+    printed = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
+    assert {"result": "error", "step": "socket proxy check"} == {k: v for k, v in printed[0].items() if k != "message"}
+
+
+def test_an_error_in_the_nightly_update_does_not_stop_the_proxy_check_at_the_next_tick(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    updater, _log, _verifier = make(tmp_path, NEW)
+    monitor = FakeMonitor()
+    updater.monitor = monitor
+    updater.docker_api = lambda: None
+
+    def broken(_self: fu.Updater, now: datetime) -> str:
+        raise RuntimeError("the status volume is full")
+
+    monkeypatch.setattr(fu.Updater, "run_once", broken)
+    service = fu.Service(updater, "02:30", wake=NOW)
+
+    service.tick(NOW)
+    service.tick(NOW + timedelta(minutes=1))
+
+    assert [key for key, _success, _message in monitor.reports].count("franca_socket-proxy") == 2
+    assert service.wake == NOW + timedelta(days=1)
 
 
 class FlakyOpener:

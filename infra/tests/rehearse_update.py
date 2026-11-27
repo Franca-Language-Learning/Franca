@@ -13,8 +13,9 @@ The rehearsal:
    updater has to go back to 1.1.0 and put back the database as it was before 1.2.0, so the row and the column are
    gone;
 4. is offered 1.0.0 again, which is older and is not installed;
-5. runs the updater's own container through the socket proxy: it can list the bundle's containers, and the proxy
-   blocks docker exec.
+5. starts the socket proxy and checks that it runs as a user other than root and that its health check passes;
+6. runs the updater's own container through the socket proxy: it can list the bundle's containers, its check of the
+   Docker API passes, and the proxy blocks docker exec.
 """
 
 import os
@@ -24,7 +25,7 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from rehearsal import ROOT, Checks, build_image, copy_compose_file, free_port, sh, tear_down, write_secrets
+from rehearsal import ROOT, Checks, build_image, check_hardened, copy_compose_file, docker_group, free_port, sh, tear_down, write_secrets
 
 sys.path.insert(0, str(ROOT / "infra" / "updater"))
 
@@ -120,6 +121,7 @@ def main() -> int:
                 "FRANCA_SECRETS_DIR": str(key_folder),
                 "FRANCA_UPDATER_IMAGE": UPDATER,
                 "FRANCA_BUNDLE_DIR": str(bundle),
+                "FRANCA_DOCKER_GID": docker_group(),
                 "COMPOSE_PROJECT_NAME": PROJECT,
             }
         )
@@ -161,7 +163,15 @@ def main() -> int:
             checks.check(run_updater("1.0.0") == "up-to-date", "the older 1.0.0 is not installed")
             checks.check(probe() == "1.1.0", "1.1.0 is still running")
 
-            sh(*compose._compose("--profile", "updates", "up", "--detach", "--no-build", "socket-proxy"))
+            started = compose.run(
+                compose._compose("--profile", "updates", "up", "--detach", "--no-build", "--wait", "--wait-timeout", "60", "socket-proxy")
+            )
+            checks.check(started.returncode == 0, "the socket proxy starts and its health check passes")
+            check_hardened(checks, compose._compose("--profile", "updates"), "socket-proxy", "the socket proxy")
+            probed = through_proxy(
+                compose, "cd /app && python -c 'import franca_updater as fu; print(fu.docker_api_probe(\"tcp://socket-proxy:2375\")())'"
+            )
+            checks.check(probed.stdout.strip() == "None", "the updater's check of the Docker API passes through the proxy")
             listed = through_proxy(compose, 'docker compose --project-directory "$FRANCA_BUNDLE_DIR" ps --quiet app')
             checks.check(listed.returncode == 0 and bool(listed.stdout.strip()), "the updater lists the app's container through the proxy")
             app_id = listed.stdout.strip().splitlines()[-1] if listed.stdout.strip() else "none"

@@ -146,6 +146,58 @@ def test_the_env_file_names_the_release_and_the_settings(tmp_path: Path) -> None
     assert "GOCSPX" not in (bundle / ".env").read_text()
 
 
+def test_the_env_file_names_the_group_that_can_open_dockers_socket(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    socket = tmp_path / "docker.sock"
+    socket.touch()
+
+    fi.write_env(bundle, RELEASE, answers(tmp_path), tailscale_name=None, docker_socket=socket)
+
+    # The socket proxy runs as a user other than root, in this group (infra/compose.yaml).
+    assert fu.EnvFile(bundle / ".env").read()["FRANCA_DOCKER_GID"] == str(socket.stat().st_gid)
+
+
+class RootOwnedSocket:
+    """Stands in for a socket that belongs to group 0, as when Docker was installed without a docker group."""
+
+    def exists(self) -> bool:
+        return True
+
+    def stat(self) -> os.stat_result:
+        return os.stat_result((0o140660, 0, 0, 1, 0, 0, 0, 0, 0, 0))
+
+
+def test_a_socket_that_belongs_to_the_root_group_gives_group_0(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+
+    fi.write_env(bundle, RELEASE, answers(tmp_path), tailscale_name=None, docker_socket=RootOwnedSocket())  # type: ignore[arg-type]
+
+    assert fu.EnvFile(bundle / ".env").read()["FRANCA_DOCKER_GID"] == "0"
+
+
+def test_without_dockers_socket_the_installer_stops_with_a_message(tmp_path: Path) -> None:
+    with pytest.raises(fi.InstallError, match="Restart the PC and run the installer again"):
+        fi.check_docker_socket(tmp_path / "missing.sock")
+
+
+def test_with_dockers_socket_the_check_passes(tmp_path: Path) -> None:
+    socket = tmp_path / "docker.sock"
+    socket.touch()
+
+    fi.check_docker_socket(socket)
+
+
+def test_without_dockers_socket_no_group_is_written(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+
+    fi.write_env(bundle, RELEASE, answers(tmp_path), tailscale_name=None, docker_socket=tmp_path / "missing.sock")
+
+    assert "FRANCA_DOCKER_GID" not in fu.EnvFile(bundle / ".env").read()
+
+
 def test_the_tailscale_name_gives_the_public_address(tmp_path: Path) -> None:
     bundle = tmp_path / "bundle"
     bundle.mkdir()

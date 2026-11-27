@@ -15,7 +15,8 @@ Each run:
    the old version is started.
 
 The result is written to the status file whether the update worked or not, for the owner and for the health
-monitoring (story E01-010).
+monitoring (story E01-010). Between runs, the updater checks every minute that the Docker API answers through the
+socket proxy, and reports the result to the health monitoring.
 
 The updater reaches Docker through a socket proxy (infra/compose.yaml). Calls about containers, images, networks and
 volumes are let through. Exec, build, swarm, plugin, secret and system calls are blocked. The updater uses only the
@@ -24,6 +25,7 @@ Python standard library, the docker CLI with the compose plugin, and cosign.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
@@ -62,6 +64,10 @@ REQUIRED_IMAGES = frozenset({"app", "caddy"})
 # The results that count as a successful run, and the key of the updater's external endpoint in the status container.
 SUCCESSFUL_RESULTS = frozenset({"installed", "up-to-date"})
 MONITOR_KEY = "nightly_update"
+# The key of the socket proxy's external endpoint in the status container, and how often the proxy is checked.
+SOCKET_PROXY_KEY = "franca_socket-proxy"
+CHECK_EVERY = 60  # seconds
+REPORT_EVERY = timedelta(hours=1)
 # The services whose new images are started straight after the app is healthy, each with the Compose profile that has
 # to be on: the private network (story E01-009), which faces the tailnet, and health monitoring (story E01-010).
 STARTED_AFTER_THE_APP = {"tailscale": "tailnet", "status": "monitoring"}
@@ -408,6 +414,28 @@ def wait_for_version(probe: Probe, version: str, timeout: float, sleep: Callable
         sleep(2)
 
 
+DockerApiProbe = Callable[[], str | None]
+
+
+def docker_api_probe(docker_host: str) -> DockerApiProbe:
+    """Returns a check of the Docker API through the socket proxy at docker_host (tcp://host:port, as in DOCKER_HOST).
+    The check returns None when the proxy answers /_ping with OK, which it does only when it can reach Docker, and
+    otherwise the reason."""
+    url = "http://" + docker_host.removeprefix("tcp://").rstrip("/") + "/_ping"
+
+    def probe() -> str | None:
+        try:
+            with urllib.request.urlopen(url, timeout=5) as response:  # noqa: S310 - a fixed address inside the bundle
+                answer = response.read(100)
+        except (OSError, http.client.HTTPException, ValueError) as error:
+            return f"The socket proxy does not answer as expected: {error!r}"
+        if answer.strip() != b"OK":
+            return f"The socket proxy gave an unexpected answer to /_ping: {answer[:60]!r}"
+        return None
+
+    return probe
+
+
 # --- status
 
 
@@ -513,6 +541,7 @@ class Updater:
     health_timeout: float = 180
     sleep: Callable[[float], None] = field(default=time.sleep)
     monitor: Monitor | None = None
+    docker_api: DockerApiProbe | None = None
 
     def run_once(self, now: datetime) -> str:
         """Checks for a release and installs it, then reports the state to health monitoring. Returns the result, which
@@ -653,6 +682,14 @@ class Updater:
         message = f"No successful update since {last_success or 'the start'}" if stale else state.get("message", "")
         self.monitor.report(MONITOR_KEY, not stale, message)
 
+    def report_docker_api(self) -> None:
+        """Reports to health monitoring whether the Docker API answers through the socket proxy. The status container
+        is not on the proxy's network, so it cannot check the proxy itself."""
+        if self.monitor is None or self.docker_api is None:
+            return
+        problem = self.docker_api()
+        self.monitor.report(SOCKET_PROXY_KEY, problem is None, problem or "The Docker API answers through the socket proxy")
+
 
 # --- the service
 
@@ -678,6 +715,40 @@ def next_run(now: datetime, at: str) -> datetime:
     return candidate if candidate > now else candidate + timedelta(days=1)
 
 
+def _step(name: str, action: Callable[[], object]) -> None:
+    """Runs one part of the loop. An error is printed with the part's name, and the loop goes on."""
+    try:
+        action()
+    except Exception as error:  # noqa: BLE001 - the other parts of the loop still run
+        print(json.dumps({"result": "error", "step": name, "message": repr(error)}), flush=True)
+
+
+@dataclass(slots=True)
+class Service:
+    """The updater's loop. tick is called every minute (CHECK_EVERY). Each time, the socket proxy is checked. The
+    update is run at the time of day `at`. The state is reported to health monitoring after each run and every hour
+    (see Updater.report_state). Each part runs on its own: an error in one part is printed, and the other parts
+    still run."""
+
+    updater: Updater
+    at: str
+    wake: datetime
+    report_after: datetime = datetime.min.replace(tzinfo=UTC)
+
+    def tick(self, now: datetime) -> None:
+        _step("socket proxy check", self.updater.report_docker_api)
+        if now >= self.wake:
+            self.wake = next_run(now, self.at)
+            self.report_after = now + REPORT_EVERY
+            _step("nightly update", lambda: self.updater.run_once(now))
+        elif now >= self.report_after:
+            self.report_after = now + REPORT_EVERY
+            _step("state report", lambda: self.updater.report_state(now))
+
+    def seconds_to_sleep(self, now: datetime) -> float:
+        return max(1.0, min(float(CHECK_EVERY), (self.wake - now).total_seconds()))
+
+
 def from_environment(environ: Mapping[str, str]) -> Updater:
     project = Path(environ.get("FRANCA_BUNDLE_DIR", "/bundle"))
     compose = Compose(project, project_name=environ.get("COMPOSE_PROJECT_NAME") or None)
@@ -692,6 +763,7 @@ def from_environment(environ: Mapping[str, str]) -> Updater:
         high_water=HighWaterMark(Path(environ.get("FRANCA_UPDATER_HIGH_WATER", "/status/newest-installed"))),
         bundle=project,
         monitor=Monitor(environ["FRANCA_STATUS_URL"], Path("/run/secrets/status_push_token")) if environ.get("FRANCA_STATUS_URL") else None,
+        docker_api=docker_api_probe(environ["DOCKER_HOST"]) if environ.get("DOCKER_HOST", "").startswith("tcp://") else None,
     )
 
 
@@ -701,19 +773,13 @@ def main(argv: Sequence[str] = sys.argv[1:], environ: Mapping[str, str] = os.env
         result = updater.run_once(datetime.now(UTC))
         return 0 if result in SUCCESSFUL_RESULTS else 1
     at = update_time(environ.get("FRANCA_UPDATE_AT_UTC", DEFAULT_UPDATE_TIME))
-    wake = next_run(datetime.now(UTC), at)
+    service = Service(updater, at, wake=next_run(datetime.now(UTC), at))
     while True:
-        # The state is reported every hour as well as after each run (see Updater.report_state).
         try:
-            now = datetime.now(UTC)
-            if now >= wake:
-                wake = next_run(now, at)
-                updater.run_once(now)
-            else:
-                updater.report_state(now)
+            service.tick(datetime.now(UTC))
         except Exception as error:  # noqa: BLE001 - the updater keeps running and tries again the next night
             print(json.dumps({"result": "error", "message": repr(error)}), flush=True)
-        time.sleep(max(1.0, min(3600.0, (wake - datetime.now(UTC)).total_seconds())))
+        time.sleep(service.seconds_to_sleep(datetime.now(UTC)))
 
 
 if __name__ == "__main__":
