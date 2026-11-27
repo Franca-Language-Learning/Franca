@@ -61,7 +61,7 @@ These checks run on the PC, so there is no alert from them when the PC itself is
 | Franca/Tailscale | The tailscale container has stopped or is not signed in to your tailnet. Restart the PC. If the alert comes back, check the `franca` machine in the Tailscale admin console. |
 | Nightly/Update | The nightly update failed, has not succeeded for a day, or the updater has stopped. The version that was running is kept. |
 | Nightly/Backup | The nightly backup failed, has not succeeded for a day, or the backup has stopped. Check that disk J: is connected. |
-| Nightly/Restore test | The monthly restore test failed or is overdue. Ask for help soon. Until this is fixed, a restore from backup may not work. |
+| Nightly/Restore test | The monthly restore test failed or is overdue. In the test, the latest backup is restored and checked, and Franca is started on the restored copy. Ask for help soon. Until this is fixed, a restore from backup may not work. |
 | Franca is DOWN (from healthchecks.io) | No heartbeat has arrived for about 15 minutes. The PC is off or asleep. It can also mean that Docker has stopped or that the PC has no internet connection. Check that the PC is on and connected. A message that says **UP** follows when the heartbeats arrive again. |
 
 ## Looking at the dashboard

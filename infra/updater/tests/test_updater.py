@@ -5,6 +5,7 @@ The rehearsal against real containers is infra/tests/rehearse-update.sh.
 
 import http.client
 import json
+import os
 import ssl
 import subprocess
 import sys
@@ -861,6 +862,319 @@ def test_an_error_in_the_nightly_update_does_not_stop_the_proxy_check_at_the_nex
 
     assert [key for key, _success, _message in monitor.reports].count("franca_socket-proxy") == 2
     assert service.wake == NOW + timedelta(days=1)
+
+
+# --- the app on the restored copy, for the backup's monthly restore test (story E01-008)
+
+SERVER_SOURCE = Path(__file__).resolve().parents[3] / "server" / "src"
+
+
+def restore_check(tmp_path: Path) -> tuple[fu.Updater, list[Sequence[str]], Path]:
+    folder = tmp_path / "restore-test"
+    folder.mkdir()
+    commands: list[Sequence[str]] = []
+
+    def run_limited(command: Sequence[str], timeout: float) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    updater, _log, _verifier = make(tmp_path, NEW)
+
+    def run(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    updater.compose = fu.Compose(tmp_path, run=run, project_name="franca", run_limited=run_limited)
+    updater.restore_test_dir = folder
+    return updater, commands, folder
+
+
+def test_without_a_request_no_container_is_started(tmp_path: Path) -> None:
+    updater, commands, _folder = restore_check(tmp_path)
+
+    updater.check_restored_copy()
+
+    assert commands == []
+
+
+REQUEST = "2026-12-07T03:30:00+00:00-0a1b2c3d"
+
+
+def write_request(folder: Path, request: object = REQUEST) -> None:
+    (folder / "request.json").write_text(json.dumps({"id": request}), encoding="utf-8")
+
+
+def test_a_request_starts_the_app_on_the_restored_copy_in_a_one_off_container_once(tmp_path: Path) -> None:
+    updater, commands, folder = restore_check(tmp_path)
+    write_request(folder)
+
+    updater.check_restored_copy()
+    updater.check_restored_copy()
+
+    assert len(commands) == 1
+    command = list(commands[0])
+    assert command[:6] == ["docker", "compose", "--project-directory", str(tmp_path), "--project-name", "franca"]
+    assert command[6:12] == ["run", "--rm", "--no-deps", "--entrypoint", "python", "restore-check"]
+    assert command[12] == "-c"
+
+
+def test_a_request_that_has_its_answer_is_not_started_again(tmp_path: Path) -> None:
+    updater, commands, folder = restore_check(tmp_path)
+    write_request(folder)
+    (folder / "answer.json").write_text(json.dumps({"id": REQUEST, "passed": True}), encoding="utf-8")
+
+    updater.check_restored_copy()
+
+    assert commands == []
+
+
+@pytest.mark.parametrize("request_id", [7, None, "one", REQUEST + "x", "2026-12-07T03:30:00+00:00-0A1B2C3D", "x" * 2000])
+def test_a_request_with_an_id_that_the_backup_does_not_make_is_ignored(tmp_path: Path, request_id: object) -> None:
+    updater, commands, folder = restore_check(tmp_path)
+    write_request(folder, request_id)
+
+    updater.check_restored_copy()
+
+    assert commands == []
+
+
+@pytest.mark.parametrize("text", ["not json", "[1, 2]", "{" + " " * 2000 + '"id": "' + REQUEST + '"}'])
+def test_a_request_file_that_cannot_be_read_or_is_too_long_is_ignored(tmp_path: Path, text: str) -> None:
+    updater, commands, folder = restore_check(tmp_path)
+    (folder / "request.json").write_text(text, encoding="utf-8")
+
+    updater.check_restored_copy()
+
+    assert commands == []
+
+
+def test_only_the_last_request_tried_is_kept(tmp_path: Path) -> None:
+    updater, commands, folder = restore_check(tmp_path)
+    write_request(folder)
+    updater.check_restored_copy()
+    write_request(folder, REQUEST.replace("0a1b2c3d", "11111111"))
+    updater.check_restored_copy()
+
+    assert len(commands) == 2
+    assert updater.restore_check_tried == REQUEST.replace("0a1b2c3d", "11111111")
+
+
+def test_a_one_off_container_that_cannot_start_gets_a_failure_answer_for_the_backup(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    updater, _commands, folder = restore_check(tmp_path)
+    updater.compose = fu.Compose(
+        tmp_path, run_limited=lambda command, timeout: subprocess.CompletedProcess(command, 1, "", "no such image\n")
+    )
+    write_request(folder)
+
+    updater.check_restored_copy()
+
+    assert "restore-check-not-run" in capsys.readouterr().out
+    answer = json.loads((folder / "answer.json").read_text(encoding="utf-8"))
+    assert answer["id"] == REQUEST
+    assert answer["passed"] is False
+    assert "no such image" in answer["message"]
+
+
+def test_a_one_off_container_that_hangs_gets_a_failure_answer_and_the_loop_goes_on(tmp_path: Path) -> None:
+    updater, _commands, folder = restore_check(tmp_path)
+
+    limits: list[float] = []
+
+    def hangs(command: Sequence[str], timeout: float) -> subprocess.CompletedProcess[str]:
+        limits.append(timeout)
+        raise subprocess.TimeoutExpired(list(command), timeout)
+
+    updater.compose = fu.Compose(tmp_path, run_limited=hangs)
+    write_request(folder)
+
+    updater.check_restored_copy()
+
+    answer = json.loads((folder / "answer.json").read_text(encoding="utf-8"))
+    assert answer["passed"] is False
+    assert "600 seconds" in answer["message"]
+    # The backup waits 15 minutes, so a hang is reported to it before it stops waiting.
+    assert limits == [600]
+    assert fu.RESTORE_CHECK_TIMEOUT < 15 * 60
+
+
+def failing(tmp_path: Path) -> fu.Compose:
+    return fu.Compose(tmp_path, run_limited=lambda command, timeout: subprocess.CompletedProcess(command, 1, "", "no such image\n"))
+
+
+def test_a_link_planted_for_the_failure_answer_is_not_followed(tmp_path: Path) -> None:
+    updater, _commands, folder = restore_check(tmp_path)
+    updater.compose = failing(tmp_path)
+    outside = tmp_path / "env-file"
+    outside.write_text("FRANCA_VERSION=1.0.0\n", encoding="utf-8")
+    (folder / "answer.json.new").symlink_to(outside)
+    write_request(folder)
+
+    updater.check_restored_copy()
+
+    assert outside.read_text(encoding="utf-8") == "FRANCA_VERSION=1.0.0\n"
+    answer_file = folder / "answer.json"
+    assert answer_file.is_file() and not answer_file.is_symlink()
+    assert json.loads(answer_file.read_text(encoding="utf-8"))["passed"] is False
+    assert oct(answer_file.stat().st_mode & 0o777) == "0o644"
+
+
+def test_a_failure_answer_that_cannot_be_written_is_printed_and_leaves_no_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    updater, _commands, folder = restore_check(tmp_path)
+    updater.compose = failing(tmp_path)
+    write_request(folder)
+
+    def refuse(*_arguments: object) -> None:
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(fu.os, "replace", refuse)
+
+    updater.check_restored_copy()
+
+    assert "restore-check-answer-not-written" in capsys.readouterr().out
+    assert sorted(path.name for path in folder.iterdir()) == ["request.json"]
+
+
+def test_a_request_file_that_is_a_link_is_ignored(tmp_path: Path) -> None:
+    updater, commands, folder = restore_check(tmp_path)
+    elsewhere = tmp_path / "elsewhere.json"
+    elsewhere.write_text(json.dumps({"id": REQUEST}), encoding="utf-8")
+    (folder / "request.json").symlink_to(elsewhere)
+
+    updater.check_restored_copy()
+
+    assert commands == []
+
+
+def test_a_request_file_that_is_a_named_pipe_is_ignored_without_waiting(tmp_path: Path) -> None:
+    updater, commands, folder = restore_check(tmp_path)
+    os.mkfifo(folder / "request.json")
+
+    updater.check_restored_copy()
+
+    assert commands == []
+
+
+def test_an_id_with_digits_from_other_scripts_is_refused() -> None:
+    assert fu.REQUEST_ID_PATTERN.fullmatch(REQUEST)
+    assert not fu.REQUEST_ID_PATTERN.fullmatch(REQUEST.replace("2026", "\u0662\u0660\u0662\u0666"))
+
+
+def test_an_error_in_the_restore_check_does_not_stop_the_nightly_update(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    updater, _commands, _folder = restore_check(tmp_path)
+
+    def broken(_self: fu.Updater) -> None:
+        raise PermissionError("the restore-test folder cannot be read")
+
+    monkeypatch.setattr(fu.Updater, "check_restored_copy", broken)
+    service = fu.Service(updater, "02:30", wake=NOW)
+
+    service.tick(NOW)
+
+    assert status(tmp_path)["result"] == "installed"
+
+
+def test_the_service_looks_for_a_request_each_minute(tmp_path: Path) -> None:
+    updater, commands, folder = restore_check(tmp_path)
+    service = fu.Service(updater, "02:30", wake=NOW + timedelta(hours=5))
+    service.tick(NOW)
+    write_request(folder)
+
+    service.tick(NOW + timedelta(minutes=1))
+
+    assert len(commands) == 1
+
+
+def run_check_script(folder: Path, port: int) -> dict[str, object]:
+    """Runs the script of the one-off container on this computer, with the server's code, as the container would."""
+    script = fu.restore_check_script(str(folder), port)
+    # As in the container: production settings, with no session secret given. The script makes a throwaway one.
+    environment = {
+        "PATH": str(Path(sys.executable).parent) + ":/usr/bin:/bin",
+        "PYTHONPATH": str(SERVER_SOURCE),
+        "FRANCA_ENVIRONMENT": "production",
+    }
+    subprocess.run([sys.executable, "-c", script], env=environment, timeout=120, check=True, capture_output=True)
+    answer: dict[str, object] = json.loads((folder / "answer.json").read_text(encoding="utf-8"))
+    return answer
+
+
+def free_port() -> int:
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port: int = probe.getsockname()[1]
+        return port
+
+
+def test_the_script_starts_the_app_on_a_restored_copy_and_reads_its_health_answer(tmp_path: Path) -> None:
+    folder = tmp_path / "restore-test"
+    folder.mkdir()
+    environment = {"PYTHONPATH": str(SERVER_SOURCE), "FRANCA_DATABASE_PATH": str(folder / "franca.db"), "PATH": "/usr/bin:/bin"}
+    subprocess.run([sys.executable, "-m", "franca.platform.migrate"], env=environment, check=True, capture_output=True)
+    write_request(folder)
+
+    answer = run_check_script(folder, free_port())
+
+    assert answer["id"] == REQUEST
+    assert answer["passed"] is True, answer
+    assert answer["version"] == "0.1.0-dev"
+
+
+def test_the_script_reports_a_copy_the_app_cannot_start_on(tmp_path: Path) -> None:
+    folder = tmp_path / "restore-test"
+    folder.mkdir()
+    (folder / "franca.db").write_bytes(b"not a database, but long enough to be read as a file " * 100)
+    write_request(folder)
+
+    answer = run_check_script(folder, free_port())
+
+    assert answer["id"] == REQUEST
+    assert answer["passed"] is False
+    assert answer["message"]
+
+
+class StubbornServer:
+    """Stands in for the app's process in the script: it does not stop when asked to."""
+
+    def __init__(self, *_arguments: object, **_options: object) -> None:
+        self.killed = False
+
+    def poll(self) -> None:
+        return None
+
+    def terminate(self) -> None:
+        pass
+
+    def kill(self) -> None:
+        self.killed = True
+        StubbornServer.last = self
+
+    def wait(self, timeout: float | None = None) -> int:
+        if timeout is not None and not self.killed:
+            raise subprocess.TimeoutExpired("app", timeout)
+        return 0
+
+
+def test_the_script_writes_its_answer_when_the_app_does_not_stop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    folder = tmp_path / "restore-test"
+    folder.mkdir()
+    (folder / "franca.db").write_bytes(b"")
+    write_request(folder)
+    monkeypatch.setattr(sys, "argv", list(sys.argv))
+    monkeypatch.setattr(subprocess, "run", lambda *_a, **_k: subprocess.CompletedProcess([], 0, "", ""))
+    monkeypatch.setattr(subprocess, "Popen", StubbornServer)
+    monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout: FakeResponse(b'{"status": "ok", "version": "1.4.0"}'))
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+
+    exec(fu.restore_check_script(str(folder), 8000), {})  # noqa: S102 - the script of the one-off container, run here with stand-ins
+
+    answer = json.loads((folder / "answer.json").read_text(encoding="utf-8"))
+    assert answer["passed"] is True
+    assert StubbornServer.last.killed
 
 
 class FlakyOpener:

@@ -24,8 +24,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=restic /out/restic /usr/local/bin/restic
 # The backup runs as the app's user (10001), so it can read and, for a restore, write the app's database files.
+# /restore-test is shared with the updater and the one-off app container of the monthly restore test. A new volume
+# takes the owner of the folder in the image that mounts it first, so the folder belongs to 10001 in each image.
 RUN useradd --uid 10001 --user-group --no-create-home --shell /usr/sbin/nologin franca \
-    && install -d -o franca -g franca /cache /status /backups
+    && install -d -o franca -g franca /cache /status /backups \
+    && install -d -o 10001 -g 10001 -m 775 /restore-test
 COPY infra/backup/franca_backup.py /app/franca_backup.py
 ENV HOME=/tmp \
     PYTHONDONTWRITEBYTECODE=1 \

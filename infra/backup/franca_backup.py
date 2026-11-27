@@ -8,9 +8,17 @@ Each night (or as soon as the PC is on again after a night it was off):
    Until an off-site store is chosen (before M3), the repository is on a second disk in the PC (disk J:).
 3. Old copies are thinned out: one a day for 14 days, one a week for 8 weeks and one a month for 12 months are kept.
 
-Once a month, after the backup, the latest copy is restored into a scratch folder, its database is checked, and
-restic reads back all of the repository's data. The live database is not touched by this test. (The test runs in the
-backup container, which has the data volume mounted for the nightly copy; the scratch folder is in its cache volume.)
+Once a month, after the backup, the latest copy is restored into a scratch folder, its database is checked (integrity
+and schema version), and restic reads back all of the repository's data. Then the app is started on the restored copy
+in a one-off container, and its health check has to answer:
+1. The copy is put in the restore-test volume with a request (request.json, with a new id).
+2. The updater, which reaches Docker through the socket proxy, looks for a request every minute. It starts the app
+   image on the copy in a one-off container with no network (the restore-check service in infra/compose.yaml).
+3. In that container the migrations are run on the copy, the app is started, and /api/v1/health is called. The answer
+   is written to answer.json, with the request's id.
+4. The backup waits up to 15 minutes for the answer, and then empties the folder.
+The backup container is not given the Docker API, because that is the same as root on the PC. The live database is
+not touched by this test.
 
 The results are written to backup.json and restore-test.json in the status folder, for the owner and for the health
 monitoring (story E01-010). On a new installation, the start of the wait for the app's database is written to
@@ -49,6 +57,12 @@ DISK_MARKER = ".franca-backup-disk"
 # restic's exit code when there is no repository at the given place.
 NO_REPOSITORY = 10
 HEALTHY_FOR = timedelta(hours=48)
+# How long the restore test waits for the updater to start the app on the restored copy, and how often it looks.
+APP_CHECK_WAIT = timedelta(minutes=15)
+APP_CHECK_LOOK_EVERY = 10.0  # seconds
+# The note in the restore test's report when the app check is left out. The updater starts the app on the restored
+# copy, and without the updates profile there is no updater.
+APP_CHECK_OFF = "The app check needs the updates profile, which is off."
 
 
 class BackupError(Exception):
@@ -189,6 +203,22 @@ def database_in_use(path: Path) -> bool:
     return False
 
 
+def _read_json(path: Path) -> dict[str, object]:
+    """A JSON object from a file, or an empty dict when the file is missing, half written or not an object."""
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except OSError, ValueError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _empty(folder: Path) -> None:
+    """Removes the files in the folder for the app check (the copy, its log files, the request and the answer)."""
+    for path in folder.iterdir():
+        if path.is_file() or path.is_symlink():
+            path.unlink(missing_ok=True)
+
+
 def health_check(url: str) -> Callable[[], bool]:
     def answers() -> bool:
         try:
@@ -259,6 +289,13 @@ class Backup:
     app_answers: Callable[[], bool] = field(default=lambda: False)
     backups: Path = Path("/backups")
     monitor: Monitor | None = None
+    # The folder shared with the updater for the app check in the restore test. Without it, the app check is left out,
+    # and app_check_note says why in the report.
+    app_check_dir: Path | None = None
+    app_check_note: str = ""
+    app_check_wait: timedelta = APP_CHECK_WAIT
+    sleep: Callable[[float], None] = field(default=time.sleep)
+    clock: Callable[[], float] = field(default=time.monotonic)
 
     def back_up(self, now: datetime) -> str:
         staging = self.work / "staging"
@@ -341,6 +378,7 @@ class Backup:
                 raise BackupError("The latest backup has no database in it")
             schema = check_database(restored)
             self.restic.check_data()
+            app_version = self.check_app_on(restored, now) if self.app_check_dir is not None else ""
         except (BackupError, OSError, sqlite3.Error, subprocess.SubprocessError) as error:
             last_passed = self.status.read("restore-test.json").get("lastPassedAt", "")
             return self._report(
@@ -356,8 +394,44 @@ class Backup:
             key="testedAt",
             lastPassedAt=stamp,
             schema=schema,
-            message="The latest backup was restored and checked",
+            appVersion=app_version,
+            message="The latest backup was restored and checked, and the app started on it"
+            if app_version
+            else " ".join(("The latest backup was restored and checked.", self.app_check_note)).strip(),
         )
+
+    def check_app_on(self, restored: Path, now: datetime) -> str:
+        """Has the app started on a copy of the restored database, in a one-off container that the updater starts.
+        Returns the version that the app's health check reports. BackupError is raised when the app does not start,
+        or when there is no answer within app_check_wait."""
+        folder = self.app_check_dir
+        if folder is None:
+            raise BackupError("There is no folder for the app check")
+        _empty(folder)
+        try:
+            shutil.copyfile(restored, folder / DATABASE)
+            request_id = f"{now.astimezone(UTC).isoformat(timespec='seconds')}-{os.urandom(4).hex()}"
+            temporary = folder / "request.json.new"
+            temporary.write_text(json.dumps({"id": request_id}), encoding="utf-8")
+            os.replace(temporary, folder / "request.json")
+            deadline = self.clock() + self.app_check_wait.total_seconds()
+            while True:
+                answer = _read_json(folder / "answer.json")
+                if answer.get("id") == request_id:
+                    break
+                if self.clock() >= deadline:
+                    minutes = int(self.app_check_wait.total_seconds() // 60)
+                    raise BackupError(
+                        f"There was no answer from the app on the restored copy within {minutes} minutes. The updater may "
+                        "have stopped, or it could not write its answer. The updater's log has the reason "
+                        "(restore-check-not-run)."
+                    )
+                self.sleep(APP_CHECK_LOOK_EVERY)
+        finally:
+            _empty(folder)
+        if answer.get("passed") is not True:
+            raise BackupError(str(answer.get("message") or "The app did not start on the restored copy"))
+        return str(answer.get("version", ""))
 
     def restore_latest(self, now: datetime) -> str:
         """Puts the latest backup in place of the live database. The app has to be stopped first."""
@@ -448,6 +522,8 @@ def next_run(now: datetime, at: str) -> datetime:
 
 
 def from_environment(environ: dict[str, str] | os._Environ[str]) -> Backup:
+    # The app check in the restore test needs the updater, which is in the updates profile.
+    updates_on = "updates" in {profile.strip() for profile in environ.get("FRANCA_PROFILES", "").split(",")}
     return Backup(
         data=Path(environ.get("FRANCA_DATA_DIR", "/data")),
         work=Path(environ.get("FRANCA_BACKUP_WORK_DIR", "/cache/work")),
@@ -456,6 +532,8 @@ def from_environment(environ: dict[str, str] | os._Environ[str]) -> Backup:
         app_answers=health_check(environ.get("FRANCA_HEALTH_URL", "http://app:8000/api/v1/health")),
         backups=Path(environ.get("FRANCA_BACKUP_DIR_IN_CONTAINER", "/backups")),
         monitor=Monitor(environ["FRANCA_STATUS_URL"], Path("/run/secrets/status_push_token")) if environ.get("FRANCA_STATUS_URL") else None,
+        app_check_dir=Path(environ.get("FRANCA_RESTORE_TEST_DIR", "/restore-test")) if updates_on else None,
+        app_check_note="" if updates_on else APP_CHECK_OFF,
     )
 
 
