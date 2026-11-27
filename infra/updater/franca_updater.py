@@ -31,8 +31,10 @@ import json
 import os
 import re
 import ssl
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -209,8 +211,14 @@ class GitHubReleases:
 Run = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
 
 
-def run_command(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(list(command), capture_output=True, text=True, timeout=900, check=False)  # noqa: S603
+def run_command(command: Sequence[str], timeout: float = 900) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(list(command), capture_output=True, text=True, timeout=timeout, check=False)  # noqa: S603
+
+
+RunLimited = Callable[[Sequence[str], float], subprocess.CompletedProcess[str]]
+# The time allowed for the restore-check container. The backup waits 15 minutes for its answer, so a container that
+# hangs is reported to the backup before it stops waiting.
+RESTORE_CHECK_TIMEOUT = 600  # seconds
 
 
 def _check(result: subprocess.CompletedProcess[str], what: str) -> str:
@@ -301,6 +309,8 @@ class Compose:
     project_dir: Path
     run: Run = run_command
     project_name: str | None = None
+    # Runs a command with a time limit of its own, for the restore-check container.
+    run_limited: RunLimited = run_command
 
     def _compose(self, *arguments: str) -> list[str]:
         command = ["docker", "compose", "--project-directory", str(self.project_dir)]
@@ -327,7 +337,7 @@ class Compose:
         """Runs Python in a one-off container of the app image on the restored copy in the restore-test volume, with no
         network (the restore-check service)."""
         command = self._compose("run", "--rm", "--no-deps", "--entrypoint", "python", "restore-check", "-c", script)
-        _check(self.run(command), "Starting the app on the restored copy")
+        _check(self.run_limited(command, RESTORE_CHECK_TIMEOUT), "Starting the app on the restored copy")
 
 
 # Run in a one-off app container while the app is stopped. The snapshot needs twice the database's size free, so a full
@@ -778,32 +788,47 @@ class Updater:
             self._answer_failure(request, f"The updater could not run the restore-check container: {reason}")
 
     def _answer_failure(self, request: str, message: str) -> None:
-        """Writes a failure answer for the backup. The updater writes in the folder through its group (infra/compose.yaml)."""
+        """Writes a failure answer for the backup. The updater writes in the folder through its group (infra/compose.yaml).
+
+        The backup can write in the folder too, so a name in it may be a link that the backup put there. The answer is
+        written to a new file with a random name, which is made with O_EXCL and so cannot be a link, and is then put in
+        place of answer.json."""
         assert self.restore_test_dir is not None  # noqa: S101 - checked by the caller
         answer = {"id": request, "passed": False, "message": message[:500]}
+        handle, name = tempfile.mkstemp(dir=self.restore_test_dir, prefix=".answer-", suffix=".new")
         try:
-            written = self.restore_test_dir / "answer.json.new"
-            written.write_text(json.dumps(answer), encoding="utf-8")
-            os.replace(written, self.restore_test_dir / "answer.json")
+            with os.fdopen(handle, "w", encoding="utf-8") as written:
+                written.write(json.dumps(answer))
+            os.chmod(name, 0o644)
+            os.replace(name, self.restore_test_dir / "answer.json")
         except OSError as error:
+            Path(name).unlink(missing_ok=True)
             print(json.dumps({"result": "restore-check-answer-not-written", "message": str(error)}), flush=True)
 
 
 # The ids that the backup writes in its requests (franca_backup.Backup.check_app_on), and the most a request file may
 # hold. Anything else in the shared folder is ignored.
-REQUEST_ID_PATTERN = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00-[0-9a-f]{8}")
+REQUEST_ID_PATTERN = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00-[0-9a-f]{8}", re.ASCII)
 REQUEST_LIMIT = 1000  # bytes
 
 
 def _read_json(path: Path, limit: int = REQUEST_LIMIT) -> dict[str, object]:
-    """A JSON object from a file of up to `limit` bytes, or an empty dict when the file is missing, half written, too
-    long or not an object."""
+    """A JSON object from a regular file of up to `limit` bytes, or an empty dict when the file is missing, half
+    written, too long or not an object. A link, a named pipe or another kind of file is not read: the backup can write
+    in the folder, and opening a pipe would wait."""
     try:
-        with path.open("rb") as file:
-            text = file.read(limit + 1)
+        handle = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return {}
+    try:
+        if not stat.S_ISREG(os.fstat(handle).st_mode):
+            return {}
+        text = os.read(handle, limit + 1)
         loaded = json.loads(text) if len(text) <= limit else None
     except (OSError, ValueError):
         return {}
+    finally:
+        os.close(handle)
     return loaded if isinstance(loaded, dict) else {}
 
 
