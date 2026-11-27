@@ -164,39 +164,51 @@ def test_no_secret_value_is_in_the_config() -> None:
 
 
 # --- the heartbeat to healthchecks.io (story E01-012)
+#
+# These tests check the layout of the start script and the image file. The behaviour is rehearsed with real containers
+# in rehearse_status.py (heartbeats, the process list, the log, a bad setting, the network down).
 
 ENTRYPOINT = INFRA / "status" / "entrypoint.sh"
+DOCKERFILE = INFRA / "images" / "status.Dockerfile"
 
 
-def test_the_heartbeat_address_is_read_from_its_secret_file_and_may_be_empty() -> None:
+def test_the_start_script_reads_the_heartbeat_address_as_an_optional_secret() -> None:
     script = ENTRYPOINT.read_text()
     assert "read_optional_secret healthchecks_ping_url" in script
-    # An empty file means no heartbeat.
     assert 'if [ -n "$HEARTBEAT_URL" ]; then' in script
 
 
-def test_the_heartbeat_address_never_reaches_gatus_or_the_log() -> None:
+def test_the_start_script_does_not_pass_the_address_to_gatus_or_write_it() -> None:
     script = ENTRYPOINT.read_text()
     exported = next(line for line in script.splitlines() if line.startswith("export "))
     assert "HEARTBEAT_URL" not in exported
     assert "HEARTBEAT" not in GATUS_CONFIG.read_text()
-    # wget's own messages could name the address, so they are thrown away.
-    assert 'wget -q -T 10 -O /dev/null "$1" 2>/dev/null' in script
     assert not [line for line in script.splitlines() if "echo" in line and "HEARTBEAT_URL" in line]
 
 
-def test_the_heartbeat_is_sent_while_gatus_answers_and_every_five_minutes_by_default(compose: dict[str, Any]) -> None:
+def test_the_start_script_gives_the_address_to_curl_on_standard_input_not_on_its_command_line() -> None:
+    script = ENTRYPOINT.read_text()
+    # printf is built into the shell, so the address is in no process's command line.
+    assert """printf 'url = "%s"\\n' "$1" | curl -fsS -m 10 -o /dev/null -K - 2>/dev/null""" in script
+    assert not [line for line in script.splitlines() if "wget" in line and '"$1"' in line]
+    assert "apk add --no-cache ca-certificates curl" in DOCKERFILE.read_text()
+
+
+def test_the_start_script_sends_heartbeats_while_gatus_answers_every_five_minutes_by_default(compose: dict[str, Any]) -> None:
     script = ENTRYPOINT.read_text()
     assert "wget -q -T 10 -O /dev/null http://127.0.0.1:8080/health" in script
     assert compose["services"]["status"]["environment"]["FRANCA_HEARTBEAT_SECONDS"] == "${FRANCA_HEARTBEAT_SECONDS:-300}"
 
 
-def test_the_heartbeat_address_is_checked_against_a_strict_pattern() -> None:
-    script = ENTRYPOINT.read_text()
-    assert "matches \"$HEARTBEAT_URL\" 'https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~-]+)+'" in script
-
-
-def test_the_heartbeat_is_sent_at_least_every_five_minutes() -> None:
+def test_the_start_script_checks_the_address_and_the_interval_against_strict_patterns() -> None:
     # The owner's check on healthchecks.io has a period of 5 minutes and a grace time of 10 minutes.
     script = ENTRYPOINT.read_text()
+    assert "matches \"$HEARTBEAT_URL\" 'https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~-]+)+'" in script
     assert "matches \"$FRANCA_HEARTBEAT_SECONDS\" '([5-9]|[1-9][0-9]|[12][0-9]{2}|300)'" in script
+
+
+def test_a_bad_heartbeat_setting_turns_the_heartbeat_off_and_leaves_gatus_running() -> None:
+    script = ENTRYPOINT.read_text()
+    heartbeat_part = script[script.index('HEARTBEAT_URL="$(read_optional_secret') : script.index("export ")]
+    assert "fail " not in heartbeat_part
+    assert "franca-status: the heartbeat is off:" in heartbeat_part

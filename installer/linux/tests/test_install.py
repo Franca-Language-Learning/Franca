@@ -106,13 +106,91 @@ def test_the_heartbeat_address_is_written_as_a_secret_and_not_to_env(tmp_path: P
     assert "0f5a7c2e" not in repr(given)
 
 
-def test_without_a_heartbeat_address_the_secret_file_is_empty(tmp_path: Path) -> None:
+PING_URL = "https://hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b"
+
+
+def test_without_a_heartbeat_address_on_a_first_installation_the_secret_file_is_empty(tmp_path: Path) -> None:
     folder = tmp_path / "secrets"
-    fi.write_secrets(folder, answers(tmp_path, healthchecks_ping_url="https://hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b"))
 
     fi.write_secrets(folder, answers(tmp_path))
 
     assert (folder / "healthchecks_ping_url").read_text(encoding="utf-8") == ""
+
+
+def test_an_empty_answer_in_a_later_run_keeps_the_saved_address(tmp_path: Path) -> None:
+    folder = tmp_path / "secrets"
+    fi.write_secrets(folder, answers(tmp_path, healthchecks_ping_url=PING_URL))
+
+    fi.write_secrets(folder, answers(tmp_path))
+
+    assert (folder / "healthchecks_ping_url").read_text(encoding="utf-8") == PING_URL
+
+
+@pytest.mark.parametrize("value", ["off", " OFF "])
+def test_off_switches_the_heartbeat_off(tmp_path: Path, value: str) -> None:
+    folder = tmp_path / "secrets"
+    fi.write_secrets(folder, answers(tmp_path, healthchecks_ping_url=PING_URL))
+
+    fi.write_secrets(folder, answers(tmp_path, healthchecks_ping_url=value))
+
+    assert (folder / "healthchecks_ping_url").read_text(encoding="utf-8") == ""
+
+
+def test_the_refusal_of_a_heartbeat_address_says_what_to_do_after_the_questions(tmp_path: Path) -> None:
+    with pytest.raises(fi.InstallError) as refused:
+        answers(tmp_path, healthchecks_ping_url="https://example.org/x")
+
+    message = str(refused.value)
+    assert "Run the installer again" in message
+    assert "type off" in message
+    assert "press Enter for no heartbeat" not in message
+
+
+# --- a later run without a new Tailscale auth key
+
+
+def test_the_tailscale_auth_key_may_be_empty(tmp_path: Path) -> None:
+    assert answers(tmp_path, tailscale_authkey="").tailscale_authkey == ""
+
+
+class Volumes:
+    """Answers docker volume inspect: the volumes in `present` exist."""
+
+    def __init__(self, present: set[str]) -> None:
+        self.present = present
+        self.commands: list[list[str]] = []
+
+    def __call__(self, command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        self.commands.append(list(command))
+        found = command[:3] == ["docker", "volume", "inspect"] and command[3] in self.present
+        return subprocess.CompletedProcess(command, 0 if found else 1, "", "" if found else "no such volume\n")
+
+
+def test_without_a_key_the_installer_needs_the_saved_tailscale_state(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+
+    with pytest.raises(fi.InstallError, match="tskey-auth-"):
+        fi.check_tailscale_key(answers(tmp_path, tailscale_authkey=""), bundle, run=Volumes(set()))
+
+
+def test_without_a_key_the_saved_tailscale_state_of_this_project_is_used(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / ".env").write_text("COMPOSE_PROJECT_NAME=franca-test\n", encoding="utf-8")
+    volumes = Volumes({"franca-test_tailscale-state"})
+
+    fi.check_tailscale_key(answers(tmp_path, tailscale_authkey=""), bundle, run=volumes)
+
+    assert volumes.commands == [["docker", "volume", "inspect", "franca-test_tailscale-state"]]
+
+
+def test_with_a_key_the_saved_state_is_not_looked_at(tmp_path: Path) -> None:
+    volumes = Volumes(set())
+
+    fi.check_tailscale_key(answers(tmp_path), tmp_path, run=volumes)
+
+    assert volumes.commands == []
 
 
 def test_the_answers_are_not_shown_in_their_text_form(tmp_path: Path) -> None:

@@ -11,11 +11,14 @@ The rehearsal:
 3. checks that a report from a nightly job is accepted with the push token and refused without it;
 4. reports a failed update and checks that an alert reaches the stand-in for ntfy, on the owner's topic;
 5. stops the app and checks that an alert is sent after three failed checks;
-6. checks that the start script refuses a topic that could change Gatus's configuration, and a ping address that is
-   not a plain web address;
-7. checks that the status container runs as a user, with a read-only file system and no capabilities;
-8. checks that heartbeats reach the stand-in for healthchecks.io, that the ping address is not in the container's log,
-   and that the heartbeats stop when the status container stops (healthchecks.io then sends an alert).
+6. checks that the start script refuses a topic that could change Gatus's configuration, and that a ping address
+   that is not a plain web address turns the heartbeat off without stopping Gatus or showing the address;
+7. checks that the status container runs as a user, with a read-only file system and no capabilities, and that its
+   curl can use https;
+8. checks that heartbeats reach the stand-in for healthchecks.io, that the ping address is not in the container's log
+   or in its process list while a heartbeat is sent, that Gatus stays healthy while the stand-in cannot be reached and
+   the heartbeats come back afterwards, and that the heartbeats stop when the status container stops (healthchecks.io
+   then sends an alert).
 """
 
 import json
@@ -55,14 +58,15 @@ TOPIC = "franca-rehearsal-alerts"
 PING_PATH = f"/ping/{os.urandom(16).hex()}"
 
 # A web server that prints each POST it gets as a line of JSON, in place of ntfy.sh, and each GET under /ping/, in place
-# of healthchecks.io. It answers other GET requests, so that the app image's health check, which the stand-in inherits,
-# passes.
+# of healthchecks.io. It answers a heartbeat after two seconds, so that curl can be seen in the process list. It answers
+# other GET requests, so that the app image's health check, which the stand-in inherits, passes.
 RECORDER = """
-import http.server, json, sys
+import http.server, json, sys, time
 class Recorder(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/ping/"):
             print(json.dumps({"ping": self.path}), flush=True)
+            time.sleep(2)
         self.send_response(200)
         self.end_headers()
     def do_POST(self):
@@ -227,17 +231,55 @@ def main() -> int:
                 )
                 (Path(bad) / "healthchecks_ping_url").write_text("https://hc-ping.com/abc?x=$(id)", encoding="utf-8")
                 (Path(bad) / "healthchecks_ping_url").chmod(0o644)
-                refused = sh("docker", "run", "--rm", "-v", secrets, STATUS, check=False)
-                checks.check(
-                    refused.returncode != 0 and "ping address" in refused.stderr and "abc" not in refused.stderr,
-                    "the start script refuses a ping address that is not a plain web address, without showing it",
-                )
+                name = f"{PROJECT}-bad-ping"
+                sh("docker", "run", "--detach", "--name", name, "-v", secrets, STATUS)
+                try:
+                    state = lambda: sh("docker", "inspect", "-f", "{{.State.Health.Status}}", name, check=False).stdout.strip()  # noqa: E731
+                    healthy_without_heartbeat = wait_for(lambda: state() == "healthy", 90)
+                    logged = sh("docker", "logs", name, check=False)
+                    checks.check(
+                        healthy_without_heartbeat
+                        and "the heartbeat is off" in logged.stderr
+                        and "abc" not in logged.stdout + logged.stderr,
+                        "a ping address that is not a plain web address turns the heartbeat off, Gatus keeps running, and the address is not shown",
+                    )
+                finally:
+                    sh("docker", "rm", "--force", name, check=False)
 
             check_hardened(checks, compose, "status", "the status container")
+            https = sh("docker", "run", "--rm", "--entrypoint", "sh", STATUS, "-c", "curl --version | grep -q https", check=False)
+            checks.check(https.returncode == 0, "curl in the status image can use https")
 
             checks.check(wait_for(lambda: heartbeats() >= 2, 60), "heartbeats reach the stand-in for healthchecks.io")
             log = sh(*compose, "logs", "--no-color", "status", check=False)
             checks.check(PING_PATH not in log.stdout + log.stderr, "the ping address is not in the status container's log")
+
+            # The process list is read many times while heartbeats are sent. The stand-in answers after two seconds, so
+            # curl is running at some of these moments.
+            status_id = sh(*compose, "ps", "--quiet", "status").stdout.strip()
+            seen_curl, seen_address = False, False
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline and not (seen_curl and seen_address):
+                listed = sh("docker", "top", status_id, "-eo", "args", check=False).stdout
+                seen_curl = seen_curl or "curl" in listed
+                seen_address = seen_address or PING_PATH in listed
+                time.sleep(0.3)
+            checks.check(seen_curl and not seen_address, "while a heartbeat is sent, the ping address is not in the process list")
+
+            sh(*compose, "stop", "ntfy")
+            time.sleep(15)
+            during = sh(*compose, "logs", "--no-color", "status", check=False)
+            status_health = sh("docker", "inspect", "-f", "{{.State.Health.Status}}", status_id, check=False).stdout.strip()
+            checks.check(
+                status_health == "healthy"
+                and "the heartbeat to healthchecks.io could not be sent" in during.stderr + during.stdout
+                and PING_PATH not in during.stderr + during.stdout,
+                "while healthchecks.io cannot be reached, Gatus stays healthy and the failed heartbeat is logged without the address",
+            )
+            sh(*compose, "start", "ntfy")
+            before = heartbeats()
+            checks.check(wait_for(lambda: heartbeats() > before, 60), "the heartbeats come back when healthchecks.io can be reached again")
+
             sh(*compose, "stop", "status")
             stopped_at = heartbeats()
             time.sleep(15)
