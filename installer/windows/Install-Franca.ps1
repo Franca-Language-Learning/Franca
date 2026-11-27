@@ -105,7 +105,8 @@ function New-AnswersJson {
         [Parameter(Mandatory)] [string] $OwnerEmail,
         [Parameter(Mandatory)] [string] $GoogleClientId,
         [Parameter(Mandatory)] [string] $GoogleClientSecret,
-        [Parameter(Mandatory)] [string] $TailscaleAuthKey,
+        # Empty when Franca is installed already: the Linux part then uses the saved Tailscale state.
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $TailscaleAuthKey,
         [Parameter(Mandatory)] [string] $BackupDir,
         # Optional: the ping address of the owner's check on healthchecks.io. Empty means no heartbeat.
         [string] $HealthchecksPingUrl = ''
@@ -121,6 +122,18 @@ function New-AnswersJson {
     return ($answers | ConvertTo-Json -Compress)
 }
 
+function Test-PingUrl {
+    <#
+    Whether an answer to the question about the healthchecks.io ping address can be used: empty (keep the saved address,
+    or no heartbeat), off (switch the heartbeat off), or https://hc-ping.com/ followed by a check's id. The Linux part
+    checks the answer with the same pattern.
+    #>
+    param([AllowEmptyString()] [string] $Answer)
+    $trimmed = $Answer.Trim()
+    return ($trimmed -eq '') -or ($trimmed -eq 'off') -or
+        ($trimmed -cmatch '^https://hc-ping\.com/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+}
+
 function Read-InstallSetting {
     <# Asks the owner the installer's questions. The secrets are typed without being shown. #>
     Write-Host ''
@@ -128,7 +141,7 @@ function Read-InstallSetting {
     $email = Read-Host 'Your e-mail address (the Google account you sign in with)'
     $clientId = Read-Host 'The Google client ID (it ends in .apps.googleusercontent.com)'
     $clientSecret = ConvertFrom-SecureText (Read-Host 'The Google client secret (it is not shown as you type)' -AsSecureString)
-    $authKey = ConvertFrom-SecureText (Read-Host 'The Tailscale auth key (it is not shown as you type)' -AsSecureString)
+    $authKey = ConvertFrom-SecureText (Read-Host 'The Tailscale auth key (it is not shown as you type; if Franca is installed already, press Enter)' -AsSecureString)
     do {
         $drive = Read-Host 'The letter of the backup disk (press Enter for J)'
         if (-not $drive) { $drive = 'J' }
@@ -136,7 +149,11 @@ function Read-InstallSetting {
         $ok = ($drive -match '^[A-Za-z]$') -and (Test-Path "$($drive):\")
         if (-not $ok) { Write-Host "Disk $($drive): was not found. Connect it, or type another letter." }
     } until ($ok)
-    $pingUrl = ConvertFrom-SecureText (Read-Host 'The healthchecks.io ping address, for an alert when the PC is off (it is not shown as you type; press Enter to skip)' -AsSecureString)
+    do {
+        $pingUrl = ConvertFrom-SecureText (Read-Host 'The healthchecks.io ping address, for an alert when the PC is off (it is not shown as you type; press Enter to skip or to keep the saved one, or type off)' -AsSecureString)
+        $ok = Test-PingUrl -Answer $pingUrl
+        if (-not $ok) { Write-Host 'That is not a healthchecks.io ping address. Copy it again from the check''s page, or press Enter to skip.' }
+    } until ($ok)
     return New-AnswersJson -OwnerEmail $email -GoogleClientId $clientId -GoogleClientSecret $clientSecret `
         -TailscaleAuthKey $authKey -BackupDir (ConvertTo-LinuxBackupPath -DriveLetter $drive) -HealthchecksPingUrl $pingUrl
 }

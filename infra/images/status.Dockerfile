@@ -18,8 +18,10 @@ RUN git clone --quiet --depth 1 --branch v5.38.0 https://github.com/TwiN/gatus /
     && go build -ldflags "-s -w" -o /out/gatus .
 
 FROM alpine:3.23@sha256:469c9ea410b9215eaee7976ba6c0639039b444be8e5d638f7abbada189971eb2
-# Security fixes from Alpine that came out after the base image was built are installed here.
-RUN apk upgrade --no-cache && apk add --no-cache ca-certificates
+# Security fixes from Alpine that came out after the base image was built are installed here. curl sends the heartbeat
+# to healthchecks.io (infra/status/entrypoint.sh), because it can read the address from standard input. Both packages
+# come from the Alpine release of the base image, which is named by digest.
+RUN apk upgrade --no-cache && apk add --no-cache ca-certificates curl
 RUN addgroup -g 10005 -S status && adduser -u 10005 -S -G status -H status \
     && install -d -o status -g status /data
 COPY --from=gatus /out/gatus /usr/local/bin/gatus

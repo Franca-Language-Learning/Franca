@@ -2,13 +2,15 @@
 # Start script of the status container (stories E01-010 and E01-012).
 #
 # Gatus reads settings from environment variables only, and secrets are files here, so the alert topic and the push
-# token are read from /run/secrets and passed to Gatus as variables.
-#
-# When the healthchecks_ping_url secret has an address, a heartbeat is sent to it every few minutes while Gatus
-# answers. healthchecks.io sends an alert when the heartbeats stop, for example when the PC is off. The address is a
-# secret, so it is not passed to Gatus and is not written to the log. Gatus puts the variables into its configuration
+# token are read from /run/secrets and passed to Gatus as variables. Gatus puts the variables into its configuration
 # before it reads the YAML, so each value is checked against a strict pattern first; a value with other characters
 # could change the configuration.
+#
+# When the healthchecks_ping_url secret has an address, a heartbeat is sent to it every few minutes while Gatus
+# answers. healthchecks.io sends an alert when the heartbeats stop, for example when the PC is off. Anyone who has the
+# address can send heartbeats for the owner's check, so it is a secret. It is not passed to Gatus, it is not written to
+# the log, and it is given to curl on standard input, so it is in no process's command line. A bad heartbeat setting
+# turns the heartbeat off with a message; Gatus and its alerts go on.
 set -eu
 
 fail() {
@@ -61,12 +63,13 @@ case ",${FRANCA_PROFILES:-}," in
 esac
 
 # Sends a heartbeat to the address in $1 every FRANCA_HEARTBEAT_SECONDS, while Gatus answers its own health check.
-# wget's messages could name the address, so they are thrown away and a message without it is written instead.
+# printf is built into the shell, so the address reaches curl's standard input (-K -) without a command line. curl's
+# messages could name the address, so they are thrown away and a message without it is written instead.
 heartbeat() {
     while :; do
         sleep "$FRANCA_HEARTBEAT_SECONDS"
         if wget -q -T 10 -O /dev/null http://127.0.0.1:8080/health 2>/dev/null; then
-            if ! wget -q -T 10 -O /dev/null "$1" 2>/dev/null; then
+            if ! printf 'url = "%s"\n' "$1" | curl -fsS -m 10 -o /dev/null -K - 2>/dev/null; then
                 echo "franca-status: the heartbeat to healthchecks.io could not be sent" >&2
             fi
         fi
@@ -76,14 +79,16 @@ heartbeat() {
 HEARTBEAT_URL="$(read_optional_secret healthchecks_ping_url)"
 FRANCA_HEARTBEAT_SECONDS="${FRANCA_HEARTBEAT_SECONDS:-300}"
 if [ -n "$HEARTBEAT_URL" ]; then
-    # The rehearsal uses a stand-in on plain http; the installer accepts https addresses only.
-    matches "$HEARTBEAT_URL" 'https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~-]+)+' \
-        || fail "the healthchecks.io ping address is not a plain web address"
+    # The rehearsal uses a stand-in on plain http; the installer accepts https://hc-ping.com addresses only.
+    if ! matches "$HEARTBEAT_URL" 'https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~-]+)+'; then
+        echo "franca-status: the heartbeat is off: the healthchecks.io ping address is not a plain web address" >&2
     # The owner's check on healthchecks.io expects a heartbeat every 5 minutes, so 300 seconds is the most allowed.
-    matches "$FRANCA_HEARTBEAT_SECONDS" '([5-9]|[1-9][0-9]|[12][0-9]{2}|300)' \
-        || fail "FRANCA_HEARTBEAT_SECONDS has to be a number of seconds from 5 to 300"
-    heartbeat "$HEARTBEAT_URL" &
-    echo "franca-status: a heartbeat is sent to healthchecks.io every $FRANCA_HEARTBEAT_SECONDS seconds"
+    elif ! matches "$FRANCA_HEARTBEAT_SECONDS" '([5-9]|[1-9][0-9]|[12][0-9]{2}|300)'; then
+        echo "franca-status: the heartbeat is off: FRANCA_HEARTBEAT_SECONDS has to be a number of seconds from 5 to 300" >&2
+    else
+        heartbeat "$HEARTBEAT_URL" &
+        echo "franca-status: a heartbeat is sent to healthchecks.io every $FRANCA_HEARTBEAT_SECONDS seconds"
+    fi
 fi
 unset HEARTBEAT_URL
 
