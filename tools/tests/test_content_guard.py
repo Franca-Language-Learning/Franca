@@ -10,8 +10,10 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -227,6 +229,17 @@ def test_fingerprints_are_made_from_a_content_folder(tmp_path: Path) -> None:
     assert fp.of_file(lesson.read_bytes()) in values
 
 
+def test_planner_settings_and_keys_are_not_fingerprinted(tmp_path: Path) -> None:
+    # The fixture pack has the real planner settings, so that the tests use them. The key file is not content.
+    settings = tmp_path / "packs" / "nl-be" / "course-config.yaml"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(f"warmup:\n  bridge_min: 3   # {LONG_LINE}\n", encoding="utf-8")
+    key = tmp_path / "secrets" / "fingerprint-key"
+    key.parent.mkdir()
+    key.write_text("a" * 64 + "\n", encoding="utf-8")
+    assert guard.make_fingerprints(tmp_path, KEY) == set()
+
+
 def test_fingerprints_without_a_key_stop_the_guard(tmp_path: Path) -> None:
     file = tmp_path / "prints.txt"
     file.write_text("# header\nline:0123456789abcdef01234567\n")
@@ -248,28 +261,67 @@ def test_the_key_is_read_from_the_environment_or_a_file(tmp_path: Path) -> None:
 
 
 def test_the_fingerprint_file_of_this_repository_loads() -> None:
-    guard.load_fingerprints(guard.DEFAULT_FINGERPRINTS, key=guard.read_key())
+    key = guard.read_key()
+    if key is None:
+        # The key is an Actions secret that the Content guard job has. That job loads this file with it.
+        pytest.skip("No fingerprint key on this computer or in this job")
+    guard.load_fingerprints(guard.DEFAULT_FINGERPRINTS, key=key)
 
 
 # --- the pipeline's choice of commits
 
 
 @pytest.mark.parametrize(
-    "event_name,event,ref",
+    "event,ref",
     [
-        ("push", {"before": "0" * 40}, "refs/heads/main"),  # first push of a branch
-        ("push", {"before": "1" * 40, "created": True}, "refs/heads/new"),
-        ("push", {"before": "1" * 40}, "refs/tags/v1"),
-        ("push", {"before": "2" * 40}, "refs/heads/main"),  # a base that is not in the repository (force-push)
-        ("schedule", {}, "refs/heads/main"),
-        ("workflow_dispatch", {}, "refs/heads/main"),
+        ({"before": "0" * 40}, "refs/heads/main"),  # first push of a branch
+        ({"before": "1" * 40, "created": True}, "refs/heads/new"),
+        ({"before": "1" * 40}, "refs/tags/v1"),
+        ({"before": "2" * 40}, "refs/heads/main"),  # a base that is not in the repository (force-push)
     ],
 )
-def test_the_pipeline_checks_the_whole_history_when_there_is_no_usable_base(
-    repo: Path, monkeypatch: pytest.MonkeyPatch, event_name: str, event: dict[str, object], ref: str
+def test_a_push_without_a_usable_base_checks_the_history_of_the_pushed_commit_only(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, event: dict[str, object], ref: str
+) -> None:
+    # Other branches, such as open pull requests, are checked in their own runs. Checking them here would stop this
+    # branch, for example a merge queue branch, for a file on another branch.
+    monkeypatch.chdir(repo)
+    assert guard.ci_revisions("push", event, ref) == ["HEAD"]
+
+
+@pytest.mark.parametrize(
+    "event_name,event",
+    [
+        ("schedule", {}),
+        ("workflow_dispatch", {}),
+        ("merge_group", {"merge_group": {"base_sha": "2" * 40}}),  # a base that is not in the repository
+    ],
+)
+def test_runs_without_a_pushed_commit_or_a_usable_base_check_every_branch_and_tag(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, event_name: str, event: dict[str, object]
 ) -> None:
     monkeypatch.chdir(repo)
-    assert guard.ci_revisions(event_name, event, ref) is None
+    assert guard.ci_revisions(event_name, event, "refs/heads/main") is None
+
+
+def test_a_force_push_with_a_known_base_checks_the_new_commits(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(repo)
+    before = git(repo, "rev-parse", "HEAD").strip()
+    commit(repo, "app.py", b"print('hello')\n")
+    assert guard.ci_revisions("push", {"before": before, "forced": True}, "refs/heads/main") == ["HEAD", f"^{before}"]
+
+
+def test_a_new_branch_is_not_stopped_by_a_file_on_another_branch(repo: Path, tmp_path: Path) -> None:
+    git(repo, "checkout", "-q", "-b", "other")
+    commit(repo, "packs/nl-be/words.yaml", b"words\n")
+    git(repo, "checkout", "-q", "main")
+    git(repo, "checkout", "-q", "-b", "new")
+    commit(repo, "app.py", b"print('hello')\n")
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({"before": "0" * 40, "created": True}), encoding="utf-8")
+    env = {"GITHUB_EVENT_NAME": "push", "GITHUB_EVENT_PATH": str(event), "GITHUB_REF": "refs/heads/new"}
+
+    assert run_guard(repo, "--ci", env=env).returncode == 0
 
 
 def test_the_pipeline_checks_from_the_base_of_a_pull_request(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -301,15 +353,26 @@ def git(repo: Path, *args: str, stdin: str | None = None) -> str:
 
 
 def run_guard(repo: Path, *args: str, stdin: str | None = None, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    """Runs the guard in repo. Unless the test names a fingerprint file, an empty one is used. HOME is a new temporary
+    folder, so the result does not depend on this repository's fingerprints or on a key on the developer's computer."""
+    home = Path(tempfile.mkdtemp(prefix="guard-home-"))
     base_env = {k: v for k, v in os.environ.items() if not k.startswith(("FRANCA_FINGERPRINT", "GITHUB_"))}
-    return subprocess.run(
-        [sys.executable, "-I", str(GUARD_PATH), *args],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        input=stdin,
-        env={**base_env, **(env or {})},
-    )
+    base_env["HOME"] = str(home)
+    if "--fingerprints" not in args:
+        empty = home / "no-fingerprints.txt"
+        empty.write_text("# No fingerprints in this test.\n", encoding="utf-8")
+        args = (*args, "--fingerprints", str(empty))
+    try:
+        return subprocess.run(
+            [sys.executable, "-I", str(GUARD_PATH), *args],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            input=stdin,
+            env={**base_env, **(env or {})},
+        )
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
 
 
 def commit(repo: Path, name: str, data: bytes, message: str = "add") -> str:
@@ -414,6 +477,39 @@ def test_push_check_refuses_a_tag_that_points_at_a_file(repo: Path) -> None:
     blob = git(repo, "hash-object", "-w", "--stdin", stdin=f"{MARKER}\n").strip()
     result = run_guard(repo, "--push", "origin", stdin=f"refs/tags/file {blob} refs/tags/file {'0' * 40}\n")
     assert result.returncode == 1
+
+
+def test_the_pipeline_checks_the_message_of_a_new_tag(repo: Path, tmp_path: Path) -> None:
+    git(repo, "tag", "-a", "v1", "-m", f"release notes\n{MARKER}\n")
+    git(repo, "checkout", "-q", "v1")
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({"before": "0" * 40, "created": True}), encoding="utf-8")
+    env = {"GITHUB_EVENT_NAME": "push", "GITHUB_EVENT_PATH": str(event), "GITHUB_REF": "refs/tags/v1"}
+
+    assert run_guard(repo, "--ci", env=env).returncode == 1
+
+
+def test_the_pipeline_checks_the_history_of_a_new_tag(repo: Path, tmp_path: Path) -> None:
+    commit(repo, "packs/nl-be/words.yaml", b"words\n")
+    git(repo, "rm", "-q", "-r", "packs")
+    git(repo, "commit", "-q", "-m", "remove")
+    git(repo, "tag", "-a", "v1", "-m", "release")
+    git(repo, "checkout", "-q", "v1")
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({"before": "0" * 40, "created": True}), encoding="utf-8")
+    env = {"GITHUB_EVENT_NAME": "push", "GITHUB_EVENT_PATH": str(event), "GITHUB_REF": "refs/tags/v1"}
+
+    assert run_guard(repo, "--ci", env=env).returncode == 1
+
+
+def test_a_push_needs_the_key_when_there_are_fingerprints(repo: Path, tmp_path: Path) -> None:
+    prints = tmp_path / "prints.txt"
+    prints.write_text("0" * 64 + "\n", encoding="utf-8")
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({"before": "0" * 40, "created": True}), encoding="utf-8")
+    env = {"GITHUB_EVENT_NAME": "push", "GITHUB_EVENT_PATH": str(event), "GITHUB_REF": "refs/heads/main"}
+
+    assert run_guard(repo, "--ci", "--fingerprints", str(prints), env=env).returncode == 2
 
 
 def test_push_check_allows_deleting_a_branch(repo: Path) -> None:
@@ -550,3 +646,8 @@ def test_the_repository_passes_its_own_guard() -> None:
         pytest.skip("not a Git checkout")
     result = run_guard(root, "--index")
     assert result.returncode == 0, result.stdout + result.stderr
+    key = guard.read_key()
+    if key is not None:
+        # With the key, the files are also compared with the private repository's fingerprints.
+        result = run_guard(root, "--index", "--fingerprints", str(guard.DEFAULT_FINGERPRINTS), env={"FRANCA_FINGERPRINT_KEY": key.decode()})
+        assert result.returncode == 0, result.stdout + result.stderr

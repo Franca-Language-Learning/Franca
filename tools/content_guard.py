@@ -42,6 +42,9 @@ KEY_FILE = Path.home() / ".config" / "franca" / "fingerprint-key"
 MAX_BYTES = 2 * 1024 * 1024
 MIN_LINE_CHARS = 40
 MIN_FILE_BYTES = 64  # smaller files (empty files, one-line stubs) are too common to fingerprint
+# Files in the private repository that are not fingerprinted. The fixture pack has the real planner settings, so that
+# the tests use them, and the keys in secrets/ are not content.
+NOT_FINGERPRINTED = ("course-config.yaml", "secrets/*")
 ZERO_SHA = "0" * 40
 GITLINK_MODE = "160000"
 MARKER = "franca:" + "private"  # files in the private repository have this marker; in two parts so this file has not
@@ -284,7 +287,10 @@ def make_fingerprints(content_root: Path, key: bytes) -> set[str]:
     prints = Fingerprints(key=key, values=frozenset())
     values: set[str] = set()
     for file in sorted(content_root.rglob("*")):
-        if not file.is_file() or ".git" in file.relative_to(content_root).parts:
+        relative = file.relative_to(content_root)
+        if not file.is_file() or ".git" in relative.parts:
+            continue
+        if any(fnmatch.fnmatch(relative.as_posix(), pattern) or fnmatch.fnmatch(file.name, pattern) for pattern in NOT_FINGERPRINTED):
             continue
         data = file.read_bytes()
         if len(data) >= MIN_FILE_BYTES:
@@ -494,7 +500,10 @@ def _get(event: dict[str, object], *keys: str) -> object:
 
 
 def ci_revisions(event_name: str, event: dict[str, object], ref: str) -> list[str] | None:
-    """The commits to check in the pipeline, or None to check the whole history."""
+    """The commits to check in the pipeline, or None to check every branch and tag (the weekly and manual runs).
+    A push without a usable base (a new branch or tag, or a force-push) is checked over the history of the pushed
+    commit. Other branches are checked in their own runs, so a file on an open pull request's branch does not stop
+    this one."""
     if event_name in ("pull_request", "pull_request_target"):
         base = _get(event, "pull_request", "base", "sha")
     elif event_name == "merge_group":
@@ -503,9 +512,9 @@ def ci_revisions(event_name: str, event: dict[str, object], ref: str) -> list[st
         base = _get(event, "before")
     else:
         base = None
-    if not isinstance(base, str) or not base or base == ZERO_SHA or not _exists(base):
-        return None
-    return ["HEAD", f"^{base}"]
+    if isinstance(base, str) and base and base != ZERO_SHA and _exists(base):
+        return ["HEAD", f"^{base}"]
+    return ["HEAD"] if event_name == "push" else None
 
 
 def is_fork_pull_request(event_name: str, event: dict[str, object]) -> bool:
@@ -574,9 +583,13 @@ def _contents_for(args: argparse.Namespace) -> Found:
         event_name, event = _ci_event()
         revisions = ci_revisions(event_name, event, os.environ.get("GITHUB_REF", ""))
         if revisions is None:
-            print("Checking the whole history.", file=sys.stderr)
+            print("Checking every branch and tag.", file=sys.stderr)
             return all_refs()
-        return commits(revisions)
+        found = commits(revisions)
+        ref = os.environ.get("GITHUB_REF", "")
+        if ref.startswith("refs/tags/"):
+            found += ref_contents(ref, _decode(_git("rev-parse", ref)).strip())  # an annotated tag's message
+        return found
     return push_contents(sys.stdin.read(), args.push)
 
 
