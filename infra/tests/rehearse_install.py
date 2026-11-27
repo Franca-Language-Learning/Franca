@@ -23,41 +23,12 @@ import tempfile
 import threading
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+from rehearsal import HEADSCALE, ROOT, Checks, build_image, compose_command, headscale_config, sh, tear_down
+
 PROJECT = f"franca-install-rehearsal-{os.getpid()}"
 NETWORK = f"franca-install-rehearsal-{os.getpid()}"
 HEADSCALE_NAME = f"franca-install-headscale-{os.getpid()}"
-HEADSCALE = "headscale/headscale:0.29.7@sha256:11f81665e842809db9fe3006a38c56a66e968baa5abd4bac498e86445572b970"  # renovate: image
 IMAGES = {service: f"franca/{service}:rehearsal-install" for service in ("app", "caddy", "updater", "backup", "tailscale", "status")}
-
-HEADSCALE_CONFIG = """\
-server_url: http://headscale:8080
-listen_addr: 0.0.0.0:8080
-metrics_listen_addr: 127.0.0.1:9090
-grpc_listen_addr: 127.0.0.1:50443
-noise:
-  private_key_path: /var/lib/headscale/noise_private.key
-prefixes:
-  v4: 100.64.0.0/10
-  v6: fd7a:115c:a1e0::/48
-  allocation: sequential
-derp:
-  server:
-    enabled: false
-  urls:
-    - https://controlplane.tailscale.com/derpmap/default
-  auto_update_enabled: false
-database:
-  type: sqlite
-  sqlite:
-    path: /var/lib/headscale/db.sqlite
-dns:
-  magic_dns: true
-  base_domain: rehearsal.ts.net
-  override_local_dns: false
-unix_socket: /var/run/headscale/headscale.sock
-unix_socket_permission: "0770"
-"""
 
 # The bundle's tailscale container is pointed at Headscale, which runs outside the bundle on its own network.
 OVERRIDE = f"""\
@@ -75,20 +46,6 @@ networks:
     external: true
     name: {NETWORK}
 """
-
-
-def sh(*command: str, check: bool = True, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(command, capture_output=True, text=True, check=False, input=input_text)  # noqa: S603
-    if check and result.returncode != 0:
-        print(result.stdout[-3000:], result.stderr[-3000:], sep="\n")
-        raise SystemExit(f"Command failed: {' '.join(command[:8])}")
-    return result
-
-
-def check(condition: bool, message: str, failures: list[str]) -> None:
-    print(("ok:   " if condition else "FAIL: ") + message, flush=True)
-    if not condition:
-        failures.append(message)
 
 
 class AlertRecorder(http.server.BaseHTTPRequestHandler):
@@ -125,20 +82,9 @@ def new_key() -> str:
 def main() -> int:
     os.chdir(ROOT)
     for service, image in IMAGES.items():
-        sh(
-            "docker",
-            "build",
-            "--quiet",
-            "-f",
-            f"infra/images/{service}.Dockerfile",
-            "--build-arg",
-            "FRANCA_VERSION=1.0.0",
-            "-t",
-            image,
-            ".",
-        )
+        build_image(service, image, "1.0.0")
     python = sh("uv", "run", "--no-project", "--python", "3.13", "python", "-c", "import sys; print(sys.executable)").stdout.strip()
-    failures: list[str] = []
+    checks = Checks()
     recorder = http.server.HTTPServer(("127.0.0.1", 0), AlertRecorder)
     threading.Thread(target=recorder.serve_forever, daemon=True).start()
     ntfy_url = f"http://127.0.0.1:{recorder.server_address[1]}"
@@ -150,10 +96,10 @@ def main() -> int:
         bundle.mkdir()
         (bundle / "compose.override.yaml").write_text(OVERRIDE, encoding="utf-8")
         (work / "headscale").mkdir()
-        (work / "headscale" / "config.yaml").write_text(HEADSCALE_CONFIG, encoding="utf-8")
+        (work / "headscale" / "config.yaml").write_text(headscale_config(base_domain="rehearsal.ts.net"), encoding="utf-8")
         release = work / "release.json"
         release.write_text(json.dumps({"version": "1.0.0", "images": IMAGES}), encoding="utf-8")
-        compose = ["docker", "compose", "--project-directory", str(bundle)]
+        compose = ["sudo", *compose_command(bundle)]
 
         def run_installer(key: str) -> subprocess.CompletedProcess[str]:
             answers = {
@@ -166,7 +112,7 @@ def main() -> int:
             command = [python, "installer/linux/franca_install.py", "--bundle-dir", str(bundle), "--compose-file", "infra/compose.yaml"]
             command += ["--release-file", str(release), "--skip-docker", "--ntfy-url", ntfy_url, "--project-name", PROJECT]
             # The installer's own folder has the updater's code beside it in the package; here it is found through PYTHONPATH.
-            return sh("sudo", f"PYTHONPATH={ROOT / 'infra' / 'updater'}", *command, check=False, input_text=json.dumps(answers))
+            return sh("sudo", f"PYTHONPATH={ROOT / 'infra' / 'updater'}", *command, check=False, stdin=json.dumps(answers))
 
         try:
             sh("docker", "network", "create", NETWORK)
@@ -181,60 +127,49 @@ def main() -> int:
                 sh("sleep", "2")
 
             installed = run_installer(new_key())
-            check(installed.returncode == 0, "the installer finishes", failures)
+            checks.check(installed.returncode == 0, "the installer finishes")
             if installed.returncode != 0:
                 print(installed.stdout[-3000:], installed.stderr[-3000:], sep="\n")
             shown = json.loads(installed.stdout.strip().splitlines()[-1]) if installed.stdout.strip() else {}
-            check(shown.get("address") == "https://franca.rehearsal.ts.net", "the address on the tailnet is shown", failures)
-            check(
+            checks.check(shown.get("address") == "https://franca.rehearsal.ts.net", "the address on the tailnet is shown")
+            checks.check(
                 bool(shown.get("backup_password")) and bool(shown.get("ntfy_topic")),
                 "the backup password and the topic are shown",
-                failures,
             )
 
             env = sh("sudo", "cat", str(bundle / ".env")).stdout
-            check("FRANCA_PUBLIC_URL=https://franca.rehearsal.ts.net" in env, ".env has the public address on the Tailscale name", failures)
-            check("rehearsal-client-secret" not in env, ".env has no secret in it", failures)
+            checks.check("FRANCA_PUBLIC_URL=https://franca.rehearsal.ts.net" in env, ".env has the public address on the Tailscale name")
+            checks.check("rehearsal-client-secret" not in env, ".env has no secret in it")
             key_left = sh("sudo", "cat", str(bundle / "secrets" / "tailscale_authkey")).stdout
-            check(key_left == "", "the used auth key is not kept", failures)
+            checks.check(key_left == "", "the used auth key is not kept")
             modes = sh("sudo", "stat", "-c", "%n %a %u", str(bundle), str(bundle / "secrets"), str(disk / "franca-backups")).stdout
-            check(f"{bundle} 755 10003" in modes, "the bundle folder belongs to the updater's user", failures)
-            check(f"{bundle / 'secrets'} 700 0" in modes, "the secrets folder is root's alone", failures)
-            check(f"{disk / 'franca-backups'} 755 10001" in modes, "the backup folder belongs to the backup's user", failures)
-            check((disk / "franca-backups" / ".franca-backup-disk").exists(), "the backup folder has the disk marker", failures)
+            checks.check(f"{bundle} 755 10003" in modes, "the bundle folder belongs to the updater's user")
+            checks.check(f"{bundle / 'secrets'} 700 0" in modes, "the secrets folder is root's alone")
+            checks.check(f"{disk / 'franca-backups'} 755 10001" in modes, "the backup folder belongs to the backup's user")
+            checks.check((disk / "franca-backups" / ".franca-backup-disk").exists(), "the backup folder has the disk marker")
 
-            services = sh("sudo", *compose, "config", "--services").stdout.split()
-            listed = sh("sudo", *compose, "ps", "--format", "{{.Service}} {{.State}} {{.Health}}").stdout.splitlines()
+            services = sh(*compose, "config", "--services").stdout.split()
+            listed = sh(*compose, "ps", "--format", "{{.Service}} {{.State}} {{.Health}}").stdout.splitlines()
             states = [line.split() for line in listed]
             unhealthy = [state for state in states if state[1:2] != ["running"] or state[2:] not in ([], ["healthy"])]
             running = {state[0] for state in states}
-            check(
-                not unhealthy and running == set(services), f"all {len(services)} services of the bundle are running and healthy", failures
-            )
+            checks.check(not unhealthy and running == set(services), f"all {len(services)} services of the bundle are running and healthy")
             if unhealthy:
                 print(f"info: {unhealthy}", flush=True)
             topic = shown.get("ntfy_topic", "")
-            check(
-                any(path == f"/{topic}" and "test alert" in body for path, body in AlertRecorder.received), "a test alert is sent", failures
-            )
+            checks.check(any(path == f"/{topic}" and "test alert" in body for path, body in AlertRecorder.received), "a test alert is sent")
 
             again = run_installer(new_key())
-            check(again.returncode == 0, "the installer can be run again", failures)
+            checks.check(again.returncode == 0, "the installer can be run again")
             shown_again = json.loads(again.stdout.strip().splitlines()[-1]) if again.stdout.strip() else {}
-            check("backup_password" not in shown_again, "a second run keeps the backup password and does not show it", failures)
+            checks.check("backup_password" not in shown_again, "a second run keeps the backup password and does not show it")
         finally:
-            if failures:
-                print(sh("sudo", *compose, "logs", "--no-color", "--tail", "40", check=False).stdout)
-            sh("sudo", *compose, "down", "--volumes", "--remove-orphans", check=False)
+            tear_down(compose, show_logs=bool(checks.failures), tail=40)
             sh("docker", "rm", "--force", HEADSCALE_NAME, check=False)
             sh("docker", "network", "rm", NETWORK, check=False)
             sh("sudo", "rm", "-rf", str(bundle), str(disk / "franca-backups"), check=False)
     recorder.shutdown()
-    if failures:
-        print(f"\nThe rehearsal failed: {len(failures)} check(s).")
-        return 1
-    print("\nThe rehearsal passed.")
-    return 0
+    return checks.exit_code()
 
 
 if __name__ == "__main__":

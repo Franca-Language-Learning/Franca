@@ -14,83 +14,69 @@ The rehearsal:
 
 import json
 import os
-import socket
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+from rehearsal import (
+    ROOT,
+    Checks,
+    build_image,
+    compose_command,
+    copy_compose_file,
+    free_port,
+    sh,
+    tear_down,
+    write_env,
+    write_secrets,
+)
+
 PROJECT = f"franca-backup-rehearsal-{os.getpid()}"
 APP = "franca/app:rehearsal-backup"
 CADDY = "franca/caddy:rehearsal-backup"
 BACKUP = "franca/backup:rehearsal"
 
 
-def sh(*command: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603
-    if check and result.returncode != 0:
-        print(result.stdout[-3000:], result.stderr[-3000:], sep="\n")
-        raise SystemExit(f"Command failed: {' '.join(command[:8])}")
-    return result
-
-
-def free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port: int = probe.getsockname()[1]
-        return port
-
-
-def check(condition: bool, message: str, failures: list[str]) -> None:
-    print(("ok:   " if condition else "FAIL: ") + message, flush=True)
-    if not condition:
-        failures.append(message)
-
-
 def main() -> int:
     os.chdir(ROOT)
-    sh("docker", "build", "--quiet", "-f", "infra/images/app.Dockerfile", "--build-arg", "FRANCA_VERSION=1.0.0", "-t", APP, ".")
-    sh("docker", "build", "--quiet", "-f", "infra/images/caddy.Dockerfile", "-t", CADDY, ".")
-    sh("docker", "build", "--quiet", "-f", "infra/images/backup.Dockerfile", "-t", BACKUP, ".")
-    failures: list[str] = []
+    build_image("app", APP, "1.0.0")
+    build_image("caddy", CADDY)
+    build_image("backup", BACKUP)
+    checks = Checks()
     with tempfile.TemporaryDirectory() as folder:
         bundle = Path(folder)
-        (bundle / "compose.yaml").write_text((ROOT / "infra" / "compose.yaml").read_text(encoding="utf-8"), encoding="utf-8")
-        key_folder = bundle / "secrets"
-        key_folder.mkdir()
-        for name in ("google_client_secret", "session_secret", "backup_password", "tailscale_authkey", "ntfy_topic", "status_push_token"):
-            empty = name in {"google_client_secret", "tailscale_authkey", "ntfy_topic", "status_push_token"}
-            (key_folder / name).write_text("" if empty else os.urandom(32).hex(), encoding="utf-8")
-            (key_folder / name).chmod(0o644)
+        copy_compose_file(bundle)
+        key_folder = write_secrets(bundle / "secrets")
         backups = bundle / "disk-j"
         backups.mkdir()
         backups.chmod(0o777)  # the backup container's user (10001) writes here, as it will on disk J:
         (backups / ".franca-backup-disk").write_text("Franca backups\n", encoding="utf-8")  # the installer puts this here
         port = free_port()
-        (bundle / ".env").write_text(
-            "\n".join(
-                [
-                    "FRANCA_VERSION=1.0.0",
-                    f"FRANCA_APP_IMAGE={APP}",
-                    f"FRANCA_CADDY_IMAGE={CADDY}",
-                    f"FRANCA_BACKUP_IMAGE={BACKUP}",
-                    f"FRANCA_PORT={port}",
-                    f"FRANCA_SECRETS_DIR={key_folder}",
-                    f"FRANCA_BACKUP_DIR={backups}",
-                    "COMPOSE_PROFILES=backups",
-                ]
-            )
-            + "\n",
-            encoding="utf-8",
+        write_env(
+            bundle / ".env",
+            {
+                "FRANCA_VERSION": "1.0.0",
+                "FRANCA_APP_IMAGE": APP,
+                "FRANCA_CADDY_IMAGE": CADDY,
+                "FRANCA_BACKUP_IMAGE": BACKUP,
+                "FRANCA_PORT": str(port),
+                "FRANCA_SECRETS_DIR": str(key_folder),
+                "FRANCA_BACKUP_DIR": str(backups),
+                "COMPOSE_PROFILES": "backups",
+            },
         )
-        compose = ["docker", "compose", "--project-directory", str(bundle), "--project-name", PROJECT]
+        compose = compose_command(bundle, PROJECT)
 
         def in_app(script: str) -> str:
             return sh(*compose, "run", "--rm", "--no-deps", "--entrypoint", "python", "app", "-c", script).stdout.strip()
 
         def in_backup(command: str) -> subprocess.CompletedProcess[str]:
             return sh(*compose, "run", "--rm", "--no-deps", "backup", "python", "/app/franca_backup.py", command, check=False)
+
+        def in_backup_shell(script: str) -> subprocess.CompletedProcess[str]:
+            # The repository's files belong to the backup container's user, so they are looked at from inside it.
+            return sh(*compose, "run", "--rm", "--no-deps", "--entrypoint", "sh", "backup", "-c", script, check=False)
 
         count = (
             "import sqlite3; print(sqlite3.connect('/data/franca.db').execute('SELECT count(*) FROM identity_invitation').fetchone()[0])"
@@ -102,67 +88,38 @@ def main() -> int:
                 'c.execute("INSERT INTO identity_invitation (email_norm, created_at, expires_at) '
                 "VALUES ('kept@example.org', '2026-12-01T09:00:00.000Z', '2026-12-08T09:00:00.000Z')\"); c.commit()"
             )
-            check(in_app(count) == "1", "a row is written while the app runs", failures)
+            checks.check(in_app(count) == "1", "a row is written while the app runs")
 
             backed_up = in_backup("backup")
-            check(backed_up.returncode == 0, "the backup runs", failures)
+            checks.check(backed_up.returncode == 0, "the backup runs")
             tested = in_backup("restore-test")
-            check(tested.returncode == 0, "the restore test passes", failures)
+            checks.check(tested.returncode == 0, "the restore test passes")
             report = json.loads(tested.stdout.strip().splitlines()[-1]) if tested.stdout.strip() else {}
-            check(bool(report.get("schema")), "the restore test reads the schema version of the restored database", failures)
+            checks.check(bool(report.get("schema")), "the restore test reads the schema version of the restored database")
 
-            # The repository's files belong to the backup container's user, so they are looked at from inside it.
-            look = sh(
-                *compose,
-                "run",
-                "--rm",
-                "--no-deps",
-                "--entrypoint",
-                "sh",
-                "backup",
-                "-c",
-                "test -f /backups/restic/config && echo repository",
-                check=False,
-            )
-            check("repository" in look.stdout, "the backup folder has a restic repository", failures)
-            plain = sh(
-                *compose,
-                "run",
-                "--rm",
-                "--no-deps",
-                "--entrypoint",
-                "sh",
-                "backup",
-                "-c",
-                "grep -rl 'SQLite format 3' /backups || true",
-                check=False,
-            )
-            check(not plain.stdout.strip(), "no readable copy of the database is in the backup folder (it is encrypted)", failures)
+            look = in_backup_shell("test -f /backups/restic/config && echo repository")
+            checks.check("repository" in look.stdout, "the backup folder has a restic repository")
+            plain = in_backup_shell("grep -rl 'SQLite format 3' /backups || true")
+            checks.check(not plain.stdout.strip(), "no readable copy of the database is in the backup folder (it is encrypted)")
 
             refused = in_backup("restore-latest")
-            check(refused.returncode != 0 and "refused" in refused.stdout, "a restore is refused while the app is running", failures)
+            checks.check(refused.returncode != 0 and "refused" in refused.stdout, "a restore is refused while the app is running")
 
             in_app("import sqlite3; c = sqlite3.connect('/data/franca.db'); c.execute('DELETE FROM identity_invitation'); c.commit()")
-            check(in_app(count) == "0", "the row is deleted", failures)
+            checks.check(in_app(count) == "0", "the row is deleted")
             sh(*compose, "stop", "app")
             restored = in_backup("restore-latest")
-            check(restored.returncode == 0, "the latest backup is restored with the app stopped", failures)
+            checks.check(restored.returncode == 0, "the latest backup is restored with the app stopped")
             sh(*compose, "up", "--detach", "--no-build", "--wait", "--wait-timeout", "120", "app")
-            check(in_app(count) == "1", "after the restore, the row is back", failures)
+            checks.check(in_app(count) == "1", "after the restore, the row is back")
             kept = in_app("import pathlib; print(len(list(pathlib.Path('/data').glob('franca-before-restore-*.db'))))")
-            check(kept == "1", "the database from before the restore is kept beside it", failures)
+            checks.check(kept == "1", "the database from before the restore is kept beside it")
         finally:
-            if failures:
-                print(sh(*compose, "logs", "--no-color", "--tail", "60", check=False).stdout)
-            sh(*compose, "down", "--volumes", "--remove-orphans", check=False)
+            tear_down(compose, show_logs=bool(checks.failures))
             # The files written by the backup container's user are removed by root in a container, so the temporary
             # folder can be removed.
             sh("docker", "run", "--rm", "--user", "0", "--entrypoint", "rm", "-v", f"{backups}:/b", BACKUP, "-rf", "/b/restic", check=False)
-    if failures:
-        print(f"\nThe rehearsal failed: {len(failures)} check(s).")
-        return 1
-    print("\nThe rehearsal passed.")
-    return 0
+    return checks.exit_code()
 
 
 if __name__ == "__main__":
