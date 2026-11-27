@@ -174,8 +174,8 @@ jobs:
       contents: read
     steps:
       # The hosts are for the image builds (Docker Hub, ghcr.io, lscr.io, Debian, Alpine, PyPI, npm and Go's module
-      # proxy), for Grype's database on anchore.io, and for the action that installs Grype (raw.githubusercontent.com).
-      # No host on the internet is needed by the rehearsals.
+      # proxy), for the downloads of uv, cosign and Grype, and for Grype's database on anchore.io. No host on the
+      # internet is needed by the rehearsals.
       - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: block
@@ -192,7 +192,6 @@ jobs:
             pkg-containers.githubusercontent.com:443
             production.cloudfront.docker.com:443
             proxy.golang.org:443
-            raw.githubusercontent.com:443
             registry-1.docker.io:443
             registry.npmjs.org:443
             release-assets.githubusercontent.com:443
