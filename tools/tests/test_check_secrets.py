@@ -77,15 +77,22 @@ def test_no_network_skips_the_scan_on_a_computer_and_fails_it_in_the_pipeline(tm
 FILES_FOR_THE_SCAN = ("scripts/check", "tools/install_program.py", "tools/programs.txt")
 
 
-def git(repo: Path, *args: str) -> str:
-    environment = {
+def git_environment() -> dict[str, str]:
+    """The environment for git in the temporary repositories: a fixed author, and no global or system settings, so that
+    a developer's own settings (commit signing, hooks, conflict style) have no effect on the tests."""
+    return {
         **os.environ,
         "GIT_AUTHOR_NAME": "t",
         "GIT_AUTHOR_EMAIL": "t@example.invalid",
         "GIT_COMMITTER_NAME": "t",
         "GIT_COMMITTER_EMAIL": "t@example.invalid",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
     }
-    return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True, env=environment).stdout.strip()
+
+
+def git(repo: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True, env=git_environment()).stdout.strip()
 
 
 def commit_file(repo: Path, name: str, text: str, message: str) -> str:
@@ -123,8 +130,10 @@ def scanned_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def run_scan(repo: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run([repo / "scripts" / "check", "secrets"], capture_output=True, text=True, check=False)
+def run_scan(repo: Path, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [repo / "scripts" / "check", "secrets"], capture_output=True, text=True, check=False, env=environment or git_environment()
+    )
 
 
 def test_a_secret_added_while_a_merge_conflict_is_resolved_is_found(scanned_repo: Path) -> None:
@@ -133,7 +142,10 @@ def test_a_secret_added_while_a_merge_conflict_is_resolved_is_found(scanned_repo
     commit_file(scanned_repo, "settings.txt", "colour = green\n", "green")
     git(scanned_repo, "switch", "-q", "main")
     commit_file(scanned_repo, "settings.txt", "colour = red\n", "red")
-    assert subprocess.run(["git", "-C", scanned_repo, "merge", "-q", "branch"], capture_output=True, check=False).returncode != 0
+    conflicting_merge = subprocess.run(
+        ["git", "-C", scanned_repo, "merge", "-q", "branch"], capture_output=True, check=False, env=git_environment()
+    )
+    assert conflicting_merge.returncode != 0
     merge = commit_file(scanned_repo, "settings.txt", f"colour = red\ntoken = {made_up_github_token()}\n", "merge")
     result = run_scan(scanned_repo)
     assert result.returncode != 0, result.stdout + result.stderr
@@ -163,3 +175,29 @@ def test_a_secret_added_in_an_octopus_merge_is_found(scanned_repo: Path) -> None
     result = run_scan(scanned_repo)
     assert result.returncode != 0, result.stdout + result.stderr
     assert f"Commit:      {merge}" in result.stdout
+
+
+def test_a_git_without_remerge_fails_the_scan(scanned_repo: Path, tmp_path: Path) -> None:
+    """A git older than 2.36 rejects --diff-merges=remerge. gitleaks then reports no leaks with exit code 0, so the
+    check has to find this out before gitleaks is run."""
+    commit_file(scanned_repo, "settings.txt", f"token = {made_up_github_token()}\n", "token")
+    bin_folder = tmp_path / "old-git"
+    bin_folder.mkdir()
+    stand_in = bin_folder / "git"
+    stand_in.write_text(
+        "#!/bin/sh\n"
+        'for argument in "$@"; do\n'
+        '    if [ "$argument" = "--diff-merges=remerge" ]; then\n'
+        '        echo "fatal: unknown value for --diff-merges: remerge" >&2\n'
+        "        exit 128\n"
+        "    fi\n"
+        "done\n"
+        f'exec "{shutil.which("git")}" "$@"\n',
+        encoding="utf-8",
+    )
+    stand_in.chmod(0o755)
+    environment = git_environment()
+    environment["PATH"] = f"{bin_folder}{os.pathsep}{environment['PATH']}"
+    result = run_scan(scanned_repo, environment)
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "git 2.36 or later" in result.stderr

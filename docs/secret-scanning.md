@@ -11,11 +11,13 @@ The history of the checked-out commit is scanned with [gitleaks](https://github.
 | Pipeline, workflow "Secret scan" | Pull requests, the merge queue, pushes to `main`, and a weekly run on Monday | `scripts/check secrets` |
 | A developer's computer | With the other checks, or on its own | `scripts/check` or `scripts/check secrets` |
 
-Merge commits are scanned too. For a merge with two parents, the part that the person who merged wrote is scanned, for example the way a merge conflict was resolved. In git's terms, this is the difference between git's own merge of the two parents and the merge commit (`git log --diff-merges=remerge`). The changes from the merged branch are scanned in that branch's commits, so they are not scanned again under the merge commit, and a finding that is listed in `.gitleaksignore` does not come back with the merge commit's fingerprint. A merge with more than two parents (an octopus merge) has no such view in git, so it is scanned as the difference from each parent.
+Merge commits are scanned too. For a merge with two parents, the part that the person who merged wrote is scanned, for example the way a merge conflict was resolved. In git's terms, this is the difference between git's own merge of the two parents and the merge commit (`git log --diff-merges=remerge`). The changes from the merged branch are scanned in that branch's commits and are not scanned again under the merge commit. For this reason, a finding that is listed in `.gitleaksignore` does not come back with the merge commit's fingerprint. A merge with more than two parents (an octopus merge) has no such view in git, so it is scanned as the difference from each parent.
 
 gitleaks is downloaded from its release page by `tools/install_program.py` and kept only when its SHA-256 matches the one in `tools/programs.txt`. Renovate updates the version and the hash on the same line, seven days after a release. The download is kept in `~/.cache/franca/programs`, so the scan needs no network after the first run.
 
 The file is for Linux on x86-64. On another computer nothing is downloaded, the scan is left to the pipeline, and `scripts/check` shows a message about this. The same message is shown when gitleaks cannot be downloaded, for example with no network. A download with another SHA-256 fails the check, on a computer and in the pipeline.
+
+The scan needs git 2.36 or later. With an older git, `scripts/check secrets` fails with a message that says so. The check is needed because gitleaks reports no leaks, without scanning anything, when it cannot read the history.
 
 Each finding is printed with its file, line, commit, rule and fingerprint, and with the secret replaced by REDACTED. The name and e-mail address of the commit's author are printed too. They are public in the history already. No report is uploaded.
 
@@ -39,3 +41,5 @@ The job "Secret scan" fails, and the findings are listed in its log.
    2. Remove the secret from the code in the same pull request.
    3. Give Franca the new secret. Franca's secrets are kept in the folder `/opt/franca/secrets` inside the Franca WSL distribution on the PC, and never in the repository. For the Google client secret or the Tailscale auth key, run the installer again (`docs/installing-franca.md`) and give the new value when asked. The installer writes it to that folder and keeps the other secrets.
    4. Add the finding's fingerprint to `.gitleaksignore`, with a comment line that says the secret was revoked and on which date. The revoked secret stays in the history, so without this line the scan fails on each later pull request.
+
+If a finding that is in `.gitleaksignore` comes back under a merge commit, add the new fingerprint as well. This can happen with a merge that was made with another merge strategy, or after a git update that changes how git merges.
