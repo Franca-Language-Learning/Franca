@@ -1,0 +1,12 @@
+# Command-line programs that are downloaded in the pipeline and by scripts/check (stories E01-004 and E01-013).
+# Each one is pinned by the SHA-256 of the downloaded file, and tools/install_program.py does not keep a download
+# with another hash. Renovate updates the version and the hash on the same line, seven days after the release
+# (.github/renovate.json). In the address, {tag} is the version as written in this file and {version} is the same
+# without a leading v.
+#
+# The .tar.gz files are for the platform on the next line, in the names that Python's platform.system() and
+# platform.machine() give. On another platform nothing is downloaded.
+platform   Linux    x86_64
+#
+# name     version  SHA-256 of the file                                               address
+gitleaks   v8.30.1  551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  https://github.com/gitleaks/gitleaks/releases/download/{tag}/gitleaks_{version}_linux_x64.tar.gz
