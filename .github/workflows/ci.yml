@@ -4,7 +4,9 @@
 # Actions are pinned to a full commit SHA, with the release tag in a comment; Renovate updates both.
 #
 # Harden-Runner is in block mode in the jobs of this workflow, so a connection to a host that is not in the job's
-# allowed-endpoints is refused. GitHub's own hosts are allowed by Harden-Runner without a list. Sudo and Docker are
+# allowed-endpoints is refused. Some of GitHub's own hosts, such as the storage for logs and artifacts, are allowed by
+# Harden-Runner without a list. The GitHub hosts that the steps call, such as github.com, are listed anyway, because the
+# hosts that Harden-Runner reads from GitHub's meta API are missing when that request fails. Sudo and Docker are
 # switched off in the jobs that need neither. The settings are checked by tools/check_harden_runner.py, and the steps
 # for adding an endpoint are in docs/package-updates.md.
 name: CI
@@ -109,9 +111,12 @@ jobs:
       # Renovate updates the image together with @playwright/test, because the two versions have to match.
       PLAYWRIGHT_IMAGE: "mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579"  # renovate: image
     steps:
+      # The browser runs in Playwright's container, so Docker is left on and sudo is switched off.
+      # disable-sudo is marked for deprecation in Harden-Runner. After an update, check that it is still read.
       - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: block
+          disable-sudo: true
           allowed-endpoints: >
             *.data.mcr.microsoft.com:443
             api.github.com:443
@@ -173,9 +178,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      # The hosts are for the image builds (Docker Hub, ghcr.io, lscr.io, Debian, Alpine, PyPI, npm and Go's module
-      # proxy), for the downloads of uv, cosign and Grype, and for Grype's database on anchore.io. No host on the
-      # internet is needed by the rehearsals.
+      # The hosts are for the image builds (Docker Hub, ghcr.io, lscr.io, Debian, Alpine, PyPI, npm, and Go's module
+      # proxy, whose downloads come from storage.googleapis.com) and for the downloads of uv, cosign and Grype. Grype's
+      # database is on anchore.io. Apart from the image pulls and builds, no host on the internet is needed by the
+      # rehearsals.
       - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: block
@@ -249,7 +255,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      # The oasdiff action runs in a container, so only sudo is switched off.
+      # The oasdiff action runs in a container, so Docker is left on and sudo is switched off.
+      # disable-sudo is marked for deprecation in Harden-Runner. After an update, check that it is still read.
       - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: block

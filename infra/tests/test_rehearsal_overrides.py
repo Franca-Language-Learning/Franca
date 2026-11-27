@@ -1,8 +1,9 @@
 """Tests of the Compose overrides in the tailnet and installer rehearsals (rehearse_tailnet.py, rehearse_install.py).
 
 The rehearsals run in the Container bundle job, where Harden-Runner refuses connections to hosts that are not on the
-job's list. Headscale, the Tailscale containers and Caddy are given settings in the overrides, so that no connection
-from a rehearsal goes to Tailscale or to a public certificate authority.
+job's list. The Tailscale containers and Caddy have settings in the overrides so that no connection from a rehearsal
+goes to Tailscale or to a public certificate authority. Headscale's settings are in headscale_config() and are tested
+in test_rehearsal.py.
 """
 
 from pathlib import Path

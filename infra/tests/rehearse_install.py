@@ -64,7 +64,8 @@ services:
     environment:
       TS_EXTRA_ARGS: --login-server=http://headscale:8080
 {environment_lines(TAILSCALE_REHEARSAL_ENVIRONMENT, 6)}    networks: [internal, rehearsal]
-  # Headscale issues no certificates, so the HTTPS check fails. Its alerts go nowhere, not to ntfy.sh.
+  # The HTTPS check fails, because the certificate is from Caddy's local authority, which the status container does not
+  # trust. Its alerts go to a closed port, not to ntfy.sh.
   status:
     environment:
       FRANCA_NTFY_URL: http://127.0.0.1:9

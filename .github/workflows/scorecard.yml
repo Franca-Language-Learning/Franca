@@ -20,7 +20,8 @@ jobs:
       contents: read
       security-events: write
     steps:
-      # The Scorecard action runs in a container, so only sudo is switched off.
+      # The Scorecard action runs in a container, so Docker is left on and sudo is switched off.
+      # disable-sudo is marked for deprecation in Harden-Runner. After an update, check that it is still read.
       - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: block

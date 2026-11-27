@@ -29,8 +29,8 @@ SECRET_NAMES = (
 # by digest, and Renovate updates it (see .github/renovate.json).
 HEADSCALE = "headscale/headscale:0.29.7@sha256:11f81665e842809db9fe3006a38c56a66e968baa5abd4bac498e86445572b970"  # renovate: image
 # Settings of the Tailscale containers in a rehearsal, so that nothing is sent to Tailscale's servers. Logs are not
-# uploaded to log.tailscale.com, the relay (DERP) in Headscale is reached over plain HTTP, because Headscale has no
-# certificate in the rehearsal, and the router is not asked to open a port. The bundle's own settings in
+# uploaded to log.tailscale.com, and the router is not asked to open a port. The relay (DERP) in Headscale is reached
+# over plain HTTP, because Headscale has no certificate in the rehearsal. The bundle's own settings in
 # infra/compose.yaml are not changed, because on the PC the container is a device in the owner's tailnet at Tailscale.
 TAILSCALE_REHEARSAL_ENVIRONMENT = {
     "TS_NO_LOGS_NO_SUPPORT": "true",
@@ -202,9 +202,8 @@ def write_rehearsal_caddyfile(folder: Path) -> Path:
 def headscale_config(base_domain: str | None = None) -> str:
     """Headscale's settings for a rehearsal. With a base domain, MagicDNS is on and the devices get names under it.
 
-    Headscale runs its own relay (DERP) and STUN server, and the devices are given a relay map with that relay only, not
-    Tailscale's public relays. Headscale does not check GitHub for a newer version, and does not ask the devices to send
-    their logs to Tailscale."""
+    Headscale runs its own relay (DERP) and STUN server, and the devices are given a relay map with that relay only.
+    There is no check on GitHub for a newer Headscale, and the devices are not asked to send their logs to Tailscale."""
     dns = f"  magic_dns: true\n  base_domain: {base_domain}\n" if base_domain else "  magic_dns: false\n"
     return f"""\
 server_url: http://headscale:8080

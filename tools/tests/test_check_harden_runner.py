@@ -1,8 +1,9 @@
 """Tests for tools/check_harden_runner.py (story E01-013).
 
-Harden-Runner in block mode refuses connections from a job to any host that is not in the job's list of allowed
-endpoints. The check reports a job with a Harden-Runner step that is in audit mode, apart from the jobs in release.yml,
-and a job in block mode with no list or with a list the agent cannot read.
+In block mode, a connection from a job to a host that is not in the job's list of allowed endpoints is refused. The
+check reports a job with steps and no Harden-Runner step, a Harden-Runner step that is not the first step, a step in
+audit mode outside release.yml, and a job in block mode with no list or with a list that is not written as the check
+expects.
 """
 
 from __future__ import annotations
@@ -16,6 +17,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 HARDEN_RUNNER = "step-security/harden-runner@" + "a" * 40
+NEWLINE_MESSAGE = (
+    "the allowed endpoints are on separate lines (a | block, or a blank or more-indented line in a > block); "
+    "write them as a folded block (allowed-endpoints: >) with one endpoint on each line"
+)
 
 
 def load_tool() -> ModuleType:
@@ -99,8 +104,24 @@ def test_endpoints_on_separate_lines_of_a_literal_block_are_reported(tmp_path: P
     # The agent splits the list at spaces only, so the lines have to be folded into one with >.
     settings = "egress-policy: block\nallowed-endpoints: |\n  api.github.com:443\n  github.com:443"
 
+    assert problems_in(tmp_path, workflow(settings)) == [f"ci.yml, job build: {NEWLINE_MESSAGE}"]
+
+
+@pytest.mark.parametrize("gap", ["\n", "    "])
+def test_a_blank_or_more_indented_line_in_a_folded_block_is_reported(tmp_path: Path, gap: str) -> None:
+    # In a > block, a blank line or a line with more indentation is kept as a line break.
+    second = "\n  github.com:443" if gap == "\n" else "  " + gap + "github.com:443"
+    settings = f"egress-policy: block\nallowed-endpoints: >\n  api.github.com:443\n{second}"
+
+    assert problems_in(tmp_path, workflow(settings)) == [f"ci.yml, job build: {NEWLINE_MESSAGE}"]
+
+
+@pytest.mark.parametrize("port", ["0", "65536", "99999"])
+def test_a_port_outside_1_to_65535_is_reported(tmp_path: Path, port: str) -> None:
+    settings = f"egress-policy: block\nallowed-endpoints: github.com:{port}"
+
     assert problems_in(tmp_path, workflow(settings)) == [
-        "ci.yml, job build: the allowed endpoints are on separate lines; write them as a folded block (allowed-endpoints: >)"
+        f"ci.yml, job build: allowed endpoint 'github.com:{port}' has a port outside 1 to 65535"
     ]
 
 
@@ -128,7 +149,7 @@ def test_an_endpoint_listed_twice_is_reported(tmp_path: Path) -> None:
     assert problems_in(tmp_path, workflow(settings)) == ["ci.yml, job build: allowed endpoint 'github.com:443' is listed twice"]
 
 
-def test_a_job_without_harden_runner_and_a_reusable_workflow_job_are_not_reported(tmp_path: Path) -> None:
+def test_a_job_with_steps_and_no_harden_runner_step_is_reported(tmp_path: Path) -> None:
     text = """\
 on: push
 jobs:
@@ -136,10 +157,68 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - run: echo hello
+"""
+    assert problems_in(tmp_path, ("other.yml", text)) == ["other.yml, job plain: the job has no Harden-Runner step"]
+
+
+def test_a_job_that_calls_a_reusable_workflow_is_not_reported(tmp_path: Path) -> None:
+    text = """\
+on: push
+jobs:
   reused:
     uses: example/workflows/.github/workflows/scan.yml@0123456789abcdef0123456789abcdef01234567
 """
     assert problems_in(tmp_path, ("other.yml", text)) == []
+
+
+def test_a_harden_runner_step_that_is_not_the_first_step_is_reported(tmp_path: Path) -> None:
+    text = f"""\
+on: push
+jobs:
+  late:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: curl https://example.org
+      - uses: {HARDEN_RUNNER}
+        with:
+          egress-policy: block
+          allowed-endpoints: github.com:443
+"""
+    assert problems_in(tmp_path, ("ci.yml", text)) == ["ci.yml, job late: Harden-Runner is step 2, not the first step"]
+
+
+def test_a_second_harden_runner_step_that_is_not_in_block_mode_is_reported(tmp_path: Path) -> None:
+    text = f"""\
+on: push
+jobs:
+  twice:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: {HARDEN_RUNNER}
+        with:
+          egress-policy: block
+          allowed-endpoints: github.com:443
+      - uses: {HARDEN_RUNNER}
+        with:
+          egress-policy: audit
+"""
+    assert problems_in(tmp_path, ("ci.yml", text)) == ["ci.yml, job twice: Harden-Runner step 2 is in audit mode, not block mode"]
+
+
+def test_a_step_that_is_not_a_mapping_is_reported_without_a_traceback(tmp_path: Path) -> None:
+    text = f"""\
+on: push
+jobs:
+  odd:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: {HARDEN_RUNNER}
+        with:
+          egress-policy: block
+          allowed-endpoints: github.com:443
+      - echo hello
+"""
+    assert problems_in(tmp_path, ("ci.yml", text)) == ["ci.yml, job odd: step 2 is not a mapping"]
 
 
 def test_the_problems_of_each_job_are_reported(tmp_path: Path) -> None:
@@ -166,7 +245,7 @@ def test_the_command_exits_with_0_when_there_is_no_problem(tmp_path: Path, capsy
     problems_in(tmp_path, workflow("egress-policy: block\nallowed-endpoints: github.com:443"))
 
     assert check_harden_runner.main(["--root", str(tmp_path)]) == 0
-    assert "1 job" in capsys.readouterr().out
+    assert "1 job(s) checked, no problems found" in capsys.readouterr().out
 
 
 def test_the_jobs_in_this_repository_pass() -> None:

@@ -6,8 +6,8 @@
 # starting with v only; the id-token permission (for keyless signing) is given in this workflow only.
 #
 # Harden-Runner is in audit mode in these jobs, because the workflow has not run yet and the hosts it connects to are
-# not known. The endpoints are taken from the logs of the first release (v0.1.0), and the jobs are switched to block
-# mode after it, in the same way as the jobs in ci.yml. Until then tools/check_harden_runner.py accepts audit mode here.
+# not known. After the first release (v0.1.0), the endpoints will be taken from its logs and the jobs switched to block
+# mode, as in ci.yml. Until then, audit mode in this file is accepted by tools/check_harden_runner.py.
 name: Release
 
 on:
