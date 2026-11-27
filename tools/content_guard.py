@@ -15,7 +15,8 @@ so a file that was added and removed again is found. The guard uses the Python s
 with -I, so PYTHONPATH, the user's site folder and files in the current folder are not loaded.
 
 Fingerprints of the private repository are HMAC-SHA-256 values made with a key that is kept out of this
-repository (see docs/repository-split.md). To refresh them, run in a checkout of franca-content:
+repository (see docs/repository-split.md). They are made from the files that Git tracks in franca-content, apart
+from the files listed in NOT_FINGERPRINTED. To refresh them, run in the top folder of a checkout of franca-content:
   python3 -I <path to franca>/tools/content_guard.py --fingerprint . > <path to franca>/tools/content-fingerprints.txt
 """
 
@@ -42,9 +43,17 @@ KEY_FILE = Path.home() / ".config" / "franca" / "fingerprint-key"
 MAX_BYTES = 2 * 1024 * 1024
 MIN_LINE_CHARS = 40
 MIN_FILE_BYTES = 64  # smaller files (empty files, one-line stubs) are too common to fingerprint
-# Files in the private repository that are not fingerprinted. The fixture pack has the real planner settings, so that
-# the tests use them, and the keys in secrets/ are not content.
-NOT_FINGERPRINTED = ("course-config.yaml", "secrets/*")
+# Files in the private repository that are not fingerprinted, as paths from the root of its checkout. A path that
+# ends in a slash is a folder with everything under it. These files hold no course material, and some of their lines
+# are the same as lines in this repository (the lines that pin an action in a workflow, for example). The keys in
+# secrets/ are not content either.
+NOT_FINGERPRINTED = (
+    ".github/", ".githooks/", "scripts/", "tools/", "tests/", "docs/", "secrets/",
+    "CLAUDE.md", "README.md", "pyproject.toml", "uv.lock", ".gitattributes", ".gitignore", "franca-schemas-commit.txt",
+)  # fmt: skip
+# Files that are not fingerprinted in any folder. The fixture pack has the real planner settings, so that the tests
+# use them.
+NOT_FINGERPRINTED_NAMES = {"course-config.yaml"}
 ZERO_SHA = "0" * 40
 GITLINK_MODE = "160000"
 MARKER = "franca:" + "private"  # files in the private repository have this marker; in two parts so this file has not
@@ -283,15 +292,44 @@ def load_fingerprints(path: Path, key: bytes | None) -> Fingerprints:
     return Fingerprints(key=key, values=values)
 
 
+def is_fingerprinted(path: str) -> bool:
+    """Whether a file of the private repository is fingerprinted, by its path from the root of the checkout.
+
+    A path with an empty, "." or ".." part is fingerprinted, so a path such as docs/../packs/x is not left out as
+    part of docs/. Names are compared with their case, as Git compares them.
+    """
+    parts = path.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        return True
+    if parts[-1] in NOT_FINGERPRINTED_NAMES:
+        return False
+    return not any(path.startswith(rule) if rule.endswith("/") else path == rule for rule in NOT_FINGERPRINTED)
+
+
+def tracked_files(content_root: Path) -> list[str]:
+    """The paths of the files that Git tracks in a checkout of the private repository, from the root of the checkout.
+
+    Untracked files, such as the .venv folder made by uv sync, are left out. Stops with a GuardError when the folder
+    is not the top folder of a Git checkout, because the paths in NOT_FINGERPRINTED are matched from that folder.
+    """
+    try:
+        top = _decode(_git("-C", str(content_root), "rev-parse", "--show-toplevel")).strip()
+    except GuardError:
+        raise GuardError(f"{content_root} is not a Git checkout. Run the command in a checkout of franca-content.") from None
+    if Path(top).resolve() != content_root.resolve():
+        raise GuardError(f"{content_root} is not the top folder of its Git checkout. Run the command in the folder {top}.")
+    listing = _git("-C", str(content_root), "ls-files", "-z")
+    return [_decode(path) for path in listing.split(b"\0") if path]
+
+
 def make_fingerprints(content_root: Path, key: bytes) -> set[str]:
-    """Fingerprints of every file in a checkout of the private repository, and of the long lines in its text files."""
+    """Fingerprints of the files that Git tracks in a checkout of the private repository, and of the long lines in its
+    text files, apart from the files in NOT_FINGERPRINTED and NOT_FINGERPRINTED_NAMES. Links are not followed."""
     prints = Fingerprints(key=key, values=frozenset())
     values: set[str] = set()
-    for file in sorted(content_root.rglob("*")):
-        relative = file.relative_to(content_root)
-        if not file.is_file() or ".git" in relative.parts:
-            continue
-        if any(fnmatch.fnmatch(relative.as_posix(), pattern) or fnmatch.fnmatch(file.name, pattern) for pattern in NOT_FINGERPRINTED):
+    for relative in sorted(tracked_files(content_root)):
+        file = content_root / relative
+        if not is_fingerprinted(relative) or file.is_symlink() or not file.is_file():
             continue
         data = file.read_bytes()
         if len(data) >= MIN_FILE_BYTES:
@@ -624,8 +662,9 @@ def main(argv: list[str] | None = None) -> int:
             key = read_key()
             if not key:
                 raise GuardError(f"The fingerprint key is missing. Put it in {KEY_FILE} or in FRANCA_FINGERPRINT_KEY.")
+            values = make_fingerprints(Path(args.fingerprint), key)
             print("# Fingerprints of the private repository franca-content, made by  tools/content_guard.py --fingerprint")
-            print("\n".join(sorted(make_fingerprints(Path(args.fingerprint), key))))
+            print("\n".join(sorted(values)))
             return 0
         prints = _fingerprints_for(args)
         return _report(check_found(_contents_for(args), prints))

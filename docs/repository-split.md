@@ -38,11 +38,27 @@ The fingerprints for the copy check are in `tools/content-fingerprints.txt`, as 
 
 When the fingerprint file has values, the guard needs the key and stops with a message if it is missing. Pull requests from forks get no Actions secrets, so the fingerprints are skipped in their check. They are checked in the merge queue before the merge, if the merge queue is turned on for `main`. On a developer's computer, the key is read from `~/.config/franca/fingerprint-key` or from the variable `FRANCA_FINGERPRINT_KEY`.
 
-To refresh the fingerprints, run this in a checkout of `franca-content`:
+To refresh the fingerprints, run this in the top folder of a checkout of `franca-content`:
 
 ```sh
 python3 -I ../franca/tools/content_guard.py --fingerprint . > ../franca/tools/content-fingerprints.txt
 ```
+
+The command stops with a message if the folder is not the top folder of a Git checkout.
+
+### Files that are not fingerprinted
+
+The fingerprints are made from the files that Git tracks in `franca-content`. Files that Git does not track are left out, such as the `.venv` folder made by `uv sync` and the caches of the test tools. There are thousands of them, and some of their lines are the same as lines in this repository.
+
+Some tracked files are left out as well, because they hold no course material and some of their lines are the same as lines in this repository. One example is the line in a workflow that pins `actions/checkout`. If their values were in the fingerprint file, the guard would refuse files of this repository that have the same line.
+
+| Left out | Where it is matched |
+|---|---|
+| The folders `.github/`, `.githooks/`, `scripts/`, `tools/`, `tests/`, `docs/` and `secrets/`, with everything in them | At the top of the checkout |
+| The files `CLAUDE.md`, `README.md`, `pyproject.toml`, `uv.lock`, `.gitattributes`, `.gitignore` and `franca-schemas-commit.txt` | At the top of the checkout |
+| `course-config.yaml` | In any folder |
+
+A file or folder with one of these names in another folder is fingerprinted. For example, a `README.md` or a `tools/` folder inside a pack folder is fingerprinted. The planner settings in `course-config.yaml` are left out because the fixture pack in this repository has the same settings, so that the tests use them. The keys in `secrets/` are not content. The lists are `NOT_FINGERPRINTED` and `NOT_FINGERPRINTED_NAMES` in `tools/content_guard.py`.
 
 The folders where icons and documentation screenshots may be kept are listed in `tools/content-guard-allowed-media.txt`. A file that matches one of those entries has to be a real PNG or ICO file.
 
