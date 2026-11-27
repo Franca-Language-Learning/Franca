@@ -16,7 +16,7 @@ If you are not sure where a file belongs, put it in `franca-content`.
 
 The content guard, `tools/content_guard.py`, is run by both Git hooks (before a commit and before a push), by `scripts/check`, and by the pipeline (GitHub's automatic checks) after a push. It refuses a file version when:
 
-- its path is under `packs/` (other than `packs/fixture/`), `harvest/`, `learner-data/`, `backups/` or `secrets/` at any level, or under `content/` or `media/` at the top level
+- its path is under `packs/` (other than `packs/fixture/` and the notes in `packs/CLAUDE.md`), `harvest/`, `learner-data/`, `backups/` or `secrets/` at any level, or under `content/` or `media/` at the top level
 - it is a database file, an `.env` file (other than `.env.example`), a key or certificate file, or `.gitmodules`
 - its extension is a picture, sound, video, subtitle, e-book, office document or archive type
 - its first bytes show that it is media, a PDF, an archive or a database, whatever it is called

@@ -18,6 +18,7 @@ htmlcov/
 # The content guard refuses these paths too; ignoring them stops them being staged by accident.
 /packs/*
 !/packs/fixture/
+!/packs/CLAUDE.md
 /content/
 /harvest/
 /media/
