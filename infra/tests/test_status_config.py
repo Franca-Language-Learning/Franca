@@ -188,8 +188,9 @@ def test_the_start_script_does_not_pass_the_address_to_gatus_or_write_it() -> No
 
 def test_the_start_script_gives_the_address_to_curl_on_standard_input_not_on_its_command_line() -> None:
     script = ENTRYPOINT.read_text()
-    # printf is built into the shell, so the address is in no process's command line.
-    assert """printf 'url = "%s"\\n' "$1" | curl -fsS -m 10 -o /dev/null -K - 2>/dev/null""" in script
+    # printf is built into the shell, so the address is in no process's command line. With -q first, curl reads no
+    # .curlrc file.
+    assert """printf 'url = "%s"\\n' "$1" | curl -q -fsS -m 10 -o /dev/null -K - 2>/dev/null""" in script
     assert not [line for line in script.splitlines() if "wget" in line and '"$1"' in line]
     assert "apk add --no-cache ca-certificates curl" in DOCKERFILE.read_text()
 

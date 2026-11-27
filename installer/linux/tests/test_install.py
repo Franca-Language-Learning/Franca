@@ -447,6 +447,61 @@ def test_the_key_is_emptied_even_when_the_start_fails(tmp_path: Path) -> None:
     assert (bundle / "secrets" / "tailscale_authkey").read_text() == ""
 
 
+class TailscaleFails(FakeDocker):
+    """docker compose up for tailscale fails, as when the saved Tailscale state is no longer accepted."""
+
+    def __call__(self, command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        if "up" in command and "tailscale" in command:
+            self.commands.append(list(command))
+            return subprocess.CompletedProcess(list(command), 1, "", "container is unhealthy\n")
+        return super().__call__(command)
+
+
+def test_without_a_key_a_failed_join_says_to_make_a_new_key(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    given = answers(tmp_path, tailscale_authkey="")
+    fi.write_secrets(bundle / "secrets", given)
+
+    with pytest.raises(fi.InstallError, match="could not sign in to your tailnet with the saved Tailscale state") as refused:
+        fi.start_bundle(bundle, RELEASE, given, run=TailscaleFails())
+
+    assert "steps 5 to 8 of docs/private-network.md" in str(refused.value)
+
+
+def test_with_a_key_a_failed_join_gives_the_reason(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    fi.write_secrets(bundle / "secrets", answers(tmp_path))
+
+    with pytest.raises(fi.InstallError, match="Joining the tailnet failed: container is unhealthy"):
+        fi.start_bundle(bundle, RELEASE, answers(tmp_path), run=TailscaleFails())
+
+
+class Stop(Exception):
+    """Ends install() in a test once the checks before any change have run."""
+
+
+def test_the_installation_checks_dockers_socket_and_the_tailscale_key_before_anything_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    called: list[str] = []
+    monkeypatch.setattr(fi, "check_docker_socket", lambda *_args: called.append("docker socket"))
+
+    def check_key(*_args: object) -> None:
+        called.append("tailscale key")
+        raise Stop
+
+    monkeypatch.setattr(fi, "check_tailscale_key", check_key)
+    bundle = tmp_path / "bundle"
+
+    with pytest.raises(Stop):
+        fi.install(answers(tmp_path), bundle, RELEASE, ROOT / "infra" / "compose.yaml", run=FakeDocker())
+
+    assert called == ["docker socket", "tailscale key"]
+    assert not (bundle / "secrets").exists()
+
+
 def test_a_tailnet_without_https_names_is_reported(tmp_path: Path) -> None:
     bundle = tmp_path / "bundle"
     bundle.mkdir()
