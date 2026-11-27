@@ -5,8 +5,9 @@
 # FRANCA_TAILNET_CHECKS, which is true when the tailnet profile is on and the installer has written the PC's
 # Tailscale name.
 #
-# The app and the web server are checked every minute, and an alert is sent after three failures in a row. The updater
-# and the backup report their state to the external endpoints after each run and every hour. The state is a failure
+# The app, the web server and the sign-in path are checked every minute, and an alert is sent after three failures in a
+# row. The updater and the backup report their state to the external endpoints after each run and every hour, and the
+# updater reports whether it can reach Docker through the socket proxy every minute. The state is a failure
 # when the last run failed or the last success is too old (26 hours, or 32 days for the restore test). An alert is sent
 # at once for a failure, and when no report arrives for two hours, which means the updater or the backup has stopped.
 # Gatus forgets the time of the last report when it restarts, so the age of the last success is worked out by the
@@ -57,6 +58,30 @@ endpoints:
       - type: ntfy
         description: The web server (Caddy) does not answer.
 
+  # The sign-in page is a page of the client, served by Caddy. An error page from Caddy has no root element.
+  - name: Sign-in page
+    group: Franca
+    url: http://caddy:8080/sign-in
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+      - '[BODY] == pat(*<div id="root">*)'
+    alerts:
+      - type: ntfy
+        description: The sign-in page cannot be opened.
+
+  # A route that needs a session, asked without one. 401 means that Caddy passes the request to the app and the app
+  # checks the session. A 502 from Caddy, or a 200, is a fault.
+  - name: Signed-in API
+    group: Franca
+    url: http://caddy:8080/api/v1/me
+    interval: 1m
+    conditions:
+      - "[STATUS] == 401"
+    alerts:
+      - type: ntfy
+        description: The API behind the sign-in does not answer as it should without a session.
+
   # Inside the bundle, the Tailscale name is an alias for Caddy, so this check is made against Caddy's real certificate.
   - name: HTTPS on the Tailscale name
     group: Franca
@@ -83,6 +108,18 @@ endpoints:
         description: The tailscale container has stopped or is not signed in to the tailnet.
 
 external-endpoints:
+  # The status container is not on the socket proxy's network (see infra/compose.yaml), so the updater checks the
+  # proxy every minute and reports the result here. Three failed reports in a row, or no report for 10 minutes three
+  # times in a row, is an alert. During a nightly update there are no reports for a few minutes.
+  - name: Socket proxy
+    group: Franca
+    token: ${STATUS_PUSH_TOKEN}
+    heartbeat:
+      interval: 10m
+    alerts:
+      - type: ntfy
+        description: The updater cannot reach Docker through the socket proxy, or the updater has stopped.
+
   - name: Update
     group: Nightly
     token: ${STATUS_PUSH_TOKEN}

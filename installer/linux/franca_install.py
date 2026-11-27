@@ -48,6 +48,8 @@ BACKUP_UID = 10001  # the app's user, which the backup container runs as
 UPDATER_UID = 10003  # the updater container's user, which writes .env when it installs a release
 DISK_MARKER = ".franca-backup-disk"
 NTFY_URL = "https://ntfy.sh"
+# The socket proxy runs as a user other than root, in the group that owns Docker's socket (infra/compose.yaml).
+DOCKER_SOCKET = Path("/var/run/docker.sock")
 # The same patterns as the status container's start script (infra/status/entrypoint.sh).
 TOPIC_PATTERN = re.compile(r"[A-Za-z0-9_-]{16,64}")
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{32,128}")
@@ -185,8 +187,16 @@ def check_no_links(bundle: Path) -> None:
 # --- the bundle's files
 
 
-def write_env(bundle: Path, release: fu.Release, answers: Answers, tailscale_name: str | None, project: str | None = None) -> None:
-    """Writes .env. The Compose project is named franca, unless the rehearsal names another one."""
+def write_env(
+    bundle: Path,
+    release: fu.Release,
+    answers: Answers,
+    tailscale_name: str | None,
+    project: str | None = None,
+    docker_socket: Path = DOCKER_SOCKET,
+) -> None:
+    """Writes .env. The Compose project is named franca, unless the rehearsal names another one. The group that owns
+    Docker's socket is written as FRANCA_DOCKER_GID, for the socket proxy."""
     env = fu.EnvFile(bundle / ".env")
     values = {
         "COMPOSE_PROJECT_NAME": project or env.read().get("COMPOSE_PROJECT_NAME") or "franca",
@@ -198,6 +208,8 @@ def write_env(bundle: Path, release: fu.Release, answers: Answers, tailscale_nam
         "FRANCA_OWNER_EMAIL": answers.owner_email,
         "FRANCA_GOOGLE_CLIENT_ID": answers.google_client_id,
     } | {fu.IMAGE_KEYS[service]: image for service, image in release.images.items()}
+    if docker_socket.exists():
+        values["FRANCA_DOCKER_GID"] = str(docker_socket.stat().st_gid)
     if tailscale_name:
         values |= {"FRANCA_TAILSCALE_NAME": tailscale_name, "FRANCA_PUBLIC_URL": f"https://{tailscale_name}"}
     env.write(values)

@@ -6,8 +6,8 @@ place of ntfy.sh, so no alert leaves the computer.
 
 The rehearsal:
 1. starts the app, Caddy and the status container with the monitoring profile;
-2. checks that Gatus reports the app and the web server as healthy, and that the HTTPS and Tailscale checks are off
-   while there is no Tailscale name;
+2. checks that Gatus reports the app, the web server, the sign-in page and the API behind the sign-in as healthy,
+   and that the HTTPS and Tailscale checks are off while there is no Tailscale name;
 3. checks that a report from a nightly job is accepted with the push token and refused without it;
 4. reports a failed update and checks that an alert reaches the stand-in for ntfy, on the owner's topic;
 5. stops the app and checks that an alert is sent after three failed checks;
@@ -156,6 +156,11 @@ def main() -> int:
 
             checks.check(wait_for(lambda: healthy("franca_app"), 90), "Gatus reports the app as healthy")
             checks.check(wait_for(lambda: healthy("franca_web-server"), 30), "Gatus reports the web server as healthy")
+            checks.check(wait_for(lambda: healthy("franca_sign-in-page"), 30), "Gatus reports the sign-in page as healthy")
+            checks.check(
+                wait_for(lambda: healthy("franca_signed-in-api"), 30),
+                "Gatus reports that the API behind the sign-in answers 401 without a session",
+            )
             keys = set(statuses(base))
             checks.check(
                 "franca_app" in keys and not keys & {"franca_https-on-the-tailscale-name", "franca_tailscale"},
@@ -167,6 +172,10 @@ def main() -> int:
             monitor.report("nightly_backup", True, "The database was backed up")
             checks.check(wait_for(lambda: healthy("nightly_backup"), 20), "a report with the push token is accepted")
             checks.check(push(base, "nightly_backup", "wrong" * 8, "success=true") == 401, "a report with another token is refused")
+
+            # The updater reports the socket proxy in the same way, every minute.
+            monitor.report("franca_socket-proxy", True, "The Docker API answers through the socket proxy")
+            checks.check(wait_for(lambda: healthy("franca_socket-proxy"), 20), "a report about the socket proxy is accepted")
 
             monitor.report("nightly_update", False, "rehearsal: the update was rolled back")
             checks.check(

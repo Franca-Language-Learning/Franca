@@ -146,6 +146,27 @@ def test_the_env_file_names_the_release_and_the_settings(tmp_path: Path) -> None
     assert "GOCSPX" not in (bundle / ".env").read_text()
 
 
+def test_the_env_file_names_the_group_that_can_open_dockers_socket(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    socket = tmp_path / "docker.sock"
+    socket.touch()
+
+    fi.write_env(bundle, RELEASE, answers(tmp_path), tailscale_name=None, docker_socket=socket)
+
+    # The socket proxy runs as a user other than root, in this group (infra/compose.yaml).
+    assert fu.EnvFile(bundle / ".env").read()["FRANCA_DOCKER_GID"] == str(socket.stat().st_gid)
+
+
+def test_without_dockers_socket_no_group_is_written(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+
+    fi.write_env(bundle, RELEASE, answers(tmp_path), tailscale_name=None, docker_socket=tmp_path / "missing.sock")
+
+    assert "FRANCA_DOCKER_GID" not in fu.EnvFile(bundle / ".env").read()
+
+
 def test_the_tailscale_name_gives_the_public_address(tmp_path: Path) -> None:
     bundle = tmp_path / "bundle"
     bundle.mkdir()

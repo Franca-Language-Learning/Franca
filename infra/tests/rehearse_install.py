@@ -9,8 +9,9 @@ owner's PC.
 The rehearsal:
 1. starts Headscale and makes a sign-up key;
 2. runs the installer with the owner's answers on its standard input and a local release;
-3. checks that the bundle is running and healthy, that the PC's Tailscale name is in .env, that the used key is gone,
-   that the secrets and the backup folder have the right owners and permissions, and that a test alert was sent;
+3. checks that each service of the bundle is running and has a passing health check, that the socket proxy runs as a
+   user other than root, that the PC's Tailscale name is in .env, that the used key is gone, that the secrets and the
+   backup folder have the right owners and permissions, and that a test alert was sent;
 4. runs the installer again with a new key and checks that the backup password is kept and not shown again.
 """
 
@@ -23,7 +24,18 @@ import tempfile
 import threading
 from pathlib import Path
 
-from rehearsal import HEADSCALE, ROOT, Checks, build_image, compose_command, headscale_config, sh, tear_down
+from rehearsal import (
+    HEADSCALE,
+    ROOT,
+    Checks,
+    build_image,
+    check_hardened,
+    compose_command,
+    headscale_config,
+    services_not_healthy,
+    sh,
+    tear_down,
+)
 
 PROJECT = f"franca-install-rehearsal-{os.getpid()}"
 NETWORK = f"franca-install-rehearsal-{os.getpid()}"
@@ -150,12 +162,14 @@ def main() -> int:
 
             services = sh(*compose, "config", "--services").stdout.split()
             listed = sh(*compose, "ps", "--format", "{{.Service}} {{.State}} {{.Health}}").stdout.splitlines()
-            states = [line.split() for line in listed]
-            unhealthy = [state for state in states if state[1:2] != ["running"] or state[2:] not in ([], ["healthy"])]
-            running = {state[0] for state in states}
-            checks.check(not unhealthy and running == set(services), f"all {len(services)} services of the bundle are running and healthy")
-            if unhealthy:
-                print(f"info: {unhealthy}", flush=True)
+            # A service with no health check counts as a failure here.
+            problems = services_not_healthy(listed, services)
+            checks.check(not problems, f"all {len(services)} services of the bundle are running, and their health checks pass")
+            if problems:
+                print(f"info: {problems}", flush=True)
+            env_values = dict(line.split("=", 1) for line in env.splitlines() if "=" in line)
+            checks.check(bool(env_values.get("FRANCA_DOCKER_GID", "").isdigit()), ".env names the group of Docker's socket")
+            check_hardened(checks, compose, "socket-proxy", "the socket proxy")
             topic = shown.get("ntfy_topic", "")
             checks.check(any(path == f"/{topic}" and "test alert" in body for path, body in AlertRecorder.received), "a test alert is sent")
 
