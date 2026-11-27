@@ -106,20 +106,23 @@ function New-AnswersJson {
         [Parameter(Mandatory)] [string] $GoogleClientId,
         [Parameter(Mandatory)] [string] $GoogleClientSecret,
         [Parameter(Mandatory)] [string] $TailscaleAuthKey,
-        [Parameter(Mandatory)] [string] $BackupDir
+        [Parameter(Mandatory)] [string] $BackupDir,
+        # Optional: the ping address of the owner's check on healthchecks.io. Empty means no heartbeat.
+        [string] $HealthchecksPingUrl = ''
     )
     $answers = [ordered] @{
-        owner_email          = $OwnerEmail.Trim()
-        google_client_id     = $GoogleClientId.Trim()
-        google_client_secret = $GoogleClientSecret.Trim()
-        tailscale_authkey    = $TailscaleAuthKey.Trim()
-        backup_dir           = $BackupDir
+        owner_email           = $OwnerEmail.Trim()
+        google_client_id      = $GoogleClientId.Trim()
+        google_client_secret  = $GoogleClientSecret.Trim()
+        tailscale_authkey     = $TailscaleAuthKey.Trim()
+        backup_dir            = $BackupDir
+        healthchecks_ping_url = $HealthchecksPingUrl.Trim()
     }
     return ($answers | ConvertTo-Json -Compress)
 }
 
 function Read-InstallSetting {
-    <# Asks the owner the installer's questions. The two secrets are typed without being shown. #>
+    <# Asks the owner the installer's questions. The secrets are typed without being shown. #>
     Write-Host ''
     Write-Host 'Franca needs a few answers. See docs/installing-franca.md for where to find each one.'
     $email = Read-Host 'Your e-mail address (the Google account you sign in with)'
@@ -133,8 +136,9 @@ function Read-InstallSetting {
         $ok = ($drive -match '^[A-Za-z]$') -and (Test-Path "$($drive):\")
         if (-not $ok) { Write-Host "Disk $($drive): was not found. Connect it, or type another letter." }
     } until ($ok)
+    $pingUrl = ConvertFrom-SecureText (Read-Host 'The healthchecks.io ping address, for an alert when the PC is off (it is not shown as you type; press Enter to skip)' -AsSecureString)
     return New-AnswersJson -OwnerEmail $email -GoogleClientId $clientId -GoogleClientSecret $clientSecret `
-        -TailscaleAuthKey $authKey -BackupDir (ConvertTo-LinuxBackupPath -DriveLetter $drive)
+        -TailscaleAuthKey $authKey -BackupDir (ConvertTo-LinuxBackupPath -DriveLetter $drive) -HealthchecksPingUrl $pingUrl
 }
 
 function Install-FrancaDistro {

@@ -46,8 +46,9 @@ def test_the_status_container_is_in_its_own_profile_and_hardened(compose: dict[s
     assert all(str(port).startswith("127.0.0.1:") for port in status.get("ports", []))
 
 
-def test_the_alert_topic_and_the_push_token_are_secrets(compose: dict[str, Any]) -> None:
-    assert set(compose["services"]["status"]["secrets"]) == {"ntfy_topic", "status_push_token"}
+def test_the_alert_topic_the_push_token_and_the_heartbeat_address_are_secrets(compose: dict[str, Any]) -> None:
+    assert set(compose["services"]["status"]["secrets"]) == {"ntfy_topic", "status_push_token", "healthchecks_ping_url"}
+    assert compose["secrets"]["healthchecks_ping_url"] == {"file": "${FRANCA_SECRETS_DIR:-./secrets}/healthchecks_ping_url"}
     text = GATUS_CONFIG.read_text()
     assert "${NTFY_TOPIC}" in text
     assert "${STATUS_PUSH_TOKEN}" in text
@@ -160,3 +161,42 @@ def test_the_tailnet_checks_need_the_tailnet_profile(compose: dict[str, Any]) ->
 
 def test_no_secret_value_is_in_the_config() -> None:
     assert not re.search(r"tk_[A-Za-z0-9]{20,}|token: [\"']?[A-Za-z0-9]{16,}", GATUS_CONFIG.read_text())
+
+
+# --- the heartbeat to healthchecks.io (story E01-012)
+
+ENTRYPOINT = INFRA / "status" / "entrypoint.sh"
+
+
+def test_the_heartbeat_address_is_read_from_its_secret_file_and_may_be_empty() -> None:
+    script = ENTRYPOINT.read_text()
+    assert "read_optional_secret healthchecks_ping_url" in script
+    # An empty file means no heartbeat.
+    assert 'if [ -n "$HEARTBEAT_URL" ]; then' in script
+
+
+def test_the_heartbeat_address_never_reaches_gatus_or_the_log() -> None:
+    script = ENTRYPOINT.read_text()
+    exported = next(line for line in script.splitlines() if line.startswith("export "))
+    assert "HEARTBEAT_URL" not in exported
+    assert "HEARTBEAT" not in GATUS_CONFIG.read_text()
+    # wget's own messages could name the address, so they are thrown away.
+    assert 'wget -q -T 10 -O /dev/null "$1" 2>/dev/null' in script
+    assert not [line for line in script.splitlines() if "echo" in line and "HEARTBEAT_URL" in line]
+
+
+def test_the_heartbeat_is_sent_while_gatus_answers_and_every_five_minutes_by_default(compose: dict[str, Any]) -> None:
+    script = ENTRYPOINT.read_text()
+    assert "wget -q -T 10 -O /dev/null http://127.0.0.1:8080/health" in script
+    assert compose["services"]["status"]["environment"]["FRANCA_HEARTBEAT_SECONDS"] == "${FRANCA_HEARTBEAT_SECONDS:-300}"
+
+
+def test_the_heartbeat_address_is_checked_against_a_strict_pattern() -> None:
+    script = ENTRYPOINT.read_text()
+    assert "matches \"$HEARTBEAT_URL\" 'https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~-]+)+'" in script
+
+
+def test_the_heartbeat_is_sent_at_least_every_five_minutes() -> None:
+    # The owner's check on healthchecks.io has a period of 5 minutes and a grace time of 10 minutes.
+    script = ENTRYPOINT.read_text()
+    assert "matches \"$FRANCA_HEARTBEAT_SECONDS\" '([5-9]|[1-9][0-9]|[12][0-9]{2}|300)'" in script

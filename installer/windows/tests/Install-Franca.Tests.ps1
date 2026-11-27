@@ -25,6 +25,15 @@ Describe 'New-AnswersJson' {
         $answers.tailscale_authkey | Should -Be 'tskey-auth-test'
         $answers.backup_dir | Should -Be '/mnt/j/franca-backups'
     }
+    It 'gives an empty heartbeat address when none is given' {
+        $json = New-AnswersJson -OwnerEmail 'a@b.c' -GoogleClientId 'x' -GoogleClientSecret 's' -TailscaleAuthKey 'k' -BackupDir '/mnt/j/x'
+        ($json | ConvertFrom-Json).healthchecks_ping_url | Should -Be ''
+    }
+    It 'passes the heartbeat address on without spaces around it' {
+        $json = New-AnswersJson -OwnerEmail 'a@b.c' -GoogleClientId 'x' -GoogleClientSecret 's' -TailscaleAuthKey 'k' `
+            -BackupDir '/mnt/j/x' -HealthchecksPingUrl ' https://hc-ping.com/abc '
+        ($json | ConvertFrom-Json).healthchecks_ping_url | Should -Be 'https://hc-ping.com/abc'
+    }
     It 'keeps quotes and backslashes in a secret intact' {
         $json = New-AnswersJson -OwnerEmail 'a@b.c' -GoogleClientId 'x' -GoogleClientSecret 'a"b\c' -TailscaleAuthKey 'k' -BackupDir '/mnt/j/x'
         ($json | ConvertFrom-Json).google_client_secret | Should -Be 'a"b\c'

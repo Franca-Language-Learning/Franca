@@ -42,5 +42,6 @@ Franca is reached from phones and laptops over your tailnet, the private network
 
 - Franca cannot be reached from the internet. To open Franca, a device has to be in your tailnet and signed in with one of the tailnet's Tailscale accounts.
 - When another learner joins your tailnet, their devices can reach Franca and each other. They cannot reach your devices.
+- Franca's connections to the internet go through the PC's own connection, not through the tailnet, so the alerts to ntfy.sh and the heartbeats to healthchecks.io (hc-ping.com) are not covered by the policy above. Do not choose an exit node for the `franca` machine.
 - The name `franca.` plus your tailnet name is published in the public logs of HTTPS certificates. Anyone can see that a device of that name exists. Knowing the name is not enough to get in.
 - If the PC has to join again, for example after a reinstall, make a new key with steps 5 to 8, run the installer again and paste the key when it asks.

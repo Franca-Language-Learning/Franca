@@ -114,7 +114,9 @@ The dashboard is at http://127.0.0.1:8081 on the PC (`FRANCA_STATUS_PORT`). The 
 
 The status container is not on the socket proxy's network, because a container that can reach the proxy can start containers. The updater, which is on that network, checks the proxy instead and reports the result. The speech part of the sign-in path is checked when the speech container exists (stories E09 and E12).
 
-Some faults are not watched yet. When the status container itself, Docker or the PC stops, no alert can be sent from the PC. An outside check for that is planned with story E01-012. The Tailscale check shows whether the container is running and signed in. It does not show whether the PC can be reached from other devices on the tailnet.
+When the status container itself, Docker or the PC stops, no alert can be sent from the PC. For that, the status container's start script sends a heartbeat to the owner's check on healthchecks.io every five minutes (`FRANCA_HEARTBEAT_SECONDS`, 5 to 300 seconds, because the check on healthchecks.io has a period of 5 minutes), while Gatus answers its own health check (story E01-012). When the heartbeats stop for about 15 minutes, an alert is sent from healthchecks.io through ntfy. The ping address is in the `healthchecks_ping_url` secret, which the installer asks for as an optional question; an empty file means no heartbeat. The address has a random id, so it is not passed to Gatus, and wget's messages, which could name it, are thrown away. Connections from the status container to hc-ping.com go over the PC's own internet connection. There is no allow-list for that traffic, and the tailnet policy covers connections inside the tailnet only.
+
+Some faults are not watched yet. The Tailscale check shows whether the container is running and signed in. It does not show whether the PC can be reached from other devices on the tailnet.
 
 `docs/health-alerts.md` has the owner's steps for the ntfy app.
 

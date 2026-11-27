@@ -16,7 +16,15 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 # The secret files that infra/compose.yaml names. Compose needs each file to exist, even for a profile that is off.
-SECRET_NAMES = ("google_client_secret", "session_secret", "backup_password", "tailscale_authkey", "ntfy_topic", "status_push_token")
+SECRET_NAMES = (
+    "google_client_secret",
+    "session_secret",
+    "backup_password",
+    "tailscale_authkey",
+    "ntfy_topic",
+    "status_push_token",
+    "healthchecks_ping_url",
+)
 # An open-source Tailscale control server, used in place of Tailscale's own, so no account is needed. The image is named
 # by digest, and Renovate updates it (see .github/renovate.json).
 HEADSCALE = "headscale/headscale:0.29.7@sha256:11f81665e842809db9fe3006a38c56a66e968baa5abd4bac498e86445572b970"  # renovate: image

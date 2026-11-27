@@ -6,7 +6,8 @@ The steps:
 2. cosign is downloaded and checked against its published checksum.
 3. The latest release is read from GitHub, and the signature of each image is checked with cosign, as the updater
    does each night (franca_updater.py, which is installed beside this file).
-4. The secrets are written: the answers from the owner, and a backup password, an ntfy topic, a push token and a
+4. The secrets are written: the answers from the owner (with the optional healthchecks.io ping address), and a
+   backup password, an ntfy topic, a push token and a
    session secret, which are made here. The backup password and the topic are shown once.
 5. compose.yaml and .env are written to the bundle folder, and the disk marker to the backup folder.
 6. The tailscale container is started first. When it has joined the tailnet, the PC's Tailscale name is read and
@@ -53,6 +54,10 @@ DOCKER_SOCKET = Path("/var/run/docker.sock")
 # The same patterns as the status container's start script (infra/status/entrypoint.sh).
 TOPIC_PATTERN = re.compile(r"[A-Za-z0-9_-]{16,64}")
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{32,128}")
+# The ping address of the owner's check on healthchecks.io: https://hc-ping.com/ followed by the check's id (a UUID).
+# Other hosts are refused. The status container's start script has a looser pattern, so the rehearsal can use a
+# stand-in.
+PING_URL_PATTERN = re.compile(r"https://hc-ping\.com/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
 Run = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
 Fetch = Callable[[str], bytes]
@@ -86,6 +91,8 @@ class Answers:
     tailscale_authkey: str = field(repr=False)
     backup_dir: Path
     tailscale_hostname: str = "franca"
+    # Optional. Empty means that no heartbeat is sent (story E01-012).
+    healthchecks_ping_url: str = field(default="", repr=False)
 
     @classmethod
     def from_json(cls, text: str) -> Answers:
@@ -98,6 +105,7 @@ class Answers:
                 tailscale_authkey=str(given["tailscale_authkey"]).strip(),
                 backup_dir=Path(str(given["backup_dir"]).strip()),
                 tailscale_hostname=str(given.get("tailscale_hostname", "franca")).strip(),
+                healthchecks_ping_url=str(given.get("healthchecks_ping_url") or "").strip(),
             )
         except (ValueError, KeyError, TypeError) as error:
             raise InstallError(f"The answers could not be read: {error}") from error
@@ -118,6 +126,12 @@ class Answers:
             raise InstallError("The backup folder has to be a full path, such as /mnt/j/franca-backups.")
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", self.tailscale_hostname):
             raise InstallError("The Tailscale machine name can have lowercase letters, digits and hyphens only.")
+        if self.healthchecks_ping_url and not PING_URL_PATTERN.fullmatch(self.healthchecks_ping_url):
+            raise InstallError(
+                "The healthchecks.io ping address has to be https://hc-ping.com/ followed by the check's id, such as "
+                "https://hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b. Copy it again from the check's page, or press Enter "
+                "for no heartbeat."
+            )
 
 
 # --- secrets
@@ -149,6 +163,7 @@ def write_secrets(folder: Path, answers: Answers) -> dict[str, str]:
     folder.chmod(0o700)
     _write_private(folder / "google_client_secret", answers.google_client_secret)
     _write_private(folder / "tailscale_authkey", answers.tailscale_authkey)
+    _write_private(folder / "healthchecks_ping_url", answers.healthchecks_ping_url)
     generated: dict[str, Callable[[], str]] = {
         "session_secret": lambda: secrets.token_urlsafe(48),
         "backup_password": lambda: secrets.token_urlsafe(32),

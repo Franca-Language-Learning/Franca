@@ -40,6 +40,9 @@ from rehearsal import (
 PROJECT = f"franca-install-rehearsal-{os.getpid()}"
 NETWORK = f"franca-install-rehearsal-{os.getpid()}"
 HEADSCALE_NAME = f"franca-install-headscale-{os.getpid()}"
+# A ping address in the form the installer accepts, with a random id that is not a check on healthchecks.io (the
+# service answers 404 to a heartbeat for it). The rehearsal checks that it is kept as a secret and not shown.
+PING_URL = "https://hc-ping.com/{}-{}-{}-{}-{}".format(*(os.urandom(n).hex() for n in (4, 2, 2, 2, 6)))
 IMAGES = {service: f"franca/{service}:rehearsal-install" for service in ("app", "caddy", "updater", "backup", "tailscale", "status")}
 
 # The bundle's tailscale container is pointed at Headscale, which runs outside the bundle on its own network.
@@ -120,6 +123,7 @@ def main() -> int:
                 "google_client_secret": "rehearsal-client-secret",
                 "tailscale_authkey": key,
                 "backup_dir": str(disk / "franca-backups"),
+                "healthchecks_ping_url": PING_URL,
             }
             command = [python, "installer/linux/franca_install.py", "--bundle-dir", str(bundle), "--compose-file", "infra/compose.yaml"]
             command += ["--release-file", str(release), "--skip-docker", "--ntfy-url", ntfy_url, "--project-name", PROJECT]
@@ -151,7 +155,10 @@ def main() -> int:
 
             env = sh("sudo", "cat", str(bundle / ".env")).stdout
             checks.check("FRANCA_PUBLIC_URL=https://franca.rehearsal.ts.net" in env, ".env has the public address on the Tailscale name")
-            checks.check("rehearsal-client-secret" not in env, ".env has no secret in it")
+            checks.check("rehearsal-client-secret" not in env and PING_URL not in env, ".env has no secret in it")
+            ping_secret = sh("sudo", "cat", str(bundle / "secrets" / "healthchecks_ping_url")).stdout
+            checks.check(ping_secret == PING_URL, "the healthchecks.io ping address is kept as a secret")
+            checks.check(PING_URL not in installed.stdout + installed.stderr, "the installer does not show the ping address")
             key_left = sh("sudo", "cat", str(bundle / "secrets" / "tailscale_authkey")).stdout
             checks.check(key_left == "", "the used auth key is not kept")
             modes = sh("sudo", "stat", "-c", "%n %a %u", str(bundle), str(bundle / "secrets"), str(disk / "franca-backups")).stdout
@@ -170,6 +177,8 @@ def main() -> int:
             env_values = dict(line.split("=", 1) for line in env.splitlines() if "=" in line)
             checks.check(bool(env_values.get("FRANCA_DOCKER_GID", "").isdigit()), ".env names the group of Docker's socket")
             check_hardened(checks, compose, "socket-proxy", "the socket proxy")
+            status_log = sh(*compose, "logs", "--no-color", "status", check=False)
+            checks.check(PING_URL not in status_log.stdout + status_log.stderr, "the ping address is not in the status container's log")
             topic = shown.get("ntfy_topic", "")
             checks.check(any(path == f"/{topic}" and "test alert" in body for path, body in AlertRecorder.received), "a test alert is sent")
 

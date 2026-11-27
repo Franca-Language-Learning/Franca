@@ -2,7 +2,7 @@
     python3 infra/tests/rehearse_status.py
 
 It needs Docker with Compose and builds the images itself. A small web server that records what it is sent is used in
-place of ntfy.sh, so no alert leaves the computer.
+place of ntfy.sh and of healthchecks.io, so no alert or heartbeat leaves the computer.
 
 The rehearsal:
 1. starts the app, Caddy and the status container with the monitoring profile;
@@ -11,8 +11,11 @@ The rehearsal:
 3. checks that a report from a nightly job is accepted with the push token and refused without it;
 4. reports a failed update and checks that an alert reaches the stand-in for ntfy, on the owner's topic;
 5. stops the app and checks that an alert is sent after three failed checks;
-6. checks that the start script refuses a topic that could change Gatus's configuration;
-7. checks that the status container runs as a user, with a read-only file system and no capabilities.
+6. checks that the start script refuses a topic that could change Gatus's configuration, and a ping address that is
+   not a plain web address;
+7. checks that the status container runs as a user, with a read-only file system and no capabilities;
+8. checks that heartbeats reach the stand-in for healthchecks.io, that the ping address is not in the container's log,
+   and that the heartbeats stop when the status container stops (healthchecks.io then sends an alert).
 """
 
 import json
@@ -48,13 +51,18 @@ APP = "franca/app:rehearsal-status"
 CADDY = "franca/caddy:rehearsal-status"
 STATUS = "franca/status:rehearsal"
 TOPIC = "franca-rehearsal-alerts"
+# The ping address of the check on healthchecks.io has a random id, as the real one does.
+PING_PATH = f"/ping/{os.urandom(16).hex()}"
 
-# A web server that prints each POST it gets as a line of JSON, in place of ntfy.sh. It answers GET requests, so that
-# the app image's health check, which the stand-in inherits, passes.
+# A web server that prints each POST it gets as a line of JSON, in place of ntfy.sh, and each GET under /ping/, in place
+# of healthchecks.io. It answers other GET requests, so that the app image's health check, which the stand-in inherits,
+# passes.
 RECORDER = """
 import http.server, json, sys
 class Recorder(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path.startswith("/ping/"):
+            print(json.dumps({"ping": self.path}), flush=True)
         self.send_response(200)
         self.end_headers()
     def do_POST(self):
@@ -119,7 +127,9 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as folder:
         bundle = Path(folder)
         copy_compose_file(bundle, OVERRIDE)
-        key_folder = write_secrets(bundle / "secrets", {"ntfy_topic": TOPIC, "status_push_token": token})
+        key_folder = write_secrets(
+            bundle / "secrets", {"ntfy_topic": TOPIC, "status_push_token": token, "healthchecks_ping_url": f"http://ntfy:8000{PING_PATH}"}
+        )
         port = free_port()
         write_env(
             bundle / ".env",
@@ -132,16 +142,23 @@ def main() -> int:
                 "FRANCA_STATUS_PORT": str(port),
                 "FRANCA_SECRETS_DIR": str(key_folder),
                 "FRANCA_NTFY_URL": "http://ntfy:8000",
+                "FRANCA_HEARTBEAT_SECONDS": "5",
                 "COMPOSE_PROFILES": "monitoring",
             },
         )
         compose = compose_command(bundle, PROJECT)
         base = f"http://127.0.0.1:{port}"
 
-        def alerts() -> list[dict[str, Any]]:
+        def recorded() -> list[dict[str, str]]:
             lines = sh(*compose, "logs", "--no-color", "--no-log-prefix", "ntfy", check=False).stdout.splitlines()
-            sent = [json.loads(line) for line in lines if line.startswith("{")]
+            return [json.loads(line) for line in lines if line.startswith("{")]
+
+        def alerts() -> list[dict[str, Any]]:
+            sent = [entry for entry in recorded() if "body" in entry]
             return [json.loads(entry["body"]) for entry in sent if entry["body"].startswith("{")]
+
+        def heartbeats() -> int:
+            return sum(1 for entry in recorded() if entry.get("ping") == PING_PATH)
 
         def healthy(key: str) -> bool:
             results = statuses(base).get(key, [])
@@ -208,8 +225,23 @@ def main() -> int:
                     refused.returncode != 0 and "FRANCA_NTFY_URL" in refused.stderr,
                     "the start script refuses a value with a line break in it",
                 )
+                (Path(bad) / "healthchecks_ping_url").write_text("https://hc-ping.com/abc?x=$(id)", encoding="utf-8")
+                (Path(bad) / "healthchecks_ping_url").chmod(0o644)
+                refused = sh("docker", "run", "--rm", "-v", secrets, STATUS, check=False)
+                checks.check(
+                    refused.returncode != 0 and "ping address" in refused.stderr and "abc" not in refused.stderr,
+                    "the start script refuses a ping address that is not a plain web address, without showing it",
+                )
 
             check_hardened(checks, compose, "status", "the status container")
+
+            checks.check(wait_for(lambda: heartbeats() >= 2, 60), "heartbeats reach the stand-in for healthchecks.io")
+            log = sh(*compose, "logs", "--no-color", "status", check=False)
+            checks.check(PING_PATH not in log.stdout + log.stderr, "the ping address is not in the status container's log")
+            sh(*compose, "stop", "status")
+            stopped_at = heartbeats()
+            time.sleep(15)
+            checks.check(heartbeats() == stopped_at, "no heartbeat is sent while the status container is stopped")
         finally:
             tear_down(compose, show_logs=bool(checks.failures))
     return checks.exit_code()

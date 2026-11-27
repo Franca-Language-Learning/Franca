@@ -67,6 +67,54 @@ def test_an_answer_that_cannot_be_right_is_refused_with_a_message(tmp_path: Path
         answers(tmp_path, **{field: value})
 
 
+def test_the_heartbeat_address_is_optional(tmp_path: Path) -> None:
+    assert answers(tmp_path).healthchecks_ping_url == ""
+    given = answers(tmp_path, healthchecks_ping_url=" https://hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b ")
+    assert given.healthchecks_ping_url == "https://hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "http://hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b",
+        "https://hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b?x=1",
+        "https://hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b/fail",
+        "https://example.org/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b",
+        "https://hc-ping.com.example.org/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b",
+        "https://hc-ping.com/abc123",
+        "hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b",
+        "https://hc-ping.com/",
+    ],
+)
+def test_a_heartbeat_address_that_cannot_be_right_is_refused(tmp_path: Path, value: str) -> None:
+    with pytest.raises(fi.InstallError, match="healthchecks.io"):
+        answers(tmp_path, healthchecks_ping_url=value)
+
+
+def test_the_heartbeat_address_is_written_as_a_secret_and_not_to_env(tmp_path: Path) -> None:
+    url = "https://hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b"
+    given = answers(tmp_path, healthchecks_ping_url=url)
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+
+    fi.write_secrets(bundle / "secrets", given)
+    fi.write_env(bundle, RELEASE, given, tailscale_name=None)
+
+    assert (bundle / "secrets" / "healthchecks_ping_url").read_text(encoding="utf-8") == url
+    assert oct((bundle / "secrets" / "healthchecks_ping_url").stat().st_mode & 0o777) == "0o644"
+    assert url not in (bundle / ".env").read_text(encoding="utf-8")
+    assert "0f5a7c2e" not in repr(given)
+
+
+def test_without_a_heartbeat_address_the_secret_file_is_empty(tmp_path: Path) -> None:
+    folder = tmp_path / "secrets"
+    fi.write_secrets(folder, answers(tmp_path, healthchecks_ping_url="https://hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b"))
+
+    fi.write_secrets(folder, answers(tmp_path))
+
+    assert (folder / "healthchecks_ping_url").read_text(encoding="utf-8") == ""
+
+
 def test_the_answers_are_not_shown_in_their_text_form(tmp_path: Path) -> None:
     given = answers(tmp_path)
     assert "GOCSPX" not in repr(given)
