@@ -5,6 +5,7 @@ The rehearsal against real containers is infra/tests/rehearse-update.sh.
 
 import http.client
 import json
+import os
 import ssl
 import subprocess
 import sys
@@ -873,12 +874,16 @@ def restore_check(tmp_path: Path) -> tuple[fu.Updater, list[Sequence[str]], Path
     folder.mkdir()
     commands: list[Sequence[str]] = []
 
-    def run(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    def run_limited(command: Sequence[str], timeout: float) -> subprocess.CompletedProcess[str]:
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
     updater, _log, _verifier = make(tmp_path, NEW)
-    updater.compose = fu.Compose(tmp_path, run=run, project_name="franca")
+
+    def run(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    updater.compose = fu.Compose(tmp_path, run=run, project_name="franca", run_limited=run_limited)
     updater.restore_test_dir = folder
     return updater, commands, folder
 
@@ -957,7 +962,9 @@ def test_a_one_off_container_that_cannot_start_gets_a_failure_answer_for_the_bac
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     updater, _commands, folder = restore_check(tmp_path)
-    updater.compose = fu.Compose(tmp_path, run=lambda command: subprocess.CompletedProcess(command, 1, "", "no such image\n"))
+    updater.compose = fu.Compose(
+        tmp_path, run_limited=lambda command, timeout: subprocess.CompletedProcess(command, 1, "", "no such image\n")
+    )
     write_request(folder)
 
     updater.check_restored_copy()
@@ -972,17 +979,87 @@ def test_a_one_off_container_that_cannot_start_gets_a_failure_answer_for_the_bac
 def test_a_one_off_container_that_hangs_gets_a_failure_answer_and_the_loop_goes_on(tmp_path: Path) -> None:
     updater, _commands, folder = restore_check(tmp_path)
 
-    def hangs(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
-        raise subprocess.TimeoutExpired(list(command), 900)
+    limits: list[float] = []
 
-    updater.compose = fu.Compose(tmp_path, run=hangs)
+    def hangs(command: Sequence[str], timeout: float) -> subprocess.CompletedProcess[str]:
+        limits.append(timeout)
+        raise subprocess.TimeoutExpired(list(command), timeout)
+
+    updater.compose = fu.Compose(tmp_path, run_limited=hangs)
     write_request(folder)
 
     updater.check_restored_copy()
 
     answer = json.loads((folder / "answer.json").read_text(encoding="utf-8"))
     assert answer["passed"] is False
-    assert "900" in answer["message"]
+    assert "600 seconds" in answer["message"]
+    # The backup waits 15 minutes, so a hang is reported to it before it stops waiting.
+    assert limits == [600]
+    assert fu.RESTORE_CHECK_TIMEOUT < 15 * 60
+
+
+def failing(tmp_path: Path) -> fu.Compose:
+    return fu.Compose(tmp_path, run_limited=lambda command, timeout: subprocess.CompletedProcess(command, 1, "", "no such image\n"))
+
+
+def test_a_link_planted_for_the_failure_answer_is_not_followed(tmp_path: Path) -> None:
+    updater, _commands, folder = restore_check(tmp_path)
+    updater.compose = failing(tmp_path)
+    outside = tmp_path / "env-file"
+    outside.write_text("FRANCA_VERSION=1.0.0\n", encoding="utf-8")
+    (folder / "answer.json.new").symlink_to(outside)
+    write_request(folder)
+
+    updater.check_restored_copy()
+
+    assert outside.read_text(encoding="utf-8") == "FRANCA_VERSION=1.0.0\n"
+    answer_file = folder / "answer.json"
+    assert answer_file.is_file() and not answer_file.is_symlink()
+    assert json.loads(answer_file.read_text(encoding="utf-8"))["passed"] is False
+    assert oct(answer_file.stat().st_mode & 0o777) == "0o644"
+
+
+def test_a_failure_answer_that_cannot_be_written_is_printed_and_leaves_no_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    updater, _commands, folder = restore_check(tmp_path)
+    updater.compose = failing(tmp_path)
+    write_request(folder)
+
+    def refuse(*_arguments: object) -> None:
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(fu.os, "replace", refuse)
+
+    updater.check_restored_copy()
+
+    assert "restore-check-answer-not-written" in capsys.readouterr().out
+    assert sorted(path.name for path in folder.iterdir()) == ["request.json"]
+
+
+def test_a_request_file_that_is_a_link_is_ignored(tmp_path: Path) -> None:
+    updater, commands, folder = restore_check(tmp_path)
+    elsewhere = tmp_path / "elsewhere.json"
+    elsewhere.write_text(json.dumps({"id": REQUEST}), encoding="utf-8")
+    (folder / "request.json").symlink_to(elsewhere)
+
+    updater.check_restored_copy()
+
+    assert commands == []
+
+
+def test_a_request_file_that_is_a_named_pipe_is_ignored_without_waiting(tmp_path: Path) -> None:
+    updater, commands, folder = restore_check(tmp_path)
+    os.mkfifo(folder / "request.json")
+
+    updater.check_restored_copy()
+
+    assert commands == []
+
+
+def test_an_id_with_digits_from_other_scripts_is_refused() -> None:
+    assert fu.REQUEST_ID_PATTERN.fullmatch(REQUEST)
+    assert not fu.REQUEST_ID_PATTERN.fullmatch(REQUEST.replace("2026", "\u0662\u0660\u0662\u0666"))
 
 
 def test_an_error_in_the_restore_check_does_not_stop_the_nightly_update(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

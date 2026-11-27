@@ -64,6 +64,7 @@ def test_the_backup_knows_whether_the_updates_profile_is_on(compose: dict[str, A
 def test_the_shared_folder_belongs_to_the_apps_user_in_each_image(image: str) -> None:
     # A new volume takes the owner of the folder in the image that mounts it first, and the backup and the one-off
     # container (both user 10001) write there.
-    # The group may write, and new files get the folder's group (setgid), so the backup can remove the updater's answer.
+    # The group may write, so the updater (group_add 10001) can write its failure answer. The backup owns the folder,
+    # so it can remove that answer.
     dockerfile = (INFRA / "images" / f"{image}.Dockerfile").read_text(encoding="utf-8")
-    assert "install -d -o 10001 -g 10001 -m 2775 /restore-test" in dockerfile
+    assert "install -d -o 10001 -g 10001 -m 775 /restore-test" in dockerfile

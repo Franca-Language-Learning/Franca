@@ -117,6 +117,12 @@ def main() -> int:
             )
             started = sh(*compose, "logs", "--no-color", "updater", check=False).stdout
             checks.check("restore-check-not-run" not in started, "the updater starts the one-off container without an error")
+            # The updater writes a failure answer through the folder's group, and the backup removes it afterwards.
+            probe = sh(*compose, "exec", "-T", "updater", "sh", "-c", "touch /restore-test/probe && rm /restore-test/probe", check=False)
+            checks.check(probe.returncode == 0, "the updater can create and remove a file in the restore-test volume")
+            sh(*compose, "exec", "-T", "updater", "touch", "/restore-test/probe", check=False)
+            removed = in_backup_shell("rm /restore-test/probe")
+            checks.check(removed.returncode == 0, "the backup can remove a file that the updater wrote there")
             left = in_backup_shell("ls -A /restore-test")
             checks.check(left.returncode == 0 and not left.stdout.strip(), "the restored copy is removed after the app check")
             without_updates = sh(
