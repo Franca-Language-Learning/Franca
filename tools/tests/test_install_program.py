@@ -304,10 +304,23 @@ class Waits:
         (GITHUB, http.client.IncompleteRead(b""), "connection error"),
         (GITHUB, TimeoutError("timed out"), "timeout"),
         (GITHUB, urllib.error.URLError(TimeoutError("timed out")), "timeout"),
+        (GALLERY, http_error("https://storage.example.org/packages/pester.5.7.1.nupkg", 403), "HTTP 403"),
     ],
-    ids=["gallery 403", "gallery cdn 403", "429", "500", "503", "refused", "reset", "cut off", "timeout", "timeout in urlopen"],
+    ids=[
+        "gallery 403",
+        "gallery cdn 403",
+        "429",
+        "500",
+        "503",
+        "refused",
+        "reset",
+        "cut off",
+        "timeout",
+        "timeout in urlopen",
+        "403 after a redirect from the gallery",
+    ],
 )
-def test_a_download_that_fails_for_a_passing_reason_is_tried_again(
+def test_a_download_that_fails_for_a_temporary_reason_is_tried_again(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], url: str, error: BaseException, reason: str
 ) -> None:
     opener = FlakyOpener(error)
@@ -333,8 +346,25 @@ def test_a_download_is_tried_three_times_with_waits_of_5_and_15_seconds(
     assert opener.calls == 3
     assert waits.seconds == [5, 15]
     lines = capsys.readouterr().err.splitlines()
-    assert ["attempt 2 of 3" in lines[0], "attempt 3 of 3" in lines[1]] == [True, True]
     assert len(lines) == 2
+    assert "attempt 2 of 3" in lines[0]
+    assert "attempt 3 of 3" in lines[1]
+
+
+def test_the_response_of_a_failed_try_is_closed_before_the_next_try(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = io.BytesIO(b"refused")
+    error = urllib.error.HTTPError(GALLERY, 503, "unavailable", http.client.HTTPMessage(), body)
+    closed_at_next_try: list[bool] = []
+
+    class Opener(FlakyOpener):
+        def open(self, url: str, timeout: float) -> FakeResponse:
+            if self.calls:
+                closed_at_next_try.append(body.closed)
+            return super().open(url, timeout)
+
+    monkeypatch.setattr(ip, "OPENER", Opener(error))
+    assert ip.download(GALLERY, sleep=Waits()) == b"file"
+    assert closed_at_next_try == [True]
 
 
 @pytest.mark.parametrize(
@@ -371,12 +401,18 @@ def test_a_download_larger_than_the_limit_is_not_tried_again(monkeypatch: pytest
     assert (opener.calls, waits.seconds) == (1, [])
 
 
-def test_a_download_with_another_hash_is_not_tried_again(tmp_path: Path) -> None:
+def test_a_download_with_another_hash_is_not_tried_again(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (program,) = ip.read_programs(programs_file(tmp_path, sha256="0" * 64)).values()
-    downloads = Downloads()
+    opener = FlakyOpener()
+    monkeypatch.setattr(ip, "OPENER", opener)
+    waits = Waits()
     with pytest.raises(ip.HashMismatch):
-        ip.install(program, tmp_path / "cache", fetch=downloads)
-    assert len(downloads.addresses) == 1
+        ip.install(program, tmp_path / "cache", fetch=lambda url: ip.download(url, sleep=waits))
+    assert (opener.calls, waits.seconds) == (1, [])
+
+
+def test_a_temporary_failure_is_an_install_error() -> None:
+    assert issubclass(ip.TemporaryFailure, ip.InstallError)
 
 
 # --- PowerShell modules (.nupkg files are zip files)

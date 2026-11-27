@@ -55,7 +55,7 @@ Franca's own images are named by digest in the release file, which is read by th
 
 Renovate reads the hash of a program from GitHub by finding the release file that has the current hash, and writes the hash of the same file in the new release. This is done with Renovate's `github-release-attachments` datasource, which has release dates, so the seven-day rule applies.
 
-A download by `tools/install_program.py` that fails with a connection error, a timeout, HTTP 429 or HTTP 5xx is tried again after 5 seconds and again after 15 seconds. HTTP 403 from the PowerShell Gallery (`www.powershellgallery.com` and `cdn.powershellgallery.com`) is tried again in the same way, because the gallery has refused a request once and accepted it on the next run. Each new try is written as one line in the job's log, with the address, the reason and the number of the try. Other HTTP errors, and a download with another hash, fail at once.
+A download by `tools/install_program.py` that fails with a connection error, a timeout, HTTP 429 or HTTP 5xx is tried again after 5 seconds and again after 15 seconds. HTTP 403 for an address on the PowerShell Gallery (`www.powershellgallery.com` or `cdn.powershellgallery.com`), before or after redirects, is tried again in the same way, because the gallery has refused a request once and accepted it on the next run. Before a new try, a line with the address, the reason and the number of the try is written to standard error, which is the job's log in the pipeline. Other HTTP errors, and a download with another hash, fail at once.
 
 ### Updates to the pinned programs are reviewed
 

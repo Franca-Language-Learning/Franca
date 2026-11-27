@@ -18,9 +18,10 @@ are for the platform on the platform line of tools/programs.txt, and on another 
 Only the Python standard library is needed.
 
 A download that fails with a connection error, a timeout, HTTP 429 or HTTP 5xx is tried up to three times, with waits
-of 5 and 15 seconds. HTTP 403 from the PowerShell Gallery is tried again in the same way, because the gallery has
-refused a request once and accepted it on the next run. A line on standard error gives the address, the reason and the
-number of each new try. Other HTTP errors fail at once, and a download with another hash is not tried again.
+of 5 and 15 seconds. HTTP 403 for an address on the PowerShell Gallery, before or after redirects, is tried again in the
+same way, because the gallery has refused a request once and accepted it on the next run. Before a new try, a line with
+the address, the reason and the number of the try is written to standard error. Other HTTP errors fail at once, and a
+download with another hash is not tried again.
 
 Exit codes: 0 when the program is ready, 3 when the download has another hash, 4 when this computer is not on the
 platform of the file, and 1 for other problems, such as no network.
@@ -139,8 +140,8 @@ class HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
 OPENER = urllib.request.build_opener(HttpsOnlyRedirects)
 
 
-class PassingFailure(InstallError):
-    """A download failed for a reason that can pass, such as a timeout or a server error, so it is tried again."""
+class TemporaryFailure(InstallError):
+    """A download failed for a reason that may be gone on the next try, such as a timeout or a server error."""
 
     def __init__(self, url: str, reason: str) -> None:
         super().__init__(f"{url} could not be downloaded: {reason}")
@@ -148,18 +149,24 @@ class PassingFailure(InstallError):
 
 
 def _failure(url: str, error: BaseException) -> InstallError:
-    """The error to raise for a failed download: a PassingFailure when the download is worth trying again."""
+    """The error to raise for a failed download: a TemporaryFailure when the download is worth trying again.
+
+    A 403 is retried when the address asked for or the address that answered is on the PowerShell Gallery, because the
+    gallery can redirect a package download to storage on another host.
+    """
     if isinstance(error, urllib.error.HTTPError):
+        # The error holds the open response, which is closed here so that it is not left open during the next try.
+        error.close()
         hosts = {urllib.parse.urlsplit(address).hostname for address in (url, error.geturl() or url)}
         if error.code == 429 or 500 <= error.code < 600 or (error.code == 403 and hosts & POWERSHELL_GALLERY_HOSTS):
-            return PassingFailure(url, f"HTTP {error.code}")
+            return TemporaryFailure(url, f"HTTP {error.code}")
         return InstallError(f"{url} could not be downloaded: HTTP {error.code}")
     cause = error.reason if isinstance(error, urllib.error.URLError) else error
     if isinstance(cause, ssl.SSLCertVerificationError):
         return InstallError(f"{url} could not be downloaded: {cause}")
     if isinstance(cause, TimeoutError):
-        return PassingFailure(url, "timeout")
-    return PassingFailure(url, f"connection error ({cause})")
+        return TemporaryFailure(url, "timeout")
+    return TemporaryFailure(url, f"connection error ({cause})")
 
 
 def _download_once(url: str) -> bytes:
@@ -176,15 +183,15 @@ def _download_once(url: str) -> bytes:
 def download(url: str, sleep: Callable[[float], None] = time.sleep) -> bytes:
     """The file at the address, up to MAX_DOWNLOAD_BYTES. Redirects are followed to https addresses only.
 
-    A download that fails with a connection error, a timeout, HTTP 429, HTTP 5xx, or HTTP 403 from the PowerShell
-    Gallery is tried again after the waits in RETRY_WAITS_SECONDS, with one line on standard error for each new try.
-    Other failures are raised at once.
+    A download that fails with a connection error, a timeout, HTTP 429, HTTP 5xx, or HTTP 403 for an address on the
+    PowerShell Gallery before or after redirects, is tried again after the waits in RETRY_WAITS_SECONDS, with a line on
+    standard error before a new try. Other failures are raised at once.
     """
     attempts = len(RETRY_WAITS_SECONDS) + 1
     for attempt, wait in enumerate(RETRY_WAITS_SECONDS, start=2):
         try:
             return _download_once(url)
-        except PassingFailure as failure:
+        except TemporaryFailure as failure:
             print(
                 f"install_program: {url} failed ({failure.reason}), trying again in {wait} seconds (attempt {attempt} of {attempts})",
                 file=sys.stderr,
