@@ -164,11 +164,12 @@ class StatusFiles:
         os.replace(temporary, self.folder / name)
 
     def read(self, name: str) -> dict[str, str]:
+        """The status last written to the file, or an empty dict when there is none or it is not a JSON object."""
         try:
-            loaded: dict[str, str] = json.loads((self.folder / name).read_text(encoding="utf-8"))
-            return loaded
+            loaded = json.loads((self.folder / name).read_text(encoding="utf-8"))
         except OSError, ValueError:
             return {}
+        return {str(key): str(value) for key, value in loaded.items()} if isinstance(loaded, dict) else {}
 
 
 def database_in_use(path: Path) -> bool:

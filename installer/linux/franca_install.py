@@ -45,6 +45,7 @@ DOCKER_KEY_URL = "https://download.docker.com/linux/debian/gpg"
 DOCKER_KEY_FINGERPRINT = "9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
 PROFILES = "updates,backups,tailnet,monitoring"
 BACKUP_UID = 10001  # the app's user, which the backup container runs as
+UPDATER_UID = 10003  # the updater container's user, which writes .env when it installs a release
 DISK_MARKER = ".franca-backup-disk"
 NTFY_URL = "https://ntfy.sh"
 # The same patterns as the status container's start script (infra/status/entrypoint.sh).
@@ -350,9 +351,8 @@ def install(
     shown = write_secrets(bundle / "secrets", answers)
     prepare_backup_folder(answers.backup_dir)
     write_env(bundle, release, answers, tailscale_name=None, project=project)
-    # The updater (user 10003) writes .env when it installs a release.
-    os.lchown(bundle, 10003, 10003)
-    os.lchown(bundle / ".env", 10003, 10003)
+    os.lchown(bundle, UPDATER_UID, UPDATER_UID)
+    os.lchown(bundle / ".env", UPDATER_UID, UPDATER_UID)
     name = start_bundle(bundle, release, answers, run)
     topic = (bundle / "secrets" / "ntfy_topic").read_text(encoding="utf-8")
     send_test_alert(topic, post, ntfy_url)
