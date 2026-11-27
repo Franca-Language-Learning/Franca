@@ -50,6 +50,18 @@ The folders where icons and documentation screenshots may be kept are listed in 
 
 Take the file out of the commit with `git restore --staged <file>` and move it to `franca-content`. If the guard is wrong about a file, ask for a review before changing the guard.
 
+## Interaction limit on the public repository
+
+Only collaborators can open issues or pull requests, or comment, in this repository. This is an interaction limit in the settings of the organisation `Franca-Language-Learning`, and it applies to the organisation's public repositories. GitHub allows six months at most, so the limit runs out and has to be renewed by hand. The limit that is on now runs out on 27 May 2027. There is a reminder for the owner before that date.
+
+To renew the limit:
+
+1. Sign in to GitHub with an account that is an owner of the organisation `Franca-Language-Learning`.
+2. Open the organisation's page and click **Settings**. In the menu on the left, under **Moderation**, click **Interaction limits**.
+3. In the list **Enable interaction limits for**, choose **6 months**.
+4. Next to **Limit to repository collaborators**, click **Enable**. If the button says **Disable**, the old limit is still on. Click **Disable**, choose **6 months** again, and click **Enable**.
+5. Check the end date that GitHub shows on the page, and make a reminder for a week before it.
+
 ## If course material was pushed by mistake
 
 1. Tell the product owner straight away.

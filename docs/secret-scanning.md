@@ -11,6 +11,8 @@ The history of the checked-out commit is scanned with [gitleaks](https://github.
 | Pipeline, workflow "Secret scan" | Pull requests, the merge queue, pushes to `main`, and a weekly run on Monday | `scripts/check secrets` |
 | A developer's computer | With the other checks, or on its own | `scripts/check` or `scripts/check secrets` |
 
+Merge commits are scanned too. For a merge with two parents, the part that the person who merged wrote is scanned, for example the way a merge conflict was resolved. In git's terms, this is the difference between git's own merge of the two parents and the merge commit (`git log --diff-merges=remerge`). The changes from the merged branch are scanned in that branch's commits, so they are not scanned again under the merge commit, and a finding that is listed in `.gitleaksignore` does not come back with the merge commit's fingerprint. A merge with more than two parents (an octopus merge) has no such view in git, so it is scanned as the difference from each parent.
+
 gitleaks is downloaded from its release page by `tools/install_program.py` and kept only when its SHA-256 matches the one in `tools/programs.txt`. Renovate updates the version and the hash on the same line, seven days after a release. The download is kept in `~/.cache/franca/programs`, so the scan needs no network after the first run.
 
 The file is for Linux on x86-64. On another computer nothing is downloaded, the scan is left to the pipeline, and `scripts/check` shows a message about this. The same message is shown when gitleaks cannot be downloaded, for example with no network. A download with another SHA-256 fails the check, on a computer and in the pipeline.
