@@ -18,14 +18,14 @@ The rehearsal:
 """
 
 import os
-import socket
 import subprocess
 import sys
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+from rehearsal import ROOT, Checks, build_image, copy_compose_file, free_port, sh, tear_down, write_secrets
+
 sys.path.insert(0, str(ROOT / "infra" / "updater"))
 
 import franca_updater as fu  # noqa: E402
@@ -39,43 +39,17 @@ def app_image(version: str) -> str:
     return f"franca/app:rehearsal-{version}"
 
 
-def sh(*command: str, stdin: str | None = None) -> str:
-    result = subprocess.run(command, input=stdin, capture_output=True, text=True, check=False)  # noqa: S603
-    if result.returncode != 0:
-        print(result.stdout[-3000:], result.stderr[-3000:], sep="\n")
-        raise SystemExit(f"Command failed: {' '.join(command[:6])}")
-    return result.stdout
-
-
 def build_images() -> None:
     for version in ("1.0.0", "1.1.0"):
-        sh(
-            "docker",
-            "build",
-            "--quiet",
-            "-f",
-            "infra/images/app.Dockerfile",
-            "--build-arg",
-            f"FRANCA_VERSION={version}",
-            "-t",
-            app_image(version),
-            ".",
-        )
-    sh("docker", "build", "--quiet", "-f", "infra/images/caddy.Dockerfile", "-t", CADDY, ".")
+        build_image("app", app_image(version), version)
+    build_image("caddy", CADDY)
     # Version 1.2.0 changes the schema and the data, and then stops, as a broken release might.
     broken = f"""FROM {app_image("1.1.0")}
 ENV FRANCA_VERSION=1.2.0
 CMD ["python", "-c", "import sqlite3, sys; c = sqlite3.connect('/data/franca.db'); c.execute('ALTER TABLE rehearsal ADD COLUMN added_by_120 TEXT'); c.execute(\\"INSERT INTO rehearsal (note) VALUES ('written by 1.2.0')\\"); c.commit(); sys.exit(1)"]
 """
     sh("docker", "build", "--quiet", "-t", app_image("1.2.0"), "-", stdin=broken)
-    sh("docker", "build", "--quiet", "-f", "infra/images/updater.Dockerfile", "-t", UPDATER, ".")
-
-
-def free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port: int = probe.getsockname()[1]
-        return port
+    build_image("updater", UPDATER)
 
 
 class LocalCompose(fu.Compose):
@@ -124,31 +98,17 @@ def add_row(compose: fu.Compose, note: str) -> None:
     compose.run_in_app(script)
 
 
-def check(condition: bool, message: str, failures: list[str]) -> None:
-    print(("ok:   " if condition else "FAIL: ") + message, flush=True)
-    if not condition:
-        failures.append(message)
-
-
 def main() -> int:
     os.chdir(ROOT)
     build_images()
-    failures: list[str] = []
+    checks = Checks()
     with tempfile.TemporaryDirectory() as folder:
         bundle = Path(folder)
         # The updater's container runs as user 10003 and reads the bundle folder.
         bundle.chmod(0o755)
-        (bundle / "compose.yaml").write_text((ROOT / "infra" / "compose.yaml").read_text(encoding="utf-8"), encoding="utf-8")
-        key_folder = bundle / "secrets"
-        key_folder.mkdir()
-        (key_folder / "google_client_secret").write_text("", encoding="utf-8")
-        (key_folder / "session_secret").write_text(os.urandom(32).hex(), encoding="utf-8")
-        (key_folder / "backup_password").write_text(os.urandom(32).hex(), encoding="utf-8")
-        (key_folder / "tailscale_authkey").write_text("", encoding="utf-8")  # the tailnet profile is not used here
-        (key_folder / "ntfy_topic").write_text("", encoding="utf-8")  # the monitoring profile is not used here
-        (key_folder / "status_push_token").write_text("", encoding="utf-8")  # so nothing is reported
-        for secret in key_folder.iterdir():
-            secret.chmod(0o644)
+        copy_compose_file(bundle)
+        # The tailnet and monitoring profiles are not used here, and with no push token nothing is reported.
+        key_folder = write_secrets(bundle / "secrets")
         port = free_port()
         env = fu.EnvFile(bundle / ".env")
         env.write(
@@ -184,41 +144,32 @@ def main() -> int:
             add_row(compose, "written by 1.0.0")
             probe = fu.health_probe(f"http://127.0.0.1:{port}/api/v1/health")
 
-            check(run_updater("1.1.0") == "installed", "1.1.0 is installed", failures)
-            check(probe() == "1.1.0", "the health check answers with 1.1.0", failures)
-            check(rows(compose) == ["written by 1.0.0"], "the data written by 1.0.0 is kept", failures)
+            checks.check(run_updater("1.1.0") == "installed", "1.1.0 is installed")
+            checks.check(probe() == "1.1.0", "the health check answers with 1.1.0")
+            checks.check(rows(compose) == ["written by 1.0.0"], "the data written by 1.0.0 is kept")
             add_row(compose, "written by 1.1.0")
 
-            check(run_updater("1.2.0") == "rolled-back", "1.2.0 does not start and is rolled back", failures)
-            check(probe() == "1.1.0", "after the rollback, the health check answers with 1.1.0", failures)
-            check(
+            checks.check(run_updater("1.2.0") == "rolled-back", "1.2.0 does not start and is rolled back")
+            checks.check(probe() == "1.1.0", "after the rollback, the health check answers with 1.1.0")
+            checks.check(
                 rows(compose) == ["written by 1.0.0", "written by 1.1.0"],
                 "the database is as it was before 1.2.0: the row written by 1.2.0 is gone",
-                failures,
             )
-            check(columns(compose) == ["note"], "the column added by 1.2.0 is gone", failures)
-            check(env.read()["FRANCA_APP_IMAGE"] == app_image("1.1.0"), ".env names the 1.1.0 image again", failures)
+            checks.check(columns(compose) == ["note"], "the column added by 1.2.0 is gone")
+            checks.check(env.read()["FRANCA_APP_IMAGE"] == app_image("1.1.0"), ".env names the 1.1.0 image again")
 
-            check(run_updater("1.0.0") == "up-to-date", "the older 1.0.0 is not installed", failures)
-            check(probe() == "1.1.0", "1.1.0 is still running", failures)
+            checks.check(run_updater("1.0.0") == "up-to-date", "the older 1.0.0 is not installed")
+            checks.check(probe() == "1.1.0", "1.1.0 is still running")
 
             sh(*compose._compose("--profile", "updates", "up", "--detach", "--no-build", "socket-proxy"))
             listed = through_proxy(compose, 'docker compose --project-directory "$FRANCA_BUNDLE_DIR" ps --quiet app')
-            check(
-                listed.returncode == 0 and bool(listed.stdout.strip()), "the updater lists the app's container through the proxy", failures
-            )
+            checks.check(listed.returncode == 0 and bool(listed.stdout.strip()), "the updater lists the app's container through the proxy")
             app_id = listed.stdout.strip().splitlines()[-1] if listed.stdout.strip() else "none"
             refused = through_proxy(compose, f"docker exec {app_id} true")
-            check(refused.returncode != 0, "the proxy blocks docker exec", failures)
+            checks.check(refused.returncode != 0, "the proxy blocks docker exec")
         finally:
-            if failures:
-                print(sh(*compose._compose("logs", "--no-color", "--tail", "60")))
-            subprocess.run(compose._compose("down", "--volumes", "--remove-orphans"), capture_output=True, check=False)  # noqa: S603
-    if failures:
-        print(f"\nThe rehearsal failed: {len(failures)} check(s).")
-        return 1
-    print("\nThe rehearsal passed.")
-    return 0
+            tear_down(compose._compose(), show_logs=bool(checks.failures))
+    return checks.exit_code()
 
 
 if __name__ == "__main__":
