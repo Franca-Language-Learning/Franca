@@ -50,6 +50,24 @@ The folders where icons and documentation screenshots may be kept are listed in 
 
 Take the file out of the commit with `git restore --staged <file>` and move it to `franca-content`. If the guard is wrong about a file, ask for a review before changing the guard.
 
+## Interaction limit on the organisation's public repositories
+
+Only members of the organisation and people with write access to this repository can take part in its issues and pull requests. This is an interaction limit in the settings of the organisation `Franca-Language-Learning`, and it applies to the organisation's public repositories. The longest limit on GitHub is six months, so the limit runs out and has to be renewed by hand. The limit that is on now runs out on 27 May 2027 at 07:27 UTC. A reminder from a scheduled task in Claude is due in May 2027.
+
+To renew the limit:
+
+1. Sign in to GitHub with an account that is an owner of the organisation `Franca-Language-Learning`.
+2. Open the organisation's page and click **Settings**. In the menu on the left, under **Access**, click **Moderation** and then **Interaction limits**.
+3. Under **Temporary interaction limits**, find **Limit to repository collaborators**.
+4. To the right of it, open the **Enable** list and click **6 months**. If there is a **Disable** button in place of **Enable**, the old limit is still on. Click **Disable**, then open the **Enable** list and click **6 months**.
+5. Check the end date that GitHub shows on the page. Change the date in this section to the new one, and make a reminder for a week before it.
+
+Someone who uses the GitHub command line and is an owner can renew the limit with one command instead, with no gap between the old limit and the new one:
+
+```sh
+gh api --method PUT orgs/Franca-Language-Learning/interaction-limits -f limit=collaborators_only -f expiry=six_months
+```
+
 ## If course material was pushed by mistake
 
 1. Tell the product owner straight away.
