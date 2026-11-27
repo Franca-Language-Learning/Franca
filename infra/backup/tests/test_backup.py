@@ -29,6 +29,13 @@ def make_database(path: Path, rows: int = 1) -> None:
         connection.executemany("INSERT INTO notes VALUES (?)", [(f"note {n}",) for n in range(rows)])
 
 
+def count_notes(path: Path) -> int:
+    """The number of rows in the notes table of a database file. The connection is closed afterwards."""
+    with closing(sqlite3.connect(path)) as connection:
+        found: int = connection.execute("SELECT count(*) FROM notes").fetchone()[0]
+        return found
+
+
 class FakeRestic:
     """Answers restic commands. A restore copies what the last backup saw."""
 
@@ -101,7 +108,7 @@ def test_the_first_backup_makes_the_repository_then_backs_up_a_checked_copy(tmp_
     assert backup.back_up(NOW) == "backed-up"
 
     assert verbs(restic) == ["cat", "init", "backup", "forget"]
-    assert sqlite3.connect(restic.store / "franca.db").execute("SELECT count(*) FROM notes").fetchone() == (1,)
+    assert count_notes(restic.store / "franca.db") == 1
     assert status(tmp_path, "backup.json")["result"] == "backed-up"
     assert status(tmp_path, "backup.json")["snapshot"] == "abc123"
 
@@ -130,8 +137,7 @@ def test_the_copy_is_taken_with_sqlites_backup_so_recent_changes_in_the_wal_are_
 
     backup.back_up(NOW)
 
-    copied = sqlite3.connect(restic.store / "franca.db").execute("SELECT count(*) FROM notes").fetchone()
-    assert copied == (2,)
+    assert count_notes(restic.store / "franca.db") == 2
     live.close()
 
 
@@ -218,11 +224,10 @@ def test_restoring_the_latest_backup_puts_it_in_place_and_keeps_the_current_data
 
     assert backup.restore_latest(NOW) == "restored"
 
-    restored = sqlite3.connect(tmp_path / "data" / "franca.db").execute("SELECT count(*) FROM notes").fetchone()
-    assert restored == (1,)
+    assert count_notes(tmp_path / "data" / "franca.db") == 1
     kept = list((tmp_path / "data").glob("franca-before-restore-*.db"))
     assert len(kept) == 1
-    assert sqlite3.connect(kept[0]).execute("SELECT count(*) FROM notes").fetchone() == (0,)
+    assert count_notes(kept[0]) == 0
 
 
 def test_restoring_is_refused_while_the_app_is_running(tmp_path: Path) -> None:
@@ -514,3 +519,19 @@ def test_a_database_that_goes_missing_after_a_backup_is_a_failure(tmp_path: Path
     (tmp_path / "data" / "franca.db").unlink()
 
     assert backup.back_up(NOW) == "backup-failed"
+
+
+@pytest.mark.parametrize("text", ["[]", '"backed-up"', "null", "{not json"])
+def test_a_status_file_that_is_not_a_json_object_counts_as_no_status(tmp_path: Path, text: str) -> None:
+    status = fb.StatusFiles(tmp_path)
+    (tmp_path / "backup.json").write_text(text, encoding="utf-8")
+
+    assert status.read("backup.json") == {}
+
+
+def test_the_health_check_reads_a_damaged_status_file_as_no_backup_yet(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    backup.status.folder.mkdir(parents=True, exist_ok=True)
+    (backup.status.folder / "backup.json").write_text('"backed-up"', encoding="utf-8")
+
+    assert backup.healthy(NOW)
