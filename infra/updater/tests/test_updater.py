@@ -3,6 +3,7 @@
 The rehearsal against real containers is infra/tests/rehearse-update.sh.
 """
 
+import http.client
 import json
 import ssl
 import subprocess
@@ -803,8 +804,63 @@ def test_the_service_checks_the_proxy_each_minute_reports_its_state_each_hour_an
     assert service.wake == NOW + timedelta(days=1)
 
 
-def test_the_service_sleeps_a_minute_at_most() -> None:
-    assert fu.CHECK_EVERY == 60
+@pytest.mark.parametrize(("wake_in", "sleep"), [(timedelta(hours=5), 60.0), (timedelta(seconds=30), 30.0), (-timedelta(minutes=1), 1.0)])
+def test_the_service_sleeps_a_minute_at_most_and_wakes_for_the_update(tmp_path: Path, wake_in: timedelta, sleep: float) -> None:
+    updater, _log, _verifier = make(tmp_path, NEW)
+    service = fu.Service(updater, "02:30", wake=NOW + wake_in)
+
+    assert service.seconds_to_sleep(NOW) == sleep
+
+
+def test_a_garbled_answer_from_the_proxy_is_a_problem_and_not_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def garbled(url: str, timeout: float) -> FakeResponse:
+        raise http.client.BadStatusLine("garbage")
+
+    monkeypatch.setattr(urllib.request, "urlopen", garbled)
+
+    problem = fu.docker_api_probe("tcp://socket-proxy:2375")()
+
+    assert problem is not None
+    assert "garbage" in problem
+
+
+def test_an_error_in_the_proxy_check_does_not_stop_the_nightly_update(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    updater, _log, _verifier = make(tmp_path, NEW)
+    monitor = FakeMonitor()
+    updater.monitor = monitor
+
+    def broken() -> str | None:
+        raise http.client.BadStatusLine("garbage")
+
+    updater.docker_api = broken
+    service = fu.Service(updater, "02:30", wake=NOW)
+
+    service.tick(NOW)
+
+    assert status(tmp_path)["result"] == "installed"
+    printed = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
+    assert {"result": "error", "step": "socket proxy check"} == {k: v for k, v in printed[0].items() if k != "message"}
+
+
+def test_an_error_in_the_nightly_update_does_not_stop_the_proxy_check_at_the_next_tick(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    updater, _log, _verifier = make(tmp_path, NEW)
+    monitor = FakeMonitor()
+    updater.monitor = monitor
+    updater.docker_api = lambda: None
+
+    def broken(_self: fu.Updater, now: datetime) -> str:
+        raise RuntimeError("the status volume is full")
+
+    monkeypatch.setattr(fu.Updater, "run_once", broken)
+    service = fu.Service(updater, "02:30", wake=NOW)
+
+    service.tick(NOW)
+    service.tick(NOW + timedelta(minutes=1))
+
+    assert [key for key, _success, _message in monitor.reports].count("franca_socket-proxy") == 2
+    assert service.wake == NOW + timedelta(days=1)
 
 
 class FlakyOpener:

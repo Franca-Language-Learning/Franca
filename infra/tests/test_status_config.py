@@ -72,8 +72,9 @@ def test_the_sign_in_page_is_checked_through_the_web_server_every_minute(gatus: 
     assert page["url"] == "http://caddy:8080/sign-in"
     assert page["interval"] == "1m"
     assert "[STATUS] == 200" in page["conditions"]
-    # The client's page, not an error page from Caddy.
+    # The client's page with its built script, not an error page from Caddy.
     assert '[BODY] == pat(*<div id="root">*)' in page["conditions"]
+    assert "[BODY] == pat(*/assets/*.js*)" in page["conditions"]
     assert [alert["type"] for alert in page["alerts"]] == ["ntfy"]
 
 
