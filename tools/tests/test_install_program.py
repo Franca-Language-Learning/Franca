@@ -12,6 +12,7 @@ import importlib.util
 import io
 import json
 import re
+import ssl
 import sys
 import tarfile
 import urllib.request
@@ -256,6 +257,126 @@ def test_a_redirect_to_an_address_that_is_not_https_is_refused() -> None:
     with pytest.raises(ip.InstallError, match="not https"):
         handler.redirect_request(request, io.BytesIO(), 302, "Found", http.client.HTTPMessage(), "http://example.org/a")
     assert handler.redirect_request(request, io.BytesIO(), 302, "Found", http.client.HTTPMessage(), "https://example.org/a") is not None
+
+
+# --- Trying a download again
+
+GALLERY = "https://www.powershellgallery.com/api/v2/package/Pester/5.7.1"
+GITHUB = "https://github.com/example/tool/releases/download/v1.2.3/tool_1.2.3_linux_x64.tar.gz"
+
+
+def http_error(url: str, code: int) -> urllib.error.HTTPError:
+    return urllib.error.HTTPError(url, code, "refused", http.client.HTTPMessage(), None)
+
+
+class FlakyOpener:
+    """Raises the errors in turn, then returns the file. Each call of open is recorded."""
+
+    def __init__(self, *errors: BaseException) -> None:
+        self.errors = list(errors)
+        self.calls = 0
+
+    def open(self, url: str, timeout: float) -> FakeResponse:
+        self.calls += 1
+        if self.errors:
+            raise self.errors.pop(0)
+        return FakeResponse(b"file")
+
+
+class Waits:
+    def __init__(self) -> None:
+        self.seconds: list[float] = []
+
+    def __call__(self, seconds: float) -> None:
+        self.seconds.append(seconds)
+
+
+@pytest.mark.parametrize(
+    ("url", "error", "reason"),
+    [
+        (GALLERY, http_error(GALLERY, 403), "HTTP 403"),
+        (GALLERY, http_error("https://cdn.powershellgallery.com/packages/pester.5.7.1.nupkg", 403), "HTTP 403"),
+        (GITHUB, http_error(GITHUB, 429), "HTTP 429"),
+        (GITHUB, http_error(GITHUB, 500), "HTTP 500"),
+        (GITHUB, http_error(GITHUB, 503), "HTTP 503"),
+        (GITHUB, urllib.error.URLError(ConnectionRefusedError("refused")), "connection error"),
+        (GITHUB, ConnectionResetError("reset"), "connection error"),
+        (GITHUB, http.client.IncompleteRead(b""), "connection error"),
+        (GITHUB, TimeoutError("timed out"), "timeout"),
+        (GITHUB, urllib.error.URLError(TimeoutError("timed out")), "timeout"),
+    ],
+    ids=["gallery 403", "gallery cdn 403", "429", "500", "503", "refused", "reset", "cut off", "timeout", "timeout in urlopen"],
+)
+def test_a_download_that_fails_for_a_passing_reason_is_tried_again(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], url: str, error: BaseException, reason: str
+) -> None:
+    opener = FlakyOpener(error)
+    monkeypatch.setattr(ip, "OPENER", opener)
+    waits = Waits()
+    assert ip.download(url, sleep=waits) == b"file"
+    assert opener.calls == 2
+    assert waits.seconds == [5]
+    (line,) = capsys.readouterr().err.splitlines()
+    assert url in line
+    assert reason in line
+    assert "attempt 2 of 3" in line
+
+
+def test_a_download_is_tried_three_times_with_waits_of_5_and_15_seconds(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    opener = FlakyOpener(http_error(GALLERY, 403), http_error(GALLERY, 403), http_error(GALLERY, 403))
+    monkeypatch.setattr(ip, "OPENER", opener)
+    waits = Waits()
+    with pytest.raises(ip.InstallError, match="HTTP 403"):
+        ip.download(GALLERY, sleep=waits)
+    assert opener.calls == 3
+    assert waits.seconds == [5, 15]
+    lines = capsys.readouterr().err.splitlines()
+    assert ["attempt 2 of 3" in lines[0], "attempt 3 of 3" in lines[1]] == [True, True]
+    assert len(lines) == 2
+
+
+@pytest.mark.parametrize(
+    ("url", "error"),
+    [
+        (GITHUB, http_error(GITHUB, 403)),
+        (GITHUB, http_error(GITHUB, 404)),
+        (GALLERY, http_error(GALLERY, 404)),
+        (GITHUB, urllib.error.URLError(ssl.SSLCertVerificationError("certificate verify failed"))),
+        (GITHUB, ip.InstallError("https://github.com/a was redirected to an address that is not https: http://example.org/a")),
+    ],
+    ids=["403 from another host", "404", "gallery 404", "certificate", "redirect to http"],
+)
+def test_other_failures_are_not_tried_again(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], url: str, error: BaseException
+) -> None:
+    opener = FlakyOpener(error)
+    monkeypatch.setattr(ip, "OPENER", opener)
+    waits = Waits()
+    with pytest.raises(ip.InstallError):
+        ip.download(url, sleep=waits)
+    assert opener.calls == 1
+    assert waits.seconds == []
+    assert capsys.readouterr().err == ""
+
+
+def test_a_download_larger_than_the_limit_is_not_tried_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ip, "MAX_DOWNLOAD_BYTES", 2)
+    opener = FlakyOpener()
+    monkeypatch.setattr(ip, "OPENER", opener)
+    waits = Waits()
+    with pytest.raises(ip.InstallError, match="larger than"):
+        ip.download(GITHUB, sleep=waits)
+    assert (opener.calls, waits.seconds) == (1, [])
+
+
+def test_a_download_with_another_hash_is_not_tried_again(tmp_path: Path) -> None:
+    (program,) = ip.read_programs(programs_file(tmp_path, sha256="0" * 64)).values()
+    downloads = Downloads()
+    with pytest.raises(ip.HashMismatch):
+        ip.install(program, tmp_path / "cache", fetch=downloads)
+    assert len(downloads.addresses) == 1
 
 
 # --- PowerShell modules (.nupkg files are zip files)

@@ -55,6 +55,8 @@ Franca's own images are named by digest in the release file, which is read by th
 
 Renovate reads the hash of a program from GitHub by finding the release file that has the current hash, and writes the hash of the same file in the new release. This is done with Renovate's `github-release-attachments` datasource, which has release dates, so the seven-day rule applies.
 
+A download by `tools/install_program.py` that fails with a connection error, a timeout, HTTP 429 or HTTP 5xx is tried again after 5 seconds and again after 15 seconds. HTTP 403 from the PowerShell Gallery (`www.powershellgallery.com` and `cdn.powershellgallery.com`) is tried again in the same way, because the gallery has refused a request once and accepted it on the next run. Each new try is written as one line in the job's log, with the address, the reason and the number of the try. Other HTTP errors, and a download with another hash, fail at once.
+
 ### Updates to the pinned programs are reviewed
 
 Grype and Syft run in the release job that signs the images, cosign checks the signatures of Franca's images, and gitleaks, PSScriptAnalyzer and Pester check the code. With a hash pin, a release file that is replaced after it is published is noticed, and a bad release that is still there after seven days is not. For this reason Renovate does not merge updates to these programs. Its pull requests have the label `needs-review` and wait for a person, who reads the release notes and checks that the release comes from the usual publisher before merging. A pull request that changes the hash of a program without changing its version means that a release file was replaced, and is not merged either.
