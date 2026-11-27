@@ -21,7 +21,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 
 from franca import identity
-from franca.api.auth import Db, Me, RecentlySignedIn, SignedIn, session_token, set_session_cookie
+from franca.api.auth import Me
+from franca.api.dependencies import NOT_SIGNED_IN, Db, RecentlySignedIn, SignedIn, session_token, set_session_cookie
 from franca.platform import Settings, utc_now
 
 CHALLENGE_KEY = "passkey_challenge"
@@ -152,7 +153,6 @@ def passkey_router(settings: Settings) -> APIRouter:
     router = APIRouter(tags=["identity"])
     rp = identity.relying_party(settings.public_url)
     store = ChallengeStore()
-    unauthorised: dict[int | str, dict[str, Any]] = {401: {"description": "Not signed in"}}
 
     @router.post(
         "/passkeys/options",
@@ -160,7 +160,7 @@ def passkey_router(settings: Settings) -> APIRouter:
         summary="Options for adding a passkey on this device",
         response_model=PublicKeyOptions,
         responses={
-            **unauthorised,
+            **NOT_SIGNED_IN,
             403: {"description": "The learner signed in more than 15 minutes ago (sign-in-again), or has the most passkeys allowed"},
         },
     )
@@ -179,7 +179,7 @@ def passkey_router(settings: Settings) -> APIRouter:
         status_code=status.HTTP_201_CREATED,
         response_model=PasskeyOut,
         responses={
-            **unauthorised,
+            **NOT_SIGNED_IN,
             400: {"description": "No options were asked for, or the answer failed a check"},
             403: {"description": "The learner signed in more than 15 minutes ago (sign-in-again)"},
         },
@@ -199,7 +199,7 @@ def passkey_router(settings: Settings) -> APIRouter:
         operation_id="listPasskeys",
         summary="The signed-in learner's passkeys",
         response_model=PasskeyList,
-        responses=unauthorised,
+        responses=NOT_SIGNED_IN,
     )
     def passkeys(db: Db, learner: SignedIn) -> PasskeyList:
         return PasskeyList(passkeys=[_out(p) for p in identity.list_passkeys(db, learner)])
@@ -210,7 +210,7 @@ def passkey_router(settings: Settings) -> APIRouter:
         summary="Removes one of the signed-in learner's passkeys",
         status_code=status.HTTP_204_NO_CONTENT,
         response_class=Response,
-        responses={**unauthorised, 404: {"description": "The learner has no passkey with this id"}},
+        responses={**NOT_SIGNED_IN, 404: {"description": "The learner has no passkey with this id"}},
     )
     def remove(passkeyId: str, db: Db, learner: SignedIn) -> Response:  # noqa: N803 - the name in the URL
         try:
@@ -258,6 +258,6 @@ def passkey_router(settings: Settings) -> APIRouter:
         except identity.SignInRefused as refusal:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, refusal.reason) from None
         set_session_cookie(response, settings, token)
-        return Me(displayName=learner.display_name, role=learner.role)
+        return Me.of(learner)
 
     return router

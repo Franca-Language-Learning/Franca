@@ -18,16 +18,13 @@ from typing import Any
 from starlette.requests import cookie_parser
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from franca.api.dependencies import cookie_name
+
 COOKIE = "franca_csrf"
-SECURE_PREFIX = "__Host-"
 HEADER = "x-csrf-token"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 # Values of Sec-Fetch-Site for a request from Franca's own pages, or one the person typed or bookmarked.
 OWN_ORIGIN = frozenset({"same-origin", "none"})
-
-
-def cookie_name(secure: bool) -> str:
-    return SECURE_PREFIX + COOKIE if secure else COOKIE
 
 
 def _cookies(scope: Scope) -> dict[str, str]:
@@ -50,7 +47,7 @@ class AntiForgeryMiddleware:
         self.prefix = prefix
 
     def _set_cookie(self, token: str) -> tuple[bytes, bytes]:
-        parts = [f"{cookie_name(self.secure)}={token}", "Path=/", "SameSite=strict", "Max-Age=31536000"]
+        parts = [f"{cookie_name(COOKIE, self.secure)}={token}", "Path=/", "SameSite=strict", "Max-Age=31536000"]
         if self.secure:
             parts.append("Secure")
         return b"set-cookie", "; ".join(parts).encode("latin-1")
@@ -66,7 +63,7 @@ class AntiForgeryMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        token = _cookies(scope).get(cookie_name(self.secure))
+        token = _cookies(scope).get(cookie_name(COOKIE, self.secure))
         gives_cookie = str(scope.get("path", "")).startswith(self.prefix)
         new_token = None if token or not gives_cookie else secrets.token_urlsafe(32)
         if scope["method"] not in SAFE_METHODS:

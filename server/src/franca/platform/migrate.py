@@ -1,7 +1,8 @@
 """Upgrades the database to the newest schema:  python -m franca.platform.migrate
 
-The database is the file named in FRANCA_DATABASE_PATH. From story E01-007 the updater will run this after taking a
-snapshot.
+The database is the file named in FRANCA_DATABASE_PATH. This is run each time the app container starts, before the
+service starts. When the updater installs a release, it takes a snapshot of the database first, so the database can be put
+back if the new release does not start (infra/updater/franca_updater.py).
 """
 
 from franca.platform.db import upgrade

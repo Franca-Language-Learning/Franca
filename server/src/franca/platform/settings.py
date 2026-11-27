@@ -7,6 +7,7 @@ secret itself can be given in the variable without _FILE.
 
 import os
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,15 +36,15 @@ class Settings:
         return self.public_url.startswith("https://")
 
 
-def _secret(env: os._Environ[str] | dict[str, str], name: str) -> str | None:
+def _secret(env: Mapping[str, str], name: str) -> str | None:
     file = env.get(f"{name}_FILE")
     if file:
         return Path(file).read_text(encoding="utf-8").strip() or None
     return env.get(name) or None
 
 
-def load_settings(environ: dict[str, str] | None = None) -> Settings:
-    env = os.environ if environ is None else environ
+def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
+    env: Mapping[str, str] = os.environ if environ is None else environ
     client_id = env.get("FRANCA_GOOGLE_CLIENT_ID")
     client_secret = _secret(env, "FRANCA_GOOGLE_CLIENT_SECRET")
     return Settings(
