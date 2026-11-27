@@ -28,7 +28,7 @@ The content guard, `tools/content_guard.py`, is run by both Git hooks (before a 
 
 Submodules are refused, because their address would be public. The push and pipeline checks also look at commit and tag messages for the marker, secrets and copied lines, and at files or folders that a tag points to directly.
 
-A leak is prevented by the pre-push hook. The pipeline runs the same check on every branch and tag, but only after the push, when the file is already public. Do not skip the hooks with `--no-verify`. The hooks are installed by `scripts/setup`.
+A leak is prevented by the pre-push hook. The pipeline runs the same check on every branch and tag, but only after the push, when the file is already public. A pushed branch or tag is checked over its own history. GitHub sends no push event for some pushes, such as more than three tags at once, so a weekly run checks every branch and tag as well. Do not skip the hooks with `--no-verify`. The hooks are installed by `scripts/setup`.
 
 When the repository is created, the product owner turns on secret scanning with push protection in its GitHub settings, as a second check for secrets.
 
