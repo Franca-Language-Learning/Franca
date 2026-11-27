@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from conftest import FrancaTestClient
 from franca import identity
-from franca.api import create_app
+from franca.api import create_app, recovery
 from franca.platform import db, load_settings, utc_now
 
 ORIGIN = "https://franca.example.ts.net"
@@ -113,3 +113,20 @@ def test_a_sign_in_that_is_not_sent_as_json_is_refused(client: TestClient) -> No
         "/api/v1/auth/recovery-code", content=b'{"email": "a@example.org", "code": "AAAAA-AAAAA"}', headers={"content-type": "text/plain"}
     )
     assert response.status_code == 415
+
+
+def test_tries_older_than_the_window_are_forgotten(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Each address that is tried is counted. The counts for old tries are removed, because otherwise they would fill up
+    # memory.
+    clock = [1000.0]
+    monkeypatch.setattr(recovery.time, "monotonic", lambda: clock[0])
+    limiter = recovery.AttemptLimiter(window_seconds=60)
+    for number in range(100):
+        limiter.record(("address", f"someone{number}@example.org"))
+    assert len(limiter) == 100
+
+    clock[0] += 61
+    limiter.record(("address", "new@example.org"))
+
+    assert len(limiter) == 1
+    assert limiter.allow(("address", "someone1@example.org"), limit=1)

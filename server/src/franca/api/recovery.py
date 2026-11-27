@@ -42,8 +42,18 @@ class AttemptLimiter:
             return len(self._recent(key, time.monotonic())) < limit
 
     def record(self, key: tuple[str, str]) -> None:
+        """Counts a wrong try. Keys whose tries are all older than the window are removed here, so a stream of new
+        addresses does not fill up memory."""
+        now = time.monotonic()
         with self._lock:
-            self._tries.setdefault(key, []).append(time.monotonic())
+            for old in [k for k, times in self._tries.items() if times[-1] <= now - self.window]:
+                del self._tries[old]
+            self._tries.setdefault(key, []).append(now)
+
+    def __len__(self) -> int:
+        """The number of computers and addresses with tries in memory."""
+        with self._lock:
+            return len(self._tries)
 
 
 def require_json(request: Request) -> None:

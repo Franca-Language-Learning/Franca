@@ -51,8 +51,16 @@ def check_production(settings: Settings) -> None:
         raise RuntimeError("FRANCA_PUBLIC_URL has to start with https:// unless it names this computer")
 
 
+# The messages of SQLite's errors for a lock that was not freed in time (SQLITE_BUSY and SQLITE_LOCKED).
+BUSY_MESSAGES = ("database is locked", "database is busy", "database table is locked")
+
+
 async def database_busy(request: Request, error: Exception) -> JSONResponse:
-    # SQLite waits up to five seconds for a lock (busy_timeout); after that the request is answered with 503.
+    """SQLite waits up to five seconds for a lock (busy_timeout). After that the request is answered with 503 and a time
+    to try again. Other database errors, such as a full disk, are not solved by trying again, so they are raised
+    again and answered with 500."""
+    if not any(message in str(error).lower() for message in BUSY_MESSAGES):
+        raise error
     return JSONResponse({"detail": "The database is busy. Please try again."}, status_code=503, headers={"Retry-After": "2"})
 
 
