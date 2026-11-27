@@ -1,4 +1,6 @@
-# OpenSSF Scorecard: a weekly score of the repository's security practices, published for the public repository.
+# OpenSSF Scorecard: a weekly score of the repository's security practices. The results are uploaded to code scanning
+# and can be read in the repository's Security tab. They are not published to the OpenSSF public API, because nothing
+# uses the published results and publishing needs the id-token permission, which only the release jobs have (story E01-013).
 name: Scorecard
 
 on:
@@ -17,7 +19,6 @@ jobs:
     permissions:
       contents: read
       security-events: write
-      id-token: write
     steps:
       - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
@@ -29,7 +30,7 @@ jobs:
         with:
           results_file: scorecard.sarif
           results_format: sarif
-          publish_results: true
+          publish_results: false
       - uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: scorecard.sarif
