@@ -1,4 +1,16 @@
 # OSV-Scanner: known vulnerabilities in the locked Python and npm packages, on each change and every day.
+#
+# The jobs osv-scan and osv-scan-main run OSV-Scanner on the lockfiles in the repository (uv.lock and pnpm-lock.yaml
+# today), with Harden-Runner in block mode (story E01-013, re-check finding N2). OSV-Scanner is downloaded from its
+# release page and checked against the SHA-256 in tools/programs.txt, which Renovate updates. The vulnerabilities
+# ignored in an osv-scanner.toml file next to a lockfile are left out by OSV-Scanner. There is no such file yet.
+#
+# On a pull request and in the merge queue, the job fails when there is a known vulnerability rated high or critical
+# with a fixed version, and the other findings are listed in the log. The rule is in tools/check_osv_results.py. On main and on the
+# daily schedule, the results are uploaded to code scanning too, and the same rule applies.
+#
+# The jobs scan-pr and scan-main call Google's reusable workflow, which has no Harden-Runner step. They are removed in
+# a later pull request, after the owner has replaced "scan-pr / osv-scan" with "OSV scan" in the required checks.
 name: OSV-Scanner
 
 on:
@@ -12,6 +24,87 @@ on:
 permissions: {}
 
 jobs:
+  osv-scan:
+    name: OSV scan
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      # github.com and release-assets.githubusercontent.com are for the checkout and the download of OSV-Scanner, and
+      # api.osv.dev is the vulnerability database.
+      - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: block
+          disable-sudo-and-containers: true
+          allowed-endpoints: >
+            api.osv.dev:443
+            github.com:443
+            release-assets.githubusercontent.com:443
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Scan the lockfiles and fail on a high finding with a fix
+        run: |
+          osv_scanner="$(python3 -I tools/install_program.py osv-scanner)"
+          # OSV-Scanner exits with 1 when it finds a known vulnerability. A higher exit code means that the scan did
+          # not finish, and then there are no results to read.
+          status=0
+          "$osv_scanner" scan source --recursive --format json --output-file "$RUNNER_TEMP/osv-results.json" . || status=$?
+          if [ "$status" -gt 1 ]; then
+            echo "::error::OSV-Scanner did not finish (exit code $status). The reason is above."
+            exit "$status"
+          fi
+          python3 -I tools/check_osv_results.py "$RUNNER_TEMP/osv-results.json"
+
+  osv-scan-main:
+    name: OSV scan of main
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      # As in osv-scan, and api.github.com for the upload to code scanning.
+      - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: block
+          disable-sudo-and-containers: true
+          allowed-endpoints: >
+            api.github.com:443
+            api.osv.dev:443
+            github.com:443
+            release-assets.githubusercontent.com:443
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Scan the lockfiles for code scanning
+        run: |
+          osv_scanner="$(python3 -I tools/install_program.py osv-scanner)"
+          # Exit code 1 means that a known vulnerability was found. A higher exit code means that the scan did not finish.
+          status=0
+          "$osv_scanner" scan source --recursive --format sarif --output-file "$RUNNER_TEMP/osv-results.sarif" . || status=$?
+          if [ "$status" -gt 1 ]; then
+            echo "::error::OSV-Scanner did not finish (exit code $status). The reason is above."
+            exit "$status"
+          fi
+      - name: Upload the results to code scanning
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: ${{ runner.temp }}/osv-results.sarif
+      - name: Fail on a high finding with a fix
+        run: |
+          osv_scanner="$(python3 -I tools/install_program.py osv-scanner)"
+          status=0
+          "$osv_scanner" scan source --recursive --format json --output-file "$RUNNER_TEMP/osv-results.json" . || status=$?
+          if [ "$status" -gt 1 ]; then
+            echo "::error::OSV-Scanner did not finish (exit code $status). The reason is above."
+            exit "$status"
+          fi
+          python3 -I tools/check_osv_results.py "$RUNNER_TEMP/osv-results.json"
+
   scan-pr:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     permissions:

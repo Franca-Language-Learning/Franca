@@ -1,9 +1,13 @@
 """Harden-Runner check: the pipeline's jobs are in block mode, each with its own list of allowed endpoints (E01-013).
 
 Harden-Runner (step-security/harden-runner) logs a job's network connections. In block mode, a connection to a host that
-is not in the job's allowed-endpoints is refused. These problems are reported for each job in .github/workflows that
-has steps (a job that calls a reusable workflow has none):
+is not in the job's allowed-endpoints is refused. These problems are reported for the jobs in .github/workflows:
 
+  - the job calls a reusable workflow (uses: at job level). The steps of a reusable workflow run in a job that is
+    written in another repository, so no Harden-Runner step can be added to it. The jobs in
+    REUSABLE_WORKFLOW_EXCEPTIONS are not reported, and each of them has a reason. An exception for a job that does
+    not call a reusable workflow, or that was removed from its workflow file, is reported, so that the list is kept
+    short;
   - the job has no Harden-Runner step, or the Harden-Runner step is not the first step;
   - the step is in audit mode, apart from the jobs in release.yml, which stay in audit mode until the endpoints of
     the first release are known;
@@ -50,6 +54,11 @@ ROOT = Path(__file__).resolve().parents[1]
 ACTION = "step-security/harden-runner@"
 # The workflow whose jobs may stay in audit mode.
 AUDIT_ALLOWED = "release.yml"
+# The jobs that may call a reusable workflow, as (workflow file name, job id), with the reason.
+REUSABLE_WORKFLOW_EXCEPTIONS: dict[tuple[str, str], str] = {
+    ("osv-scanner.yml", "scan-pr"): "removed after the required check is swapped (N2)",
+    ("osv-scanner.yml", "scan-main"): "removed after the required check is swapped (N2)",
+}
 # A host name, which may start with *. for a wildcard, a colon and a port number.
 ENDPOINT = re.compile(r"^(?:\*\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+:(?P<port>[0-9]{1,5})$")
 HIGHEST_PORT = 65535
@@ -91,14 +100,51 @@ def workflow_files(root: Path) -> list[Path]:
     return sorted([*folder.glob("*.yml"), *folder.glob("*.yaml")])
 
 
-def jobs_with_steps(root: Path) -> Iterator[Job]:
-    """Each job in the workflows, apart from jobs that call a reusable workflow (uses: at job level), which have no
-    steps of their own."""
+def all_jobs(root: Path) -> Iterator[tuple[str, str, Any]]:
+    """Each job in the workflows, as (workflow file name, job id, the job as written)."""
     for path in workflow_files(root):
         workflow = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         for job_id, job in (workflow.get("jobs") or {}).items():
-            if isinstance(job, dict) and "uses" not in job:
-                yield Job(path.name, str(job_id), list(job.get("steps") or []))
+            yield path.name, str(job_id), job
+
+
+def calls_reusable_workflow(job: Any) -> bool:
+    return isinstance(job, dict) and "uses" in job
+
+
+def jobs_with_steps(root: Path) -> Iterator[Job]:
+    """Each job in the workflows, apart from jobs that call a reusable workflow (uses: at job level), which have no
+    steps of their own."""
+    for workflow, job_id, job in all_jobs(root):
+        if isinstance(job, dict) and not calls_reusable_workflow(job):
+            yield Job(workflow, job_id, list(job.get("steps") or []))
+
+
+def reusable_workflow_problems(root: Path) -> list[Problem]:
+    """The jobs that call a reusable workflow and are not exceptions, the exceptions with no reason, and the
+    exceptions for jobs that do not call a reusable workflow or are not in their workflow file. An exception for a
+    workflow file that is not in the repository is not reported."""
+    problems = []
+    found = set()
+    for workflow, job_id, job in all_jobs(root):
+        found.add((workflow, job_id))
+        reason = REUSABLE_WORKFLOW_EXCEPTIONS.get((workflow, job_id))
+        if calls_reusable_workflow(job):
+            if reason is None:
+                problems.append(Problem(workflow, job_id, "the job calls a reusable workflow, which has no Harden-Runner step"))
+            elif not reason.strip():
+                problems.append(Problem(workflow, job_id, "the job is on the list of exceptions for reusable workflows with no reason"))
+        elif reason is not None:
+            problems.append(
+                Problem(workflow, job_id, "the job is on the list of exceptions for reusable workflows, and it does not call one")
+            )
+    files = {path.name for path in workflow_files(root)}
+    for workflow, job_id in REUSABLE_WORKFLOW_EXCEPTIONS:
+        if workflow in files and (workflow, job_id) not in found:
+            problems.append(
+                Problem(workflow, job_id, "the job is on the list of exceptions for reusable workflows, and it is not in the workflow")
+            )
+    return problems
 
 
 def harden_runner_jobs(root: Path) -> Iterator[Job]:
@@ -156,7 +202,8 @@ def job_problems(job: Job) -> list[str]:
 
 
 def check_repository(root: Path) -> list[Problem]:
-    return [Problem(job.workflow, job.job_id, message) for job in jobs_with_steps(root) for message in job_problems(job)]
+    with_steps = [Problem(job.workflow, job.job_id, message) for job in jobs_with_steps(root) for message in job_problems(job)]
+    return reusable_workflow_problems(root) + with_steps
 
 
 def main(arguments: Sequence[str] | None = None) -> int:

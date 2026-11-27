@@ -328,6 +328,66 @@ def test_a_download_that_is_neither_a_tar_gz_nor_a_zip_file_is_refused(tmp_path:
         ip.install(program, tmp_path / "cache", fetch=Downloads(data))
 
 
+# --- Programs published as a bare file, such as OSV-Scanner
+
+
+PROGRAM_FILE = b"\x7fELF\x02\x01\x01" + b"\x00" * 9 + b"a made-up program"
+BARE_ADDRESS = "https://github.com/example/tool/releases/download/{tag}/tool_linux_amd64"
+
+
+def bare_programs_file(tmp_path: Path, address: str = BARE_ADDRESS) -> Path:
+    path = tmp_path / "programs.txt"
+    path.write_text(f"platform  Linux  x86_64\ntool  v1.2.3  {hashlib.sha256(PROGRAM_FILE).hexdigest()}  {address}\n", encoding="utf-8")
+    return path
+
+
+def test_a_bare_program_is_kept_as_it_was_downloaded(tmp_path: Path) -> None:
+    (program,) = ip.read_programs(bare_programs_file(tmp_path)).values()
+    path = ip.install(program, tmp_path / "cache", fetch=Downloads(PROGRAM_FILE), this_platform=("Linux", "x86_64"))
+    assert path == tmp_path / "cache" / "tool-v1.2.3" / "tool"
+    assert path.read_bytes() == PROGRAM_FILE
+    assert path.stat().st_mode & 0o111
+
+
+def test_a_bare_program_is_for_the_platform_on_the_platform_line(tmp_path: Path) -> None:
+    (program,) = ip.read_programs(bare_programs_file(tmp_path)).values()
+    assert program.platform == ("Linux", "x86_64")
+    downloads = Downloads(PROGRAM_FILE)
+    with pytest.raises(ip.UnsupportedPlatform, match="Linux on x86_64"):
+        ip.install(program, tmp_path / "cache", fetch=downloads, this_platform=("Linux", "aarch64"))
+    assert downloads.addresses == []
+
+
+def test_a_bare_program_that_was_changed_in_the_cache_is_copied_again(tmp_path: Path) -> None:
+    (program,) = ip.read_programs(bare_programs_file(tmp_path)).values()
+    downloads = Downloads(PROGRAM_FILE)
+    path = ip.install(program, tmp_path / "cache", fetch=downloads, this_platform=("Linux", "x86_64"))
+    path.write_bytes(b"changed after the download")
+    assert ip.install(program, tmp_path / "cache", fetch=downloads, this_platform=("Linux", "x86_64")).read_bytes() == PROGRAM_FILE
+    assert len(downloads.addresses) == 1
+    assert sorted(p.name for p in path.parent.iterdir()) == ["tool", "tool_linux_amd64"]
+
+
+def test_a_download_with_the_name_of_the_program_is_refused(tmp_path: Path) -> None:
+    # The program is copied from the download on each run, so the two need different names in the cache.
+    address = "https://github.com/example/tool/releases/download/{tag}/tool"
+    (program,) = ip.read_programs(bare_programs_file(tmp_path, address)).values()
+    with pytest.raises(ip.InstallError, match="same name"):
+        ip.install(program, tmp_path / "cache", fetch=Downloads(PROGRAM_FILE), this_platform=("Linux", "x86_64"))
+
+
+def test_the_powershell_modules_are_for_any_platform(tmp_path: Path) -> None:
+    path = tmp_path / "programs.txt"
+    sha256 = hashlib.sha256(MODULE).hexdigest()
+    path.write_text(
+        "platform  Linux  x86_64\n"
+        f"Module  1.2.3  {sha256}  https://github.com/example/Module/releases/download/{{tag}}/Module.{{version}}.nupkg\n"
+        f"Gallery  1.2.3  {sha256}  https://www.powershellgallery.com/api/v2/package/Gallery/{{tag}}\n",
+        encoding="utf-8",
+    )
+    assert {program.platform for program in ip.read_programs(path).values()} == {None}
+
+
 # --- The programs in this repository
 
 
@@ -346,8 +406,9 @@ def renovate_matches(text: str) -> dict[str, set[tuple[str, str, str | None]]]:
 
 def test_the_programs_in_this_repository_can_be_read() -> None:
     programs = ip.read_programs(ip.PROGRAMS)
-    assert set(programs) == {"gitleaks", "grype", "syft", "PSScriptAnalyzer", "Pester"}
-    assert {name for name, program in programs.items() if program.platform == ("Linux", "x86_64")} == {"gitleaks", "grype", "syft"}
+    assert set(programs) == {"gitleaks", "grype", "osv-scanner", "syft", "PSScriptAnalyzer", "Pester"}
+    linux = {name for name, program in programs.items() if program.platform == ("Linux", "x86_64")}
+    assert linux == {"gitleaks", "grype", "osv-scanner", "syft"}
     assert programs["Pester"].platform is None
 
 
@@ -375,7 +436,9 @@ def test_the_workflows_install_the_pinned_programs_only() -> None:
             assert unpinned not in text, f"{path.name} uses {unpinned}"
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-    for name, workflow in [("grype", ci), ("Pester", ci), ("PSScriptAnalyzer", ci), ("grype", release), ("syft", release)]:
+    osv = (ROOT / ".github" / "workflows" / "osv-scanner.yml").read_text(encoding="utf-8")
+    pinned = [("grype", ci), ("Pester", ci), ("PSScriptAnalyzer", ci), ("grype", release), ("syft", release), ("osv-scanner", osv)]
+    for name, workflow in pinned:
         assert f"tools/install_program.py {name}" in workflow, name
 
 

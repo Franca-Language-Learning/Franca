@@ -152,11 +152,12 @@
       "automerge": false
     },
     {
-      "description": "Programs that run in the release job, check signatures or check the code (Grype, Syft, gitleaks, PSScriptAnalyzer, Pester and the installer's cosign) are reviewed by a person before they are merged, after the seven-day wait.",
+      "description": "Programs that run in the release job, check signatures or check the code (Grype, Syft, gitleaks, OSV-Scanner, PSScriptAnalyzer, Pester and the installer's cosign) are reviewed by a person before they are merged, after the seven-day wait.",
       "matchDepNames": [
         "anchore/grype",
         "anchore/syft",
         "gitleaks/gitleaks",
+        "google/osv-scanner",
         "PowerShell/PSScriptAnalyzer",
         "Pester",
         "sigstore/cosign"

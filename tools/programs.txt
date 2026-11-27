@@ -8,13 +8,15 @@
 # updated with tools/update_pester_hash.py (docs/package-updates.md). Updates to these programs are reviewed before
 # they are merged.
 #
-# The .tar.gz files are for the platform on the next line, in the names that Python's platform.system() and
-# platform.machine() give. On another platform they are not downloaded. The PowerShell modules work on any platform.
+# The .tar.gz files and the bare program files are for the platform on the next line, in the names that Python's
+# platform.system() and platform.machine() give. On another platform they are not downloaded. The PowerShell modules
+# work on any platform.
 platform           Linux     x86_64
 #
 # name             version   SHA-256 of the file                                               address
 gitleaks           v8.30.1   551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  https://github.com/gitleaks/gitleaks/releases/download/{tag}/gitleaks_{version}_linux_x64.tar.gz
 grype              v0.122.1  f1ba7e2917ee1395618de20a98da0aa7c0fb1788927797651047c50502a37538  https://github.com/anchore/grype/releases/download/{tag}/grype_{version}_linux_amd64.tar.gz
+osv-scanner        v2.7.1    fb7dab19a8bd9bbe5c3189f09d4b7ee1820c9553a23bac202648a56efd2f6ee8  https://github.com/google/osv-scanner/releases/download/{tag}/osv-scanner_linux_amd64
 syft               v1.57.2   ad92bd3ec1b94a3df01d4d0aec199afa9c42b72e86da436ff5f837914d32706b  https://github.com/anchore/syft/releases/download/{tag}/syft_{version}_linux_amd64.tar.gz
 PSScriptAnalyzer   1.24.0    e86c97d44bb1bc8a1de35e753b85ea1d938f6f9f881639a181507e079bca4556  https://github.com/PowerShell/PSScriptAnalyzer/releases/download/{tag}/PSScriptAnalyzer.{version}.nupkg
 Pester             5.7.1     4a27904c6814a5fbe4758f8e49861f6a1994aee77b71165a5c43c0371ba6c580  https://www.powershellgallery.com/api/v2/package/Pester/{tag}

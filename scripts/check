@@ -21,6 +21,7 @@ strict_scripts=(
     ../tools/content_guard.py
     ../tools/check_pins.py
     ../tools/check_harden_runner.py
+    ../tools/check_osv_results.py
     ../tools/install_program.py
     ../tools/update_pester_hash.py
     ../infra/updater/franca_updater.py
