@@ -4,11 +4,14 @@ The rehearsal against real containers is infra/tests/rehearse-update.sh.
 """
 
 import json
+import ssl
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
+from email.message import Message
 from pathlib import Path
 
 import pytest
@@ -687,3 +690,123 @@ def test_without_a_push_token_nothing_is_reported(tmp_path: Path) -> None:
     fu.Monitor("http://status:8080", token, send=sent.append).report("nightly_update", True, "Installed")
 
     assert sent == []
+
+
+# --- reading from GitHub
+
+
+class FakeResponse:
+    def __init__(self, body: bytes, length: int | None = None) -> None:
+        self.body = body
+        self.headers = Message()
+        if length is not None:
+            self.headers["Content-Length"] = str(length)
+
+    def __enter__(self) -> FakeResponse:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def read(self, size: int = -1) -> bytes:
+        return self.body if size < 0 else self.body[:size]
+
+
+def test_a_body_up_to_the_limit_is_read_whole(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = b"x" * 2_000_000
+    monkeypatch.setattr(urllib.request, "urlopen", lambda request, timeout: FakeResponse(body))
+    assert fu.http_fetch("https://example.org/cosign", limit=2_000_000) == body
+
+
+def test_a_body_over_the_limit_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(urllib.request, "urlopen", lambda request, timeout: FakeResponse(b"x" * 1_000_001))
+    with pytest.raises(fu.UpdateError, match="larger than"):
+        fu.http_fetch("https://example.org/release.json")
+
+
+class FlakyOpener:
+    """Stands in for urlopen: raises the given errors in turn, then answers with the body."""
+
+    def __init__(self, errors: list[Exception], body: bytes = b"ok", short_answers: int = 0) -> None:
+        self.errors = errors
+        self.body = body
+        self.short_answers = short_answers
+        self.calls = 0
+
+    def __call__(self, request: urllib.request.Request, timeout: float) -> FakeResponse:
+        self.calls += 1
+        if self.errors:
+            raise self.errors.pop(0)
+        if self.short_answers:
+            self.short_answers -= 1
+            return FakeResponse(self.body[: len(self.body) // 2], length=len(self.body))
+        return FakeResponse(self.body, length=len(self.body))
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        TimeoutError("timed out"),
+        urllib.error.URLError(TimeoutError("timed out")),
+        ConnectionResetError("reset"),
+        urllib.error.HTTPError("https://example.org/cosign", 503, "Service Unavailable", Message(), None),
+    ],
+)
+def test_a_download_that_times_out_or_meets_a_server_error_is_tried_again(monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
+    opener = FlakyOpener([error])
+    pauses: list[float] = []
+    monkeypatch.setattr(urllib.request, "urlopen", opener)
+
+    assert fu.http_fetch("https://example.org/cosign", pause=pauses.append) == b"ok"
+    assert opener.calls == 2
+    assert pauses == [fu.RETRY_PAUSES[0]]
+
+
+def test_a_download_is_given_up_after_the_last_try(monkeypatch: pytest.MonkeyPatch) -> None:
+    opener = FlakyOpener([TimeoutError("timed out") for _ in range(len(fu.RETRY_PAUSES) + 1)])
+    pauses: list[float] = []
+    monkeypatch.setattr(urllib.request, "urlopen", opener)
+
+    with pytest.raises(TimeoutError):
+        fu.http_fetch("https://example.org/cosign", pause=pauses.append)
+    assert opener.calls == len(fu.RETRY_PAUSES) + 1
+    assert pauses == list(fu.RETRY_PAUSES)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        urllib.error.HTTPError("https://example.org/cosign", 404, "Not Found", Message(), None),
+        urllib.error.HTTPError("https://example.org/cosign", 499, "Client Closed Request", Message(), None),
+        urllib.error.URLError("unknown url type"),
+        urllib.error.URLError(ssl.SSLCertVerificationError("certificate verify failed")),
+    ],
+)
+def test_a_client_error_or_a_bad_certificate_is_not_tried_again(monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
+    opener = FlakyOpener([error])
+    pauses: list[float] = []
+    monkeypatch.setattr(urllib.request, "urlopen", opener)
+
+    with pytest.raises(urllib.error.URLError):
+        fu.http_fetch("https://example.org/cosign", pause=pauses.append)
+    assert opener.calls == 1
+    assert pauses == []
+
+
+def test_an_answer_cut_short_is_tried_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    opener = FlakyOpener([], body=b"0123456789", short_answers=1)
+    pauses: list[float] = []
+    monkeypatch.setattr(urllib.request, "urlopen", opener)
+
+    assert fu.http_fetch("https://example.org/cosign", pause=pauses.append) == b"0123456789"
+    assert opener.calls == 2
+    assert pauses == [fu.RETRY_PAUSES[0]]
+
+
+def test_a_body_over_the_limit_is_not_tried_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    opener = FlakyOpener([], body=b"x" * 11)
+    monkeypatch.setattr(urllib.request, "urlopen", opener)
+
+    with pytest.raises(fu.UpdateError, match="larger than"):
+        fu.http_fetch("https://example.org/release.json", limit=10, pause=lambda _seconds: None)
+    assert opener.calls == 1

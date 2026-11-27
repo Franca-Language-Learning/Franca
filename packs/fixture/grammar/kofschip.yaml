@@ -1,0 +1,18 @@
+# A fixture grammar point with a formation rule, which is shown beside the chart of hebben.
+key: fx:grammar:kofschip
+title: {tl: Fixture verleden tijd, en: Fixture past tense}
+level: a1
+explanations:
+  - depth: short
+    section: concept
+    body_en_md: Fixture explanation.
+rules:
+  - key: fx:grammar:kofschip-rule
+    type: formation
+    title: {tl: Fixture vormregel, en: Fixture formation rule}
+    steps:
+      - id: k-1
+        question: {en: "Fixture question?"}
+        outcomes:
+          - answer: {en: "Yes"}
+            action_en: Add the fixture ending.

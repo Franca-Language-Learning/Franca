@@ -13,7 +13,8 @@ restic reads back all of the repository's data. The live database is not touched
 backup container, which has the data volume mounted for the nightly copy; the scratch folder is in its cache volume.)
 
 The results are written to backup.json and restore-test.json in the status folder, for the owner and for the health
-monitoring (story E01-010).
+monitoring (story E01-010). On a new installation, the start of the wait for the app's database is written to
+backup-waiting.json.
 
 For a real restore, see docs/restoring-a-backup.md: with the app stopped, `restore-latest` puts the latest copy in
 place and keeps the current database beside it.
@@ -163,11 +164,12 @@ class StatusFiles:
         os.replace(temporary, self.folder / name)
 
     def read(self, name: str) -> dict[str, str]:
+        """The status last written to the file, or an empty dict when there is none or it is not a JSON object."""
         try:
-            loaded: dict[str, str] = json.loads((self.folder / name).read_text(encoding="utf-8"))
-            return loaded
+            loaded = json.loads((self.folder / name).read_text(encoding="utf-8"))
         except OSError, ValueError:
             return {}
+        return {str(key): str(value) for key, value in loaded.items()} if isinstance(loaded, dict) else {}
 
 
 def database_in_use(path: Path) -> bool:
@@ -210,6 +212,9 @@ MONITORED = {
 # How old the last success may be before the state is a failure: a day and two hours for the nightly backup, and two
 # days more than the month between restore tests.
 STALE_AFTER = {"backup.json": timedelta(hours=26), "restore-test.json": RESTORE_TEST_EVERY + timedelta(days=2)}
+# The status file of the wait for the first database on a new installation, and how long the wait may last.
+WAITING = "backup-waiting.json"
+WAIT_FOR_DATABASE = timedelta(hours=24)
 
 
 def _post(request: urllib.request.Request) -> None:
@@ -263,6 +268,8 @@ class Backup:
                 raise BackupError(
                     f"The backup disk is not there: {self.backups} has no {DISK_MARKER} file. Check that disk J: is connected."
                 )
+            if not last_success and not (self.data / DATABASE).exists():
+                return self._wait_for_database(now)
             copy_database(self.data / DATABASE, staging / DATABASE)
             self.restic.ensure_repository()
             snapshot = self.restic.back_up(staging)
@@ -274,6 +281,22 @@ class Backup:
             staging.mkdir(parents=True, exist_ok=True)
         stamp = now.astimezone(UTC).isoformat(timespec="seconds")
         return self._report("backup.json", "backed-up", now, snapshot=snapshot, lastSucceededAt=stamp, message="The database was backed up")
+
+    def _wait_for_database(self, now: datetime) -> str:
+        """On a new installation, the backup container can start before there is a database. Until a backup has
+        succeeded, a missing database is taken to mean "not yet", and the next try is an hour later. After a day
+        it is a failure, because the data volume is then probably not the app's."""
+        since = self.status.read(WAITING).get("waitingSince", "")
+        try:
+            started = datetime.fromisoformat(since)
+            if started.tzinfo is None:
+                raise ValueError(since)
+        except ValueError:
+            return self._report(WAITING, "waiting-for-database", now, key="waitingSince", message="There is no database yet")
+        if now - started > WAIT_FOR_DATABASE:
+            raise BackupError(f"There is still no database at {self.data / DATABASE} a day after installation. Check the data volume.")
+        print(json.dumps({"result": "waiting-for-database", "message": "There is no database yet"}), flush=True)
+        return "waiting-for-database"
 
     def backup_due(self, now: datetime, at: str) -> bool:
         """Due when there has been no backup since the last daily time, so a night when the PC was off is made up

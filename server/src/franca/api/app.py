@@ -12,9 +12,8 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from franca.api import auth, passkeys, recovery, sessions
 from franca.api.anti_forgery import AntiForgeryMiddleware
+from franca.api.dependencies import API_PREFIX
 from franca.platform import Settings, load_settings, make_engine
-
-API_PREFIX = "/api/v1"
 
 
 class Health(BaseModel):
@@ -51,8 +50,16 @@ def check_production(settings: Settings) -> None:
         raise RuntimeError("FRANCA_PUBLIC_URL has to start with https:// unless it names this computer")
 
 
+# The messages of SQLite's errors for a lock that was not freed in time (SQLITE_BUSY and SQLITE_LOCKED).
+BUSY_MESSAGES = ("database is locked", "database is busy", "database table is locked")
+
+
 async def database_busy(request: Request, error: Exception) -> JSONResponse:
-    # SQLite waits up to five seconds for a lock (busy_timeout); after that the request is answered with 503.
+    """SQLite waits up to five seconds for a lock (busy_timeout). After that the request is answered with 503 and a time
+    to try again. Other database errors, such as a full disk, are not solved by trying again, so they are raised
+    again and answered with 500."""
+    if not any(message in str(error).lower() for message in BUSY_MESSAGES):
+        raise error
     return JSONResponse({"detail": "The database is busy. Please try again."}, status_code=503, headers={"Retry-After": "2"})
 
 
@@ -64,10 +71,13 @@ def create_app(settings: Settings | None = None, *, google_transport: Any = None
     # The version in the contract is the API version, not the release, so the contract file does not change
     # with every release.
     app = FastAPI(title="Franca API", version="1", docs_url=None, redoc_url=None, openapi_url=f"{API_PREFIX}/openapi.json")
+    # Read by the request dependencies in franca.api.dependencies.
+    app.state.settings = settings
+    app.state.engine = make_engine(settings.database_path)
+    app.add_middleware(AntiForgeryMiddleware, secure=settings.cookies_secure)
     # Holds the state of a sign-in with Google, or the challenge for a passkey, for up to 10 minutes. Without a
     # configured secret, a random one is used, and a sign-in that is in progress when the service restarts has to
     # be started again.
-    app.add_middleware(AntiForgeryMiddleware, secure=settings.cookies_secure)
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.session_secret or secrets.token_urlsafe(32),
@@ -78,7 +88,7 @@ def create_app(settings: Settings | None = None, *, google_transport: Any = None
     )
     app.add_exception_handler(OperationalError, database_busy)
     app.include_router(health_router(settings), prefix=API_PREFIX)
-    app.include_router(auth.install(app, settings, make_engine(settings.database_path), google_transport), prefix=API_PREFIX)
+    app.include_router(auth.google_router(settings, google_transport), prefix=API_PREFIX)
     app.include_router(passkeys.passkey_router(settings), prefix=API_PREFIX)
     app.include_router(recovery.recovery_router(settings), prefix=API_PREFIX)
     app.include_router(sessions.session_router(), prefix=API_PREFIX)

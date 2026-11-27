@@ -2,21 +2,19 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { Button, Form, Input, Label, TextField } from "react-aria-components";
+import { NotSignedIn, SignInAgain } from "../../account/messages";
 import {
   addPasskey,
   ApiError,
   getPasskeyRegistrationOptions,
+  isNotSignedIn,
   listPasskeys,
+  needsRecentSignIn,
   type Passkey,
   removePasskey,
 } from "../../api/client";
+import { formatDay } from "../../format";
 import { createPasskey, PasskeyCancelled, PasskeyExists, passkeysSupported } from "./webauthn";
-
-const DATE = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" });
-
-function day(iso: string): string {
-  return DATE.format(new Date(iso));
-}
 
 function addFailure(error: unknown): string {
   if (error instanceof PasskeyCancelled) return "No passkey was added, because the passkey window was closed or took too long. To try again, select Add a passkey.";
@@ -37,7 +35,7 @@ function PasskeyItem({ passkey }: { passkey: Passkey }) {
     <li>
       <h3>{name}</h3>
       <p>
-        Added on {day(passkey.createdAt)}. {passkey.lastUsedAt ? `Last used on ${day(passkey.lastUsedAt)}.` : "Not used yet."}
+        Added on {formatDay(passkey.createdAt)}. {passkey.lastUsedAt ? `Last used on ${formatDay(passkey.lastUsedAt)}.` : "Not used yet."}
         {passkey.synced && " It is also available on your other devices that use the same password manager or account."}
       </p>
       {remove.isError && <p role="alert">The passkey could not be removed. Please try again.</p>}
@@ -75,16 +73,7 @@ export function PasskeysPage() {
     },
   });
 
-  if (passkeys.error instanceof ApiError && passkeys.error.status === 401) {
-    return (
-      <main>
-        <h1>Passkeys</h1>
-        <p>
-          You are not signed in. <Link to="/sign-in">Sign in</Link> first, then open “Your passkeys” on the home page.
-        </p>
-      </main>
-    );
-  }
+  if (isNotSignedIn(passkeys.error)) return <NotSignedIn title="Passkeys" pageName="Your passkeys" />;
 
   return (
     <main>
@@ -125,11 +114,8 @@ export function PasskeysPage() {
           {add.isPending && <p role="status">Follow the steps in the passkey window.</p>}
           {add.isSuccess && <p role="status">The passkey was added.</p>}
           {add.isError &&
-            (add.error instanceof ApiError && add.error.detail === "sign-in-again" ? (
-              <p role="alert">
-                You signed in more than 15 minutes ago, so you need to sign in again before you can add a passkey.{" "}
-                <Link to="/sign-in">Sign in again</Link>, then open “Your passkeys” on the home page.
-              </p>
+            (needsRecentSignIn(add.error) ? (
+              <SignInAgain action="add a passkey" pageName="Your passkeys" />
             ) : (
               <p role="alert">{addFailure(add.error)}</p>
             ))}

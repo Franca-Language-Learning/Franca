@@ -1,6 +1,7 @@
 # The private network (container "tailscale"), story E01-009. Built from the repository root:
 #   docker build -f infra/images/tailscale.Dockerfile .
-# The base image is named by tag here; Renovate adds and updates its digest.
+# The base image is named by tag and digest, and Renovate updates both. A tag without a digest is reported by
+# tools/check_pins.py, and the pipeline fails.
 #
 # This is Tailscale's image with a non-root user added. The folders Tailscale writes to are made for that user, and
 # port 443 is forwarded to Caddy (serve.json). Tailscale runs with userspace networking, which needs no capabilities
@@ -9,7 +10,7 @@
 # The published binaries of Tailscale 1.104.7 have compress 1.20.0, which has a known vulnerability (GO-2026-6865).
 # They are built here from the same release with compress 1.20.2, with the build tags and version stamps of Tailscale's
 # own image (build_docker.sh). Remove this stage and the COPY below when a Tailscale release has compress 1.20.2.
-FROM golang:1.27.4-trixie AS tailscale
+FROM golang:1.27.4-trixie@sha256:430985542100b871e108ccc00e8dcc5eef08ca14ee5825e98ebf563d8ffec4ee AS tailscale
 ENV CGO_ENABLED=0 GOFLAGS=-trimpath
 # The tag is checked against its commit, so a moved tag is noticed.
 RUN git clone --quiet --depth 1 --branch v1.104.7 https://github.com/tailscale/tailscale /src/tailscale \
@@ -22,7 +23,7 @@ RUN git clone --quiet --depth 1 --branch v1.104.7 https://github.com/tailscale/t
             -X tailscale.com/version.gitCommitStamp=cbc74fe48ef1b1649f69a4d9a602319427e25102" \
         ./cmd/tailscale ./cmd/tailscaled ./cmd/containerboot
 
-FROM tailscale/tailscale:v1.104.7
+FROM tailscale/tailscale:v1.104.7@sha256:72c1e19e0aedca96b8533bbb0b4368564410ff20b17e53b804eb6c1f04a31be4
 COPY --from=tailscale /out/tailscale /out/tailscaled /out/containerboot /usr/local/bin/
 # Security fixes from Alpine that came out after the base image was built are installed here.
 RUN apk upgrade --no-cache

@@ -20,50 +20,36 @@ Headscale cannot issue certificates, so the certificate itself is tried at the i
 
 import json
 import os
-import socket
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+from rehearsal import (
+    HEADSCALE,
+    ROOT,
+    Checks,
+    build_image,
+    check_hardened,
+    compose_command,
+    copy_compose_file,
+    free_port,
+    headscale_config,
+    sh,
+    tear_down,
+    write_env,
+    write_secrets,
+)
+
 PROJECT = f"franca-tailnet-rehearsal-{os.getpid()}"
 APP = "franca/app:rehearsal-tailnet"
 CADDY = "franca/caddy:rehearsal-tailnet"
 TAILSCALE = "franca/tailscale:rehearsal"
-# Renovate adds the digests of these two images (see .github/renovate.json).
-HEADSCALE = "headscale/headscale:0.29.7@sha256:11f81665e842809db9fe3006a38c56a66e968baa5abd4bac498e86445572b970"  # renovate: image
-PHONE = "tailscale/tailscale:v1.104.7"  # renovate: image
+# A Tailscale container in place of a phone. The image is named by digest, and Renovate updates it (see
+# .github/renovate.json).
+PHONE = "tailscale/tailscale:v1.104.7@sha256:72c1e19e0aedca96b8533bbb0b4368564410ff20b17e53b804eb6c1f04a31be4"  # renovate: image
 LOGIN_SERVER = "http://headscale:8080"
-
-HEADSCALE_CONFIG = """\
-server_url: http://headscale:8080
-listen_addr: 0.0.0.0:8080
-metrics_listen_addr: 127.0.0.1:9090
-grpc_listen_addr: 127.0.0.1:50443
-noise:
-  private_key_path: /var/lib/headscale/noise_private.key
-prefixes:
-  v4: 100.64.0.0/10
-  v6: fd7a:115c:a1e0::/48
-  allocation: sequential
-derp:
-  server:
-    enabled: false
-  urls:
-    - https://controlplane.tailscale.com/derpmap/default
-  auto_update_enabled: false
-database:
-  type: sqlite
-  sqlite:
-    path: /var/lib/headscale/db.sqlite
-dns:
-  magic_dns: false
-  override_local_dns: false
-unix_socket: /var/run/headscale/headscale.sock
-unix_socket_permission: "0770"
-"""
 
 # Headscale and the phone are added to the bundle for the rehearsal only. The tailscale container is pointed at
 # Headscale in place of Tailscale's control server.
@@ -111,60 +97,31 @@ services:
 PLAIN_REQUEST = "GET / HTTP/1.0\\r\\nHost: franca\\r\\n\\r\\n"
 
 
-def sh(*command: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603
-    if check and result.returncode != 0:
-        print(result.stdout[-3000:], result.stderr[-3000:], sep="\n")
-        raise SystemExit(f"Command failed: {' '.join(command[:8])}")
-    return result
-
-
-def free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port: int = probe.getsockname()[1]
-        return port
-
-
-def check(condition: bool, message: str, failures: list[str]) -> None:
-    print(("ok:   " if condition else "FAIL: ") + message, flush=True)
-    if not condition:
-        failures.append(message)
-
-
 def main() -> int:
     os.chdir(ROOT)
-    sh("docker", "build", "--quiet", "-f", "infra/images/app.Dockerfile", "--build-arg", "FRANCA_VERSION=1.0.0", "-t", APP, ".")
-    sh("docker", "build", "--quiet", "-f", "infra/images/caddy.Dockerfile", "-t", CADDY, ".")
-    sh("docker", "build", "--quiet", "-f", "infra/images/tailscale.Dockerfile", "-t", TAILSCALE, ".")
-    failures: list[str] = []
+    build_image("app", APP, "1.0.0")
+    build_image("caddy", CADDY)
+    build_image("tailscale", TAILSCALE)
+    checks = Checks()
     with tempfile.TemporaryDirectory() as folder:
         bundle = Path(folder)
-        (bundle / "compose.yaml").write_text((ROOT / "infra" / "compose.yaml").read_text(encoding="utf-8"), encoding="utf-8")
-        (bundle / "compose.override.yaml").write_text(OVERRIDE, encoding="utf-8")
+        copy_compose_file(bundle, OVERRIDE)
         (bundle / "headscale").mkdir()
-        (bundle / "headscale" / "config.yaml").write_text(HEADSCALE_CONFIG, encoding="utf-8")
-        key_folder = bundle / "secrets"
-        key_folder.mkdir()
-        for name in ("google_client_secret", "session_secret", "backup_password", "tailscale_authkey", "ntfy_topic", "status_push_token"):
-            empty = name in {"google_client_secret", "tailscale_authkey", "ntfy_topic", "status_push_token"}
-            (key_folder / name).write_text("" if empty else os.urandom(32).hex(), encoding="utf-8")
-        (bundle / ".env").write_text(
-            "\n".join(
-                [
-                    "FRANCA_VERSION=1.0.0",
-                    f"FRANCA_APP_IMAGE={APP}",
-                    f"FRANCA_CADDY_IMAGE={CADDY}",
-                    f"FRANCA_TAILSCALE_IMAGE={TAILSCALE}",
-                    f"FRANCA_PORT={free_port()}",
-                    f"FRANCA_SECRETS_DIR={key_folder}",
-                    "COMPOSE_PROFILES=tailnet",
-                ]
-            )
-            + "\n",
-            encoding="utf-8",
+        (bundle / "headscale" / "config.yaml").write_text(headscale_config(), encoding="utf-8")
+        key_folder = write_secrets(bundle / "secrets")
+        write_env(
+            bundle / ".env",
+            {
+                "FRANCA_VERSION": "1.0.0",
+                "FRANCA_APP_IMAGE": APP,
+                "FRANCA_CADDY_IMAGE": CADDY,
+                "FRANCA_TAILSCALE_IMAGE": TAILSCALE,
+                "FRANCA_PORT": str(free_port()),
+                "FRANCA_SECRETS_DIR": str(key_folder),
+                "COMPOSE_PROFILES": "tailnet",
+            },
         )
-        compose = ["docker", "compose", "--project-directory", str(bundle), "--project-name", PROJECT]
+        compose = compose_command(bundle, PROJECT)
 
         def headscale(*arguments: str) -> str:
             return sh(*compose, "exec", "-T", "headscale", "headscale", *arguments).stdout
@@ -187,14 +144,12 @@ def main() -> int:
             )
             # The key goes in the secret file, as the installer will write the owner's key on the PC.
             (key_folder / "tailscale_authkey").write_text(created["key"], encoding="utf-8")
-            for secret in key_folder.iterdir():
-                secret.chmod(0o644)
 
             started = sh(*compose, "up", "--detach", "--no-build", "--wait", "--wait-timeout", "180", check=False)
-            check(started.returncode == 0, "the bundle starts with the tailnet profile, and its containers are healthy", failures)
+            checks.check(started.returncode == 0, "the bundle starts with the tailnet profile, and its containers are healthy")
             nodes = json.loads(headscale("nodes", "list", "--output", "json"))
             names = {node.get("given_name") or node.get("name") for node in nodes}
-            check("franca" in names, "the PC joins the tailnet as franca", failures)
+            checks.check("franca" in names, "the PC joins the tailnet as franca")
 
             franca_ip = sh(*compose, "exec", "-T", "tailscale", "tailscale", "ip", "-4").stdout.strip()
             # The phone needs a moment to learn about the PC after both have joined.
@@ -206,20 +161,18 @@ def main() -> int:
                 reply = from_phone(443)
             # Go's TLS server answers a plain HTTP request on an HTTPS port with an HTTP error, so this reply shows that
             # the connection reached Caddy's HTTPS port without being decrypted on the way.
-            check(
+            checks.check(
                 "HTTP/1." in reply.stdout and "HTTPS" in reply.stdout,
                 "port 443 on the tailnet reaches Caddy's HTTPS port, still encrypted",
-                failures,
             )
             if "HTTP/1." not in reply.stdout:
                 print(f"info: the answer on port 443 was {reply.stdout[:300]!r}, errors {reply.stderr[:300]!r}", flush=True)
             # 9002 is containerboot's port for metrics and health, which are switched off.
             for port in (8080, 8000, 8443, 9002):
                 closed = from_phone(port)
-                check(
+                checks.check(
                     closed.returncode != 0 and "HTTP/1." not in closed.stdout,
                     f"port {port} cannot be reached over the tailnet",
-                    failures,
                 )
 
             # Caddy reaches tailscaled through the socket in the shared volume, as user 10002.
@@ -230,44 +183,31 @@ def main() -> int:
                 )
 
             status = through_socket("10002:10002", "status", "--json")
-            check(
+            checks.check(
                 status.returncode == 0 and '"BackendState": "Running"' in status.stdout,
                 "Caddy's user reaches tailscaled through the socket",
-                failures,
             )
             cert = ["cert", "--cert-file", "-", "--key-file", "-", "franca.rehearsal.ts.net"]
             allowed = through_socket("10002:10002", *cert)
             # Headscale issues no certificates, so the request fails, but for a reason other than access.
-            check(
+            checks.check(
                 "access denied" not in (allowed.stdout + allowed.stderr).lower(),
                 "Caddy's user may ask tailscaled for a certificate",
-                failures,
             )
             refused = through_socket("10005:10005", *cert)
-            check("access denied" in (refused.stdout + refused.stderr).lower(), "another user may not ask for a certificate", failures)
+            checks.check("access denied" in (refused.stdout + refused.stderr).lower(), "another user may not ask for a certificate")
 
             for service in ("app", "caddy", "tailscale"):
                 container = sh(*compose, "ps", "--quiet", service).stdout.strip()
                 bindings = json.loads(sh("docker", "inspect", "--format", "{{json .HostConfig.PortBindings}}", container).stdout)
                 hosts = {binding["HostIp"] for published in (bindings or {}).values() for binding in published}
-                check(hosts <= {"127.0.0.1"}, f"{service} publishes no port beyond the PC's loopback", failures)
+                checks.check(hosts <= {"127.0.0.1"}, f"{service} publishes no port beyond the PC's loopback")
 
-            container = sh(*compose, "ps", "--quiet", "tailscale").stdout.strip()
-            settings = json.loads(sh("docker", "inspect", container).stdout)[0]
-            user = settings["Config"]["User"]
-            check(bool(user) and not user.startswith(("0", "root")), f"tailscale runs as user {user}", failures)
-            check(settings["HostConfig"]["ReadonlyRootfs"] is True, "tailscale has a read-only file system", failures)
-            check(settings["HostConfig"]["CapDrop"] == ["ALL"], "tailscale drops all capabilities", failures)
-            check(not settings["HostConfig"]["Devices"], "tailscale has no devices such as /dev/net/tun", failures)
+            settings = check_hardened(checks, compose, "tailscale", "tailscale")
+            checks.check(not settings["HostConfig"]["Devices"], "tailscale has no devices such as /dev/net/tun")
         finally:
-            if failures:
-                print(sh(*compose, "logs", "--no-color", "--tail", "60", check=False).stdout)
-            sh(*compose, "down", "--volumes", "--remove-orphans", check=False)
-    if failures:
-        print(f"\nThe rehearsal failed: {len(failures)} check(s).")
-        return 1
-    print("\nThe rehearsal passed.")
-    return 0
+            tear_down(compose, show_logs=bool(checks.failures))
+    return checks.exit_code()
 
 
 if __name__ == "__main__":

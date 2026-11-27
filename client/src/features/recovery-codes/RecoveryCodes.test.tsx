@@ -1,10 +1,10 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import axe from "axe-core";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import { AppRoot } from "../../AppRoot";
 import { server } from "../../mocks/server";
+import { expectNoAxeViolations } from "../../testing/axe";
 
 const CODES = ["ABCDE-FGHJK", "MNPQR-STUVW", "XYZ23-45678", "9ABCD-EFGHJ", "KMNPQ-RSTUV", "WXYZ2-34567", "89ABC-DEFGH", "JKMNP-QRSTU", "VWXYZ-23456", "789AB-CDEFG"];
 
@@ -79,8 +79,7 @@ describe("recovery codes page", () => {
     const { container } = render(<AppRoot initialPath="/recovery-codes" />);
     await userEvent.click(await screen.findByRole("button", { name: "Make new recovery codes" }));
     await screen.findByRole("heading", { name: "Your new recovery codes" });
-    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
-    expect(results.violations).toEqual([]);
+    await expectNoAxeViolations(container);
   });
 });
 
@@ -124,7 +123,6 @@ describe("signing in with a recovery code", () => {
   it("has no accessibility violations that axe can detect", async () => {
     const { container } = render(<AppRoot initialPath="/sign-in/recovery-code" />);
     await screen.findByRole("heading", { level: 1, name: "Sign in with a recovery code" });
-    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
-    expect(results.violations).toEqual([]);
+    await expectNoAxeViolations(container);
   });
 });

@@ -17,8 +17,6 @@ The rehearsal:
 
 import json
 import os
-import socket
-import subprocess
 import sys
 import tempfile
 import time
@@ -27,7 +25,21 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[2]
+from rehearsal import (
+    ROOT,
+    Checks,
+    build_image,
+    check_hardened,
+    compose_command,
+    copy_compose_file,
+    free_port,
+    random_secret,
+    sh,
+    tear_down,
+    write_env,
+    write_secrets,
+)
+
 sys.path.insert(0, str(ROOT / "infra" / "backup"))
 import franca_backup  # noqa: E402 - the backup's own code sends the reports in this rehearsal
 
@@ -65,27 +77,6 @@ services:
 """
 
 
-def sh(*command: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603
-    if check and result.returncode != 0:
-        print(result.stdout[-3000:], result.stderr[-3000:], sep="\n")
-        raise SystemExit(f"Command failed: {' '.join(command[:8])}")
-    return result
-
-
-def free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port: int = probe.getsockname()[1]
-        return port
-
-
-def check(condition: bool, message: str, failures: list[str]) -> None:
-    print(("ok:   " if condition else "FAIL: ") + message, flush=True)
-    if not condition:
-        failures.append(message)
-
-
 def push(base: str, key: str, token: str, query: str) -> int:
     """Sends a nightly job's report to Gatus, as the updater and the backup do, and returns the HTTP status."""
     request = urllib.request.Request(  # noqa: S310 - a local address
@@ -120,41 +111,31 @@ def wait_for(condition: Any, seconds: float) -> bool:
 
 def main() -> int:
     os.chdir(ROOT)
-    sh("docker", "build", "--quiet", "-f", "infra/images/app.Dockerfile", "--build-arg", "FRANCA_VERSION=1.0.0", "-t", APP, ".")
-    sh("docker", "build", "--quiet", "-f", "infra/images/caddy.Dockerfile", "-t", CADDY, ".")
-    sh("docker", "build", "--quiet", "-f", "infra/images/status.Dockerfile", "-t", STATUS, ".")
-    failures: list[str] = []
-    token = os.urandom(32).hex()
+    build_image("app", APP, "1.0.0")
+    build_image("caddy", CADDY)
+    build_image("status", STATUS)
+    checks = Checks()
+    token = random_secret()
     with tempfile.TemporaryDirectory() as folder:
         bundle = Path(folder)
-        (bundle / "compose.yaml").write_text((ROOT / "infra" / "compose.yaml").read_text(encoding="utf-8"), encoding="utf-8")
-        (bundle / "compose.override.yaml").write_text(OVERRIDE, encoding="utf-8")
-        key_folder = bundle / "secrets"
-        key_folder.mkdir()
-        values = {"session_secret": os.urandom(32).hex(), "backup_password": os.urandom(32).hex(), "ntfy_topic": TOPIC}
-        values["status_push_token"] = token
-        for name in ("google_client_secret", "session_secret", "backup_password", "tailscale_authkey", "ntfy_topic", "status_push_token"):
-            (key_folder / name).write_text(values.get(name, ""), encoding="utf-8")
-            (key_folder / name).chmod(0o644)
+        copy_compose_file(bundle, OVERRIDE)
+        key_folder = write_secrets(bundle / "secrets", {"ntfy_topic": TOPIC, "status_push_token": token})
         port = free_port()
-        (bundle / ".env").write_text(
-            "\n".join(
-                [
-                    "FRANCA_VERSION=1.0.0",
-                    f"FRANCA_APP_IMAGE={APP}",
-                    f"FRANCA_CADDY_IMAGE={CADDY}",
-                    f"FRANCA_STATUS_IMAGE={STATUS}",
-                    f"FRANCA_PORT={free_port()}",
-                    f"FRANCA_STATUS_PORT={port}",
-                    f"FRANCA_SECRETS_DIR={key_folder}",
-                    "FRANCA_NTFY_URL=http://ntfy:8000",
-                    "COMPOSE_PROFILES=monitoring",
-                ]
-            )
-            + "\n",
-            encoding="utf-8",
+        write_env(
+            bundle / ".env",
+            {
+                "FRANCA_VERSION": "1.0.0",
+                "FRANCA_APP_IMAGE": APP,
+                "FRANCA_CADDY_IMAGE": CADDY,
+                "FRANCA_STATUS_IMAGE": STATUS,
+                "FRANCA_PORT": str(free_port()),
+                "FRANCA_STATUS_PORT": str(port),
+                "FRANCA_SECRETS_DIR": str(key_folder),
+                "FRANCA_NTFY_URL": "http://ntfy:8000",
+                "COMPOSE_PROFILES": "monitoring",
+            },
         )
-        compose = ["docker", "compose", "--project-directory", str(bundle), "--project-name", PROJECT]
+        compose = compose_command(bundle, PROJECT)
         base = f"http://127.0.0.1:{port}"
 
         def alerts() -> list[dict[str, Any]]:
@@ -168,38 +149,35 @@ def main() -> int:
 
         try:
             started = sh(*compose, "up", "--detach", "--no-build", "--wait", "--wait-timeout", "120", check=False)
-            check(started.returncode == 0, "the bundle starts with the monitoring profile, and its containers are healthy", failures)
+            checks.check(started.returncode == 0, "the bundle starts with the monitoring profile, and its containers are healthy")
             if started.returncode != 0:
                 print(started.returncode, started.stdout[-3000:], started.stderr[:1500], started.stderr[-3000:], sep="\n", flush=True)
                 print(sh(*compose, "ps", "--all", check=False).stdout, flush=True)
 
-            check(wait_for(lambda: healthy("franca_app"), 90), "Gatus reports the app as healthy", failures)
-            check(wait_for(lambda: healthy("franca_web-server"), 30), "Gatus reports the web server as healthy", failures)
+            checks.check(wait_for(lambda: healthy("franca_app"), 90), "Gatus reports the app as healthy")
+            checks.check(wait_for(lambda: healthy("franca_web-server"), 30), "Gatus reports the web server as healthy")
             keys = set(statuses(base))
-            check(
+            checks.check(
                 "franca_app" in keys and not keys & {"franca_https-on-the-tailscale-name", "franca_tailscale"},
                 "the HTTPS and Tailscale checks are off while there is no Tailscale name",
-                failures,
             )
 
             # The reports are sent with the backup's own Monitor, from this computer to the dashboard's port.
             monitor = franca_backup.Monitor(base, key_folder / "status_push_token")
             monitor.report("nightly_backup", True, "The database was backed up")
-            check(wait_for(lambda: healthy("nightly_backup"), 20), "a report with the push token is accepted", failures)
-            check(push(base, "nightly_backup", "wrong" * 8, "success=true") == 401, "a report with another token is refused", failures)
+            checks.check(wait_for(lambda: healthy("nightly_backup"), 20), "a report with the push token is accepted")
+            checks.check(push(base, "nightly_backup", "wrong" * 8, "success=true") == 401, "a report with another token is refused")
 
             monitor.report("nightly_update", False, "rehearsal: the update was rolled back")
-            check(
+            checks.check(
                 wait_for(lambda: any(a.get("topic") == TOPIC and "Update" in a.get("title", "") for a in alerts()), 60),
                 "an alert about the failed update reaches ntfy on the owner's topic",
-                failures,
             )
 
             sh(*compose, "stop", "app")
-            check(
+            checks.check(
                 wait_for(lambda: any("App" in a.get("title", "") for a in alerts()), 300),
                 "an alert is sent when the app stops answering",
-                failures,
             )
 
             with tempfile.TemporaryDirectory() as bad:
@@ -209,36 +187,23 @@ def main() -> int:
                 Path(bad).chmod(0o755)
                 secrets = f"{bad}:/run/secrets:ro"
                 refused = sh("docker", "run", "--rm", "-v", secrets, STATUS, check=False)
-                check(
+                checks.check(
                     refused.returncode != 0 and "ntfy topic" in refused.stderr,
                     "the start script refuses a topic that is too short",
-                    failures,
                 )
                 (Path(bad) / "ntfy_topic").write_text(TOPIC, encoding="utf-8")
                 # A line break in a value from .env could add settings to Gatus's configuration.
                 injected = "FRANCA_NTFY_URL=https://ntfy.sh\nweb:\n  port: 1"
                 refused = sh("docker", "run", "--rm", "-v", secrets, "-e", injected, STATUS, check=False)
-                check(
+                checks.check(
                     refused.returncode != 0 and "FRANCA_NTFY_URL" in refused.stderr,
                     "the start script refuses a value with a line break in it",
-                    failures,
                 )
 
-            container = sh(*compose, "ps", "--quiet", "status").stdout.strip()
-            settings = json.loads(sh("docker", "inspect", container).stdout)[0]
-            user = settings["Config"]["User"]
-            check(bool(user) and not user.startswith(("0", "root")), f"the status container runs as user {user}", failures)
-            check(settings["HostConfig"]["ReadonlyRootfs"] is True, "the status container has a read-only file system", failures)
-            check(settings["HostConfig"]["CapDrop"] == ["ALL"], "the status container drops all capabilities", failures)
+            check_hardened(checks, compose, "status", "the status container")
         finally:
-            if failures:
-                print(sh(*compose, "logs", "--no-color", "--tail", "60", check=False).stdout)
-            sh(*compose, "down", "--volumes", "--remove-orphans", check=False)
-    if failures:
-        print(f"\nThe rehearsal failed: {len(failures)} check(s).")
-        return 1
-    print("\nThe rehearsal passed.")
-    return 0
+            tear_down(compose, show_logs=bool(checks.failures))
+    return checks.exit_code()
 
 
 if __name__ == "__main__":

@@ -29,6 +29,13 @@ def make_database(path: Path, rows: int = 1) -> None:
         connection.executemany("INSERT INTO notes VALUES (?)", [(f"note {n}",) for n in range(rows)])
 
 
+def count_notes(path: Path) -> int:
+    """The number of rows in the notes table of a database file. The connection is closed afterwards."""
+    with closing(sqlite3.connect(path)) as connection:
+        found: int = connection.execute("SELECT count(*) FROM notes").fetchone()[0]
+        return found
+
+
 class FakeRestic:
     """Answers restic commands. A restore copies what the last backup saw."""
 
@@ -101,7 +108,7 @@ def test_the_first_backup_makes_the_repository_then_backs_up_a_checked_copy(tmp_
     assert backup.back_up(NOW) == "backed-up"
 
     assert verbs(restic) == ["cat", "init", "backup", "forget"]
-    assert sqlite3.connect(restic.store / "franca.db").execute("SELECT count(*) FROM notes").fetchone() == (1,)
+    assert count_notes(restic.store / "franca.db") == 1
     assert status(tmp_path, "backup.json")["result"] == "backed-up"
     assert status(tmp_path, "backup.json")["snapshot"] == "abc123"
 
@@ -130,8 +137,7 @@ def test_the_copy_is_taken_with_sqlites_backup_so_recent_changes_in_the_wal_are_
 
     backup.back_up(NOW)
 
-    copied = sqlite3.connect(restic.store / "franca.db").execute("SELECT count(*) FROM notes").fetchone()
-    assert copied == (2,)
+    assert count_notes(restic.store / "franca.db") == 2
     live.close()
 
 
@@ -139,12 +145,6 @@ def test_a_failed_restic_backup_is_reported(tmp_path: Path) -> None:
     backup, _restic = make(tmp_path, fail_on="backup")
     assert backup.back_up(NOW) == "backup-failed"
     assert "backup failed" in status(tmp_path, "backup.json")["message"]
-
-
-def test_a_missing_database_is_reported(tmp_path: Path) -> None:
-    backup, _restic = make(tmp_path)
-    (tmp_path / "data" / "franca.db").unlink()
-    assert backup.back_up(NOW) == "backup-failed"
 
 
 def test_the_staging_copy_is_removed_afterwards(tmp_path: Path) -> None:
@@ -224,11 +224,10 @@ def test_restoring_the_latest_backup_puts_it_in_place_and_keeps_the_current_data
 
     assert backup.restore_latest(NOW) == "restored"
 
-    restored = sqlite3.connect(tmp_path / "data" / "franca.db").execute("SELECT count(*) FROM notes").fetchone()
-    assert restored == (1,)
+    assert count_notes(tmp_path / "data" / "franca.db") == 1
     kept = list((tmp_path / "data").glob("franca-before-restore-*.db"))
     assert len(kept) == 1
-    assert sqlite3.connect(kept[0]).execute("SELECT count(*) FROM notes").fetchone() == (0,)
+    assert count_notes(kept[0]) == 0
 
 
 def test_restoring_is_refused_while_the_app_is_running(tmp_path: Path) -> None:
@@ -438,3 +437,101 @@ def test_a_report_is_a_post_with_the_token(tmp_path: Path) -> None:
     assert sent[0].get_method() == "POST"
     assert sent[0].full_url == "http://status:8080/api/v1/endpoints/nightly_backup/external?success=true"
     assert sent[0].get_header("Authorization") == "Bearer " + "t" * 40
+
+
+# --- a new installation
+
+
+def test_before_the_app_has_made_its_database_the_first_backup_waits(tmp_path: Path) -> None:
+    backup, restic = make(tmp_path)
+    (tmp_path / "data" / "franca.db").unlink()
+
+    result = backup.back_up(NOW)
+
+    assert result == "waiting-for-database"
+    assert restic.commands == []
+    assert not (tmp_path / "status" / "backup.json").exists()
+    assert backup.healthy(NOW)
+
+
+def test_the_wait_for_the_database_keeps_the_time_it_started(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    (tmp_path / "data" / "franca.db").unlink()
+
+    backup.back_up(NOW)
+    backup.back_up(NOW + timedelta(hours=3))
+
+    assert backup.status.read("backup-waiting.json")["waitingSince"] == NOW.astimezone(UTC).isoformat(timespec="seconds")
+
+
+def test_no_database_a_day_after_installation_is_a_failure(tmp_path: Path) -> None:
+    backup, restic = make(tmp_path)
+    (tmp_path / "data" / "franca.db").unlink()
+    backup.back_up(NOW)
+
+    result = backup.back_up(NOW + timedelta(hours=25))
+
+    assert result == "backup-failed"
+    assert "data volume" in backup.status.read("backup.json")["message"]
+    assert restic.commands == []
+    assert not backup.healthy(NOW + timedelta(hours=25))
+
+
+def test_the_wait_lasts_a_day(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    (tmp_path / "data" / "franca.db").unlink()
+    backup.back_up(NOW)
+
+    assert backup.back_up(NOW + timedelta(hours=23)) == "waiting-for-database"
+    assert backup.healthy(NOW + timedelta(hours=23))
+    assert backup.back_up(NOW + timedelta(hours=24, minutes=1)) == "backup-failed"
+
+
+def test_the_wait_ends_when_the_database_is_there(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    (tmp_path / "data" / "franca.db").unlink()
+    backup.back_up(NOW)
+    make_database(tmp_path / "data" / "franca.db")
+
+    assert backup.back_up(NOW + timedelta(hours=1)) == "backed-up"
+
+
+def test_a_wait_start_without_a_time_zone_starts_the_wait_again(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    (tmp_path / "data" / "franca.db").unlink()
+    backup.status.write("backup-waiting.json", waitingSince="2026-12-01T00:00:00")
+
+    assert backup.back_up(NOW) == "waiting-for-database"
+    assert backup.status.read("backup-waiting.json")["waitingSince"] == NOW.astimezone(UTC).isoformat(timespec="seconds")
+
+
+def test_a_missing_backup_disk_is_a_failure_while_waiting_for_the_database(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    (tmp_path / "data" / "franca.db").unlink()
+    (backup.backups / fb.DISK_MARKER).unlink()
+
+    assert backup.back_up(NOW) == "backup-failed"
+
+
+def test_a_database_that_goes_missing_after_a_backup_is_a_failure(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    backup.back_up(NOW)
+    (tmp_path / "data" / "franca.db").unlink()
+
+    assert backup.back_up(NOW) == "backup-failed"
+
+
+@pytest.mark.parametrize("text", ["[]", '"backed-up"', "null", "{not json"])
+def test_a_status_file_that_is_not_a_json_object_counts_as_no_status(tmp_path: Path, text: str) -> None:
+    status = fb.StatusFiles(tmp_path)
+    (tmp_path / "backup.json").write_text(text, encoding="utf-8")
+
+    assert status.read("backup.json") == {}
+
+
+def test_the_health_check_reads_a_damaged_status_file_as_no_backup_yet(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    backup.status.folder.mkdir(parents=True, exist_ok=True)
+    (backup.status.folder / "backup.json").write_text('"backed-up"', encoding="utf-8")
+
+    assert backup.healthy(NOW)

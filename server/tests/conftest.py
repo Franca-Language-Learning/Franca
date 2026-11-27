@@ -8,6 +8,8 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Connection, Engine
 
+from franca.api import anti_forgery
+from franca.api.dependencies import cookie_name
 from franca.platform import db
 
 
@@ -37,7 +39,7 @@ class FrancaTestClient(TestClient):
 
     def request(self, method: str, url: Any, **kwargs: Any) -> Any:  # type: ignore[override]
         if method.upper() not in {"GET", "HEAD", "OPTIONS"}:
-            name = "__Host-franca_csrf" if str(self.base_url).startswith("https") else "franca_csrf"
+            name = cookie_name(anti_forgery.COOKIE, secure=str(self.base_url).startswith("https"))
             if name not in self.cookies:
                 super().request("GET", "/api/v1/health")
             headers = dict(kwargs.pop("headers", None) or {})

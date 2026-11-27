@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://franca.local/spec/lexeme.schema.json",
+  "title": "Franca lexicon entry (lexicon/<key>.yaml)",
+  "description": "One word (lexeme) with its senses, inflected forms, verb details and pronunciations. Imported into catalogue_lexeme_v and the tables that refer to it. Each sense becomes an item of its own, with the key <lexeme key>#<sense number>.",
+  "type": "object",
+  "required": ["key", "lemma", "upos", "senses"],
+  "additionalProperties": false,
+  "$defs": {
+    "sense": {
+      "type": "object",
+      "required": ["gloss_en"],
+      "additionalProperties": false,
+      "properties": {
+        "gloss_en": { "$ref": "common.schema.json#/$defs/text" },
+        "definition_tl": { "$ref": "common.schema.json#/$defs/text" },
+        "register": { "$ref": "common.schema.json#/$defs/register", "default": "neutral" },
+        "variety": {
+          "description": "Only where the sense is used in one variety.",
+          "$ref": "common.schema.json#/$defs/variety"
+        },
+        "level": { "$ref": "common.schema.json#/$defs/level" },
+        "examples": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/example" } },
+        "pictures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["media", "alt"],
+            "additionalProperties": false,
+            "properties": {
+              "media": { "$ref": "common.schema.json#/$defs/sha256" },
+              "alt": {
+                "description": "The text for people who cannot see the picture.",
+                "$ref": "common.schema.json#/$defs/english_first"
+              }
+            }
+          }
+        }
+      }
+    },
+    "form": {
+      "description": "An inflected form in a paradigm cell from pack.yaml. A cell can have more than one variant, in the order given. A form that does not exist is written with nonexistent: true and no form.",
+      "type": "object",
+      "required": ["cell"],
+      "additionalProperties": false,
+      "properties": {
+        "cell": { "type": "string", "pattern": "^[a-z0-9._-]+$" },
+        "form": { "$ref": "common.schema.json#/$defs/text" },
+        "variety": { "$ref": "common.schema.json#/$defs/variety" },
+        "nonexistent": { "type": "boolean", "default": false }
+      },
+      "if": { "properties": { "nonexistent": { "const": true } }, "required": ["nonexistent"] },
+      "then": { "not": { "required": ["form"] } },
+      "else": { "required": ["form"] }
+    },
+    "verb": {
+      "type": "object",
+      "required": ["class", "stem"],
+      "additionalProperties": false,
+      "properties": {
+        "class": { "description": "A verb class from pack.yaml.", "type": "string", "pattern": "^[a-z_]+$" },
+        "stem": { "$ref": "common.schema.json#/$defs/text" },
+        "vowel_pattern": { "$ref": "common.schema.json#/$defs/text" },
+        "separable_particle": { "$ref": "common.schema.json#/$defs/text" },
+        "subject": { "enum": ["any", "third_person", "impersonal"], "default": "any" },
+        "chart_rank": {
+          "description": "The verb's place in the verb charts, from 1.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "review_status": { "$ref": "common.schema.json#/$defs/review_status" },
+        "auxiliaries": {
+          "description": "The auxiliaries of the perfect, with the condition for each where there are two.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["auxiliary"],
+            "additionalProperties": false,
+            "properties": {
+              "auxiliary": { "$ref": "common.schema.json#/$defs/item_key" },
+              "condition_en": { "$ref": "common.schema.json#/$defs/text" },
+              "example": { "$ref": "common.schema.json#/$defs/bilingual" }
+            }
+          }
+        },
+        "rules": {
+          "description": "The rules (from grammar files) that are shown beside the verb's chart.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "common.schema.json#/$defs/item_key" }
+        }
+      }
+    }
+  },
+  "properties": {
+    "key": { "$ref": "common.schema.json#/$defs/item_key" },
+    "lemma": { "$ref": "common.schema.json#/$defs/text" },
+    "upos": { "$ref": "common.schema.json#/$defs/upos" },
+    "frequency_rank": { "type": "integer", "minimum": 1 },
+    "level": { "$ref": "common.schema.json#/$defs/level" },
+    "added_for_course": {
+      "description": "true: not in the frequency lists, added because the course needs it.",
+      "type": "boolean",
+      "default": false
+    },
+    "review_status": { "$ref": "common.schema.json#/$defs/review_status" },
+    "features": {
+      "description": "Grammatical features with Universal Dependencies names, for example Gender: [Com]. A word that takes both de and het has two values.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Z][A-Za-z]*$" },
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "uniqueItems": true,
+        "items": { "type": "string", "pattern": "^[A-Z0-9][A-Za-z0-9]*$" }
+      }
+    },
+    "senses": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/sense" } },
+    "forms": { "type": "array", "items": { "$ref": "#/$defs/form" } },
+    "verb": { "$ref": "#/$defs/verb" },
+    "pronunciations": { "$ref": "common.schema.json#/$defs/pronunciations" }
+  },
+  "if": { "properties": { "upos": { "enum": ["VERB", "AUX"] } } },
+  "else": { "not": { "required": ["verb"] } }
+}

@@ -1,0 +1,16 @@
+# A fixture contrast between two sounds, with a minimal pair and its recordings.
+kind: contrast
+key: fx:contrast:ui-uu
+sounds: [fx:sound:ui, fx:sound:uu]
+priority: 1
+note_en: Fixture note about the contrast.
+minimal_pairs:
+  - a: fixa
+    b: fixb
+    recordings:
+      - side: a
+        speaker: speaker-one
+        media: 486ea46224d1bb4fb680f34f7c9ad96a8f24ec88be73ea8e5a6c65260e9cb8a7
+      - side: b
+        speaker: speaker-one
+        media: 3fdba35f04dc8c462986c992bcf875546257113072a909c162f7e470e581e278

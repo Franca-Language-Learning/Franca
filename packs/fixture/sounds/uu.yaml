@@ -1,0 +1,5 @@
+# The second fixture sound of the contrast in ui-uu.yaml.
+kind: sound
+key: fx:sound:uu
+ipa: y
+name_en: the fixture uu sound

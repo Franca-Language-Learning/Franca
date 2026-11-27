@@ -58,9 +58,10 @@
       "groupName": "GitHub Actions"
     },
     {
-      "description": "A uv update can change _virtualenv.py, whose hash is in tools/startup-files-allowed.txt, so it waits for a review.",
+      "description": "A uv update can change _virtualenv.py, whose hash is in tools/startup-files-allowed.txt, so updates to the uv program and the uv image are reviewed before they are merged.",
       "matchDepNames": [
-        "astral-sh/uv"
+        "astral-sh/uv",
+        "ghcr.io/astral-sh/uv"
       ],
       "automerge": false
     },
@@ -77,31 +78,136 @@
         "docker"
       ],
       "pinDigests": true
+    },
+    {
+      "description": "Chromium for the browser tests comes from Playwright's image, which has to match the version of @playwright/test, so the two are updated together.",
+      "matchPackageNames": [
+        "@playwright/test",
+        "mcr.microsoft.com/playwright"
+      ],
+      "groupName": "Playwright"
+    },
+    {
+      "description": "Updates to source code built in the Dockerfiles are reviewed before they are merged, because the version is also written in the build flags of the same stage, and Renovate does not update those.",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchDatasources": [
+        "github-tags"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "There are no release dates for Renovate on registries other than Docker Hub, so the seven-day rule is not applied to these images, and their updates are reviewed before they are merged. An update to mcr.microsoft.com/playwright cannot be merged before the matching @playwright/test update, because the two versions are compared in infra/tests/test_browser_image.py.",
+      "matchPackageNames": [
+        "mcr.microsoft.com/playwright",
+        "lscr.io/linuxserver/socket-proxy",
+        "ghcr.io/astral-sh/uv"
+      ],
+      "minimumReleaseAgeBehaviour": "timestamp-optional",
+      "automerge": false
+    },
+    {
+      "description": "The Tailscale image and the Tailscale source built in the same Dockerfile are updated together, and reviewed.",
+      "matchPackageNames": [
+        "tailscale/tailscale"
+      ],
+      "groupName": "Tailscale",
+      "automerge": false
+    },
+    {
+      "description": "The Caddy images and the Caddy version built with xcaddy are updated together, and reviewed.",
+      "matchPackageNames": [
+        "caddy",
+        "caddyserver/caddy"
+      ],
+      "groupName": "Caddy",
+      "automerge": false
+    },
+    {
+      "description": "The cosign program downloaded by the installer is checked against a hash, and the hash is updated by a person.",
+      "matchPackageNames": [
+        "sigstore/cosign"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "Node.js in the pipeline (.nvmrc) and in caddy.Dockerfile are updated together.",
+      "matchDepNames": [
+        "node"
+      ],
+      "groupName": "Node.js"
     }
   ],
   "customManagers": [
     {
       "customType": "regex",
-      "description": "The uv version pinned in pyproject.toml and the workflows.",
+      "description": "Versions marked with a renovate comment in pyproject.toml and the workflows: uv, and the Grype and Syft versions of the scan and SBOM actions.",
       "managerFilePatterns": [
         "/^\\.github/workflows/.+\\.ya?ml$/",
         "/^pyproject\\.toml$/"
       ],
       "matchStrings": [
-        "(?:version: |required-version = )\"(?:==)?(?<currentValue>[0-9][^\"]*)\" # renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)"
+        "(?:(?:grype-|syft-)?version: |required-version = )\"(?:==)?(?<currentValue>[0-9v][^\"]*)\" # renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)"
       ]
     },
     {
       "customType": "regex",
-      "description": "Images pulled by the rehearsal scripts, marked with a renovate comment. Renovate adds their digests, as for the Dockerfiles.",
+      "description": "Images in Python scripts, marked with a renovate comment and pinned by digest, as in the Dockerfiles.",
       "managerFilePatterns": [
-        "/^infra/tests/.+\\.py$/"
+        "/^infra/.+\\.py$/",
+        "/^installer/.+\\.py$/"
       ],
       "matchStrings": [
         "= \"(?<depName>[a-z0-9./-]+):(?<currentValue>[^\"@\\s]+)(?:@(?<currentDigest>sha256:[a-f0-9]{64}))?\"  # renovate: image"
       ],
       "datasourceTemplate": "docker",
       "autoReplaceStringTemplate": "= \"{{depName}}:{{newValue}}{{#if newDigest}}@{{newDigest}}{{/if}}\"  # renovate: image"
+    },
+    {
+      "customType": "regex",
+      "description": "Images named in the workflows, marked with a renovate comment.",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/.+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        ": \"(?<depName>[a-z0-9./-]+):(?<currentValue>[^\"@\\s]+)(?:@(?<currentDigest>sha256:[a-f0-9]{64}))?\"  # renovate: image"
+      ],
+      "datasourceTemplate": "docker",
+      "autoReplaceStringTemplate": ": \"{{depName}}:{{newValue}}{{#if newDigest}}@{{newDigest}}{{/if}}\"  # renovate: image"
+    },
+    {
+      "customType": "regex",
+      "description": "Source code cloned in the Dockerfiles: the release tag and the commit it is checked against.",
+      "managerFilePatterns": [
+        "/^infra/images/.+Dockerfile$/"
+      ],
+      "matchStrings": [
+        "--branch (?<currentValue>\\S+) https://github\\.com/(?<depName>[\\w.-]+/[\\w.-]+)[^\\n]*\\n(?:[^\\n]*\\n)?\\s*&& test \"\\$\\(git rev-parse HEAD\\)\" = (?<currentDigest>[a-f0-9]{40})"
+      ],
+      "datasourceTemplate": "github-tags"
+    },
+    {
+      "customType": "regex",
+      "description": "The Caddy version built with xcaddy, which has to match the Caddy images in the same Dockerfile.",
+      "managerFilePatterns": [
+        "/^infra/images/caddy\\.Dockerfile$/"
+      ],
+      "matchStrings": [
+        "xcaddy build (?<currentValue>v\\S+)"
+      ],
+      "depNameTemplate": "caddyserver/caddy",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "description": "Programs downloaded by the installer, marked with a renovate comment. Their hashes are updated by a person. Until that is done, the cosign check in the Container bundle job fails on the update.",
+      "managerFilePatterns": [
+        "/^installer/.+\\.py$/"
+      ],
+      "matchStrings": [
+        "/releases/download/(?<currentValue>v[^/]+)/[^\"]*\"  # renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)"
+      ]
     }
   ]
 }

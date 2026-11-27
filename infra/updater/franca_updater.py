@@ -27,9 +27,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import ssl
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
@@ -128,13 +130,49 @@ def parse_images(lines: Sequence[str]) -> dict[str, str]:
 Fetch = Callable[[str], bytes]
 
 
-def http_fetch(url: str) -> bytes:
+# The pauses, in seconds, before the second and third try of a download. A try is repeated when the connection times out
+# or is lost, or when the server answers with a 5xx error. A wrong address, a refusal (4xx) or a certificate that does
+# not check out is not tried again.
+RETRY_PAUSES = (5.0, 20.0)
+
+
+def _worth_trying_again(error: OSError) -> bool:
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code >= 500
+    if isinstance(error, urllib.error.URLError):
+        return isinstance(error.reason, OSError) and not isinstance(error.reason, ssl.SSLCertVerificationError)
+    return isinstance(error, (TimeoutError, ConnectionError))
+
+
+def http_fetch(
+    url: str,
+    limit: int = 1_000_000,
+    accept: str = "application/vnd.github+json",
+    pause: Callable[[float], None] = time.sleep,
+) -> bytes:
+    """The body at an https address. UpdateError is raised for a body larger than the limit. The body is not cut short.
+    When the connection times out or is lost, or the server answers with a 5xx error, the download is tried again after
+    each pause in RETRY_PAUSES. A body shorter than its Content-Length counts as a lost connection."""
     if not url.startswith("https://"):
         raise UpdateError(f"Only https addresses are read: {url[:120]}")
-    request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "franca-updater"})  # noqa: S310
-    with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - the URLs are https and fixed
-        body: bytes = response.read(1_000_000)
-        return body
+    request = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": "franca-updater"})  # noqa: S310
+    for seconds in (*RETRY_PAUSES, None):
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - the URLs are https and fixed
+                body: bytes = response.read(limit + 1)
+                expected = response.headers.get("Content-Length")
+                if expected is not None and expected.isdigit() and len(body) < min(int(expected), limit + 1):
+                    raise ConnectionResetError(f"The connection closed before the whole answer from {url[:120]} had arrived.")
+            break
+        except OSError as error:
+            if seconds is None or not _worth_trying_again(error):
+                raise
+            if isinstance(error, urllib.error.HTTPError):
+                error.close()
+            pause(seconds)
+    if len(body) > limit:
+        raise UpdateError(f"The answer from {url[:120]} is larger than {limit} bytes.")
+    return body
 
 
 @dataclass(slots=True)
@@ -349,7 +387,7 @@ def health_probe(url: str) -> Probe:
             with urllib.request.urlopen(url, timeout=5) as response:  # noqa: S310 - a fixed address inside the bundle
                 answer = json.loads(response.read(10_000))
                 return str(answer.get("version")) if answer.get("status") == "ok" else None
-        except OSError, ValueError:
+        except (OSError, ValueError):
             return None
 
     return probe
@@ -387,7 +425,7 @@ class StatusFile:
         """The last status written, or an empty dict when there is none or it cannot be read."""
         try:
             loaded = json.loads(self.path.read_text(encoding="utf-8"))
-        except OSError, ValueError:
+        except (OSError, ValueError):
             return {}
         return {str(name): str(value) for name, value in loaded.items()} if isinstance(loaded, dict) else {}
 
@@ -402,7 +440,7 @@ class HighWaterMark:
     def read(self) -> Version | None:
         try:
             return Version.parse(self.path.read_text(encoding="utf-8"))
-        except OSError, UpdateError:
+        except (OSError, UpdateError):
             return None
 
     def raise_to(self, version: Version) -> None:

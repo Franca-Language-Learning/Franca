@@ -1,12 +1,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { Button } from "react-aria-components";
+import { ACCOUNT_SWITCHED_OFF } from "../../account/messages";
 import { ApiError, getPasskeySignInOptions, signInWithPasskey } from "../../api/client";
 import { forgetPasskeyOnDevice, PasskeyCancelled, passkeysSupported, signInOnDevice } from "./webauthn";
 
 function signInFailure(error: unknown): string {
   if (error instanceof PasskeyCancelled) return "You are not signed in, because the passkey window was closed or took too long. To try again, select Sign in with a passkey.";
-  if (error instanceof ApiError && error.detail === "disabled") return "Your account is switched off. Ask the person who runs Franca to switch it on again.";
+  if (error instanceof ApiError && error.detail === "disabled") return ACCOUNT_SWITCHED_OFF;
   if (error instanceof ApiError && error.detail === "passkey-unknown")
     return "This passkey is not linked to a Franca account. Sign in with Google, then add a new passkey on the Passkeys page.";
   if (error instanceof ApiError && error.status === 401)

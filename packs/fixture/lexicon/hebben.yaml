@@ -1,0 +1,39 @@
+# A fixture verb, with one feature, an irregular past with two variants, a form that does not exist, and verb details.
+key: fx:lexeme:hebben
+lemma: hebben
+upos: VERB
+frequency_rank: 12
+level: a1
+features:
+  VerbForm: [Inf]
+senses:
+  - gloss_en: to have
+    definition_tl: Fixture definition.
+    examples:
+      - tl: Fixture sentence with hebben.
+        en: Fixture sentence with to have.
+        media: baa5a0964d3320fbc0c6a922140453c8513ea24ab8fd0577034804a967248096
+  - gloss_en: to have to (with te)
+    register: informal
+    variety: fx-south
+    level: a2
+forms:
+  - cell: past.sg
+    form: had
+  - cell: past.sg
+    form: hadde
+    variety: fx-south
+  - cell: imperative
+    nonexistent: true
+verb:
+  class: irregular
+  stem: heb
+  vowel_pattern: e-a-a
+  subject: any
+  chart_rank: 2
+  review_status: native_checked
+  auxiliaries:
+    - auxiliary: fx:lexeme:hebben
+      condition_en: Always.
+      example: {tl: Fixture perfect sentence., en: Fixture perfect sentence.}
+  rules: [fx:grammar:kofschip-rule]

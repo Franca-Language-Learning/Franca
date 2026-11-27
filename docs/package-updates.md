@@ -25,10 +25,43 @@ Renovate opens a pull request for a vulnerability straight away, but the lock ca
 
 ## uv itself
 
-The uv version is pinned in `required-version` in `pyproject.toml` and in the `version` of setup-uv in `.github/workflows/ci.yml`. It is pinned because `tools/startup-files-allowed.txt` has the hash of the `_virtualenv.py` file that uv writes into each environment. Renovate updates both places in one pull request, which waits for a review. If the start-up file check fails, read the new `_virtualenv.py`, then update its hash in `tools/startup-files-allowed.txt` in the same pull request. After the merge, developers install the new version with `uv self update <new version>`, or with the package manager they used to install uv.
+The uv version is pinned in `required-version` in `pyproject.toml`. The same version is installed in the pipeline, because setup-uv reads it from there when no version is given. It is pinned because `tools/startup-files-allowed.txt` has the hash of the `_virtualenv.py` file that uv writes into each environment. Renovate updates it in a pull request that has to be reviewed. If the start-up file check fails, read the new `_virtualenv.py`, then update its hash in `tools/startup-files-allowed.txt` in the same pull request. After the merge, developers install the new version with `uv self update <new version>`, or with the package manager they used to install uv.
 
 ## Container images
 
-The pipeline builds both container images and scans them with Grype. A finding with a severity of high or critical stops the pipeline when a fixed version exists. The final stage of each image installs the operating system's security updates, so most findings in Debian or Alpine packages are fixed by building the images again. Renovate updates the base images.
+The container images are built and scanned with Grype in the pipeline. A finding with a severity of high or critical stops the pipeline when a fixed version exists. The final stage of each image installs the operating system's security updates, so most findings in Debian or Alpine packages are fixed by building the images again. Renovate updates the base images.
 
 When a finding does not apply to Franca and the fix is not released yet, it can be ignored in `.grype.yaml`, with a comment that says why it does not apply. A rule names the package version, so it stops applying when the package is updated. Remove a rule when the fixed version is in the image.
+
+## Images, source code, programs and the browser pinned by digest, commit or hash
+
+A tag such as `python:3.14.10-slim-trixie` or `v0.19.1` can be moved to other content after it is published. So the images, source code and programs that Franca is built with are pinned as shown here:
+
+| What | How it is pinned | Updated by Renovate through |
+|---|---|---|
+| Base images in the Dockerfiles, including `COPY --from` images such as uv | `image:tag@sha256:...` | The Dockerfile manager |
+| Helper images in `infra/compose.yaml` | `image:tag@sha256:...` | The Compose manager |
+| Images in the scripts and workflows, including the BuildKit builder of the release | `image:tag@sha256:...` with a `# renovate: image` comment | The custom managers in `.github/renovate.json` |
+| Source code cloned in the Dockerfiles | The release tag, and a check of the commit it points to | The custom manager for cloned sources. These updates are reviewed before they are merged |
+| Chromium for the browser tests | Playwright's image, by digest | Grouped with `@playwright/test`, because the versions have to match |
+| pnpm | The version and its SHA-512 in `packageManager` in `package.json`. The hash is checked by Corepack in the pipeline and in `caddy.Dockerfile` | The npm manager |
+| Node.js in the pipeline | The version in `.nvmrc`, the same as the Node image in `caddy.Dockerfile`, and the two are updated together | The nvm and Dockerfile managers |
+| Grype and Syft in the scan and SBOM actions | The version. The download is checked against the checksum file of the same release, so it is not pinned by hash | The custom manager for marked versions |
+| cosign in the installer | The version in the address and the SHA-256 of the file | The custom manager for the installer's programs. The hash is updated by a person, and the download is checked against it in the Container bundle job |
+| GitHub Actions | The full commit SHA, with the tag in a comment | The GitHub Actions manager |
+
+Franca's own images are named by digest in the release file, which is read by the installer and the updater.
+
+Pester and PSScriptAnalyzer, which are used to check the Windows installer in the pipeline, are installed from the PowerShell Gallery by version only. Install-Module has no option to check a hash, and Renovate cannot update them.
+
+There are no model files yet. The speech models (epic E09) will be pinned by hash in the same way.
+
+Images on registries other than Docker Hub (mcr.microsoft.com, lscr.io and ghcr.io) come with no release dates that Renovate can read, so the seven-day rule is not applied to them. Updates to these images are reviewed before they are merged, and an update to the Playwright image is held until the matching @playwright/test update is ready.
+
+`tools/check_pins.py` is run with the server's tests and in the Container bundle job, and fails when an image has no digest, a pinned image in a Python script or workflow has no `# renovate: image` marker, or a cloned source has no commit check. Renovate adds the digest when it updates an image. To add one by hand, run this on a computer with Docker and access to the registries, and copy the digests that are printed into the files:
+
+```sh
+python3 -I tools/check_pins.py --resolve
+```
+
+The same command is run in the Container bundle job, so the digests can also be read from its log.

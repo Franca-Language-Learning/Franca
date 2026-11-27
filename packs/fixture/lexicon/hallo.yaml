@@ -1,0 +1,7 @@
+# A fixture interjection, which a word in the transcript of fixture-greeting.yaml is linked to.
+key: fx:lexeme:hallo
+lemma: hallo
+upos: INTJ
+level: a1
+senses:
+  - gloss_en: hello

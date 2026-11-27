@@ -1,0 +1,47 @@
+# A fixture grammar point with two explanation sections, a decision rule with two steps, an example, an exception and a checker rule.
+key: fx:grammar:niet-geen
+title: {tl: Fixture niet of geen, en: Fixture not or no}
+level: a1
+review_status: draft
+requires: [fx:grammar:article-indefinite, fx:grammar:word-order-v2]
+explanations:
+  - depth: short
+    section: concept
+    body_en_md: Fixture explanation in **Markdown**.
+  - depth: full
+    section: common_errors
+    body_en_md: Fixture list of common errors.
+    body_tl_md: Fixture list in the target language.
+rules:
+  - key: fx:grammar:niet-geen-rule
+    type: decision
+    title: {tl: Fixture beslisregel, en: Fixture decision rule}
+    why_en_md: Fixture reason.
+    steps:
+      - id: ng-1
+        question: {en: "Is there a noun with no article or with een?", tl: "Fixture vraag?"}
+        outcomes:
+          - answer: {en: "Yes"}
+            action_en: Use geen.
+          - answer: {en: "No"}
+            action_en: Go to the next question.
+            next_step: ng-2
+      - id: ng-2
+        question: {en: "Fixture second question?"}
+        outcomes:
+          - answer: {en: Always}
+            action_en: Use niet.
+    examples:
+      - tl: Fixture example with geen.
+        en: Fixture example with no.
+        step: ng-1
+        worked: true
+    exceptions:
+      - lexeme: fx:lexeme:zakje
+        note_en: Fixture exception note.
+        example_tl: Fixture exception example.
+checker_rules:
+  - id: geen-before-noun
+    error_type: word_choice
+    description_en: Fixture checker rule.
+    step: ng-1

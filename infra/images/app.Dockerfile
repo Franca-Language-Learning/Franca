@@ -1,9 +1,10 @@
 # The application service (container "app"), story E01-005. Built from the repository root:
 #   docker build -f infra/images/app.Dockerfile .
-# Base images are named by tag here; Renovate adds and updates their digests.
+# Base images are named by tag and digest, and Renovate updates both. A tag without a digest is reported by
+# tools/check_pins.py, and the pipeline fails.
 
-FROM python:3.14.10-slim-trixie AS build
-COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /usr/local/bin/uv
+FROM python:3.14.10-slim-trixie@sha256:22eafb370920ad8b429e0aec3fff433e0669968519f5d60469d83729c138b28b AS build
+COPY --from=ghcr.io/astral-sh/uv:0.11.32@sha256:df4cae8f3a96d175e2e5f992e597550000edbe78fdc2594d5cd8de1a217f504c /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never UV_PROJECT_ENVIRONMENT=/app/.venv
 WORKDIR /src
 COPY pyproject.toml uv.lock ./
@@ -13,7 +14,7 @@ RUN uv sync --locked --no-dev --package franca-server
 # The build stops if a package installs a file that Python would run at start-up (stories E01-004 and E01-013).
 RUN tools/check-startup-files.sh /app/.venv
 
-FROM python:3.14.10-slim-trixie
+FROM python:3.14.10-slim-trixie@sha256:22eafb370920ad8b429e0aec3fff433e0669968519f5d60469d83729c138b28b
 ARG FRANCA_VERSION=0.1.0-dev
 # Security fixes from Debian that came out after the base image was built are installed here. The vulnerability scan
 # in the pipeline fails on a high or critical finding that has a fix.
@@ -36,6 +37,6 @@ WORKDIR /app
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=4)"]
-# The database is brought up to date before the service starts. From story E01-007 the updater does this after
-# taking a snapshot, and then there is nothing left to do in this step.
+# The database is brought up to date with the migrations before the service starts. When the updater installs a release,
+# it takes a snapshot of the database before this runs, and puts the snapshot back if the new release does not start.
 CMD ["sh", "-c", "python -m franca.platform.migrate && exec uvicorn franca.api:create_app --factory --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips '*'"]

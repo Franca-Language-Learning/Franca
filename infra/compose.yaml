@@ -2,8 +2,9 @@
 #   docker compose -f infra/compose.yaml up -d --build --wait
 # The other containers (worker, speech, languagetool) are added in their own stories.
 #
-# The installer writes the .env file beside this file. A release names its images by digest there
-# (FRANCA_APP_IMAGE, FRANCA_CADDY_IMAGE, FRANCA_UPDATER_IMAGE), and the updater changes them (story E01-007).
+# The installer writes the .env file beside this file. The images of a release are named by digest there
+# (FRANCA_APP_IMAGE, FRANCA_CADDY_IMAGE, FRANCA_UPDATER_IMAGE, FRANCA_BACKUP_IMAGE, FRANCA_TAILSCALE_IMAGE and
+# FRANCA_STATUS_IMAGE), and the updater changes them (story E01-007).
 # The updater and its socket proxy are in the "updates" profile, the backup is in the "backups" profile, the private
 # network is in the "tailnet" profile and health monitoring is in the "monitoring" profile. The installer switches
 # them on with COMPOSE_PROFILES=updates,backups,tailnet,monitoring.
@@ -100,7 +101,7 @@ services:
   # network, which only the updater joins.
   socket-proxy:
     <<: *hardening
-    image: lscr.io/linuxserver/socket-proxy:3.4.8-r0-ls107
+    image: lscr.io/linuxserver/socket-proxy:3.4.8-r0-ls107@sha256:6beb1743581ec3b2ed1a2bafd617e8c7a1d7ae2fe835293e333327618fc2b925
     profiles: [updates]
     environment:
       CONTAINERS: 1

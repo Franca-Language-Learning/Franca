@@ -1,12 +1,12 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import axe from "axe-core";
 import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppRoot } from "../../AppRoot";
 import { server } from "../../mocks/server";
 import { installFakeWebAuthn, removeFakeWebAuthn } from "../../mocks/webauthn";
 import { fromBase64url, toBase64url } from "./webauthn";
+import { expectNoAxeViolations } from "../../testing/axe";
 
 const PHONE = { id: "cGhvbmU", label: "Phone", createdAt: "2026-12-01T09:00:00.000Z", lastUsedAt: null, synced: true };
 const OPTIONS = {
@@ -153,8 +153,7 @@ describe("passkeys page", () => {
     const { container } = render(<AppRoot initialPath="/passkeys" />);
     await screen.findByRole("heading", { level: 3, name: "Phone" });
     await userEvent.click(within(container).getByRole("button", { name: "Remove Phone" }));
-    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
-    expect(results.violations).toEqual([]);
+    await expectNoAxeViolations(container);
   });
 });
 

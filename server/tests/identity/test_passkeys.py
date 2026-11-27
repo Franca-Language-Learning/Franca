@@ -1,22 +1,20 @@
 """Passkeys as a second way to sign in (story E02-001), checked with a software passkey device."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import pytest
+from identity_helpers import NOW, ORIGIN
+from identity_helpers import sign_in as sign_in_with_google
 from passkey_device import PasskeyDevice, b64url
 from sqlalchemy import Connection, text
 
 from franca import identity
 
-ORIGIN = "https://franca.example.ts.net"
 RP = identity.relying_party(ORIGIN)
-NOW = datetime(2026, 12, 1, 9, 0, tzinfo=UTC)
 
 
 def owner(connection: Connection) -> identity.Learner:
-    return identity.sign_in_with_google(
-        connection, subject="g-owner", email="owner@example.org", email_verified=True, name="Nik", owner_email="owner@example.org", now=NOW
-    )
+    return sign_in_with_google(connection)
 
 
 def add(connection: Connection, learner: identity.Learner, device: PasskeyDevice, label: str = "Phone") -> identity.Passkey:

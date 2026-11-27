@@ -1,0 +1,16 @@
+# A fixture can-do descriptor with two components and their evidence.
+key: fx:can-do:a1-shop
+level: a1
+activity: spoken_interaction
+descriptor:
+  en: Can ask for things in a shop and say how many.
+  tl: Fixture descriptor.
+components:
+  vocabulary:
+    - item: fx:lexeme:zakje
+    - item: fx:chunk:nodig-hebben
+      weight: 2
+  grammar:
+    - item: fx:grammar:niet-geen
+goals:
+  living: 1

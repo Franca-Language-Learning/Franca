@@ -1,0 +1,8 @@
+# A fixture grammar point that niet-geen.yaml requires, with one short explanation.
+key: fx:grammar:article-indefinite
+title: {tl: Fixture lidwoord een, en: Fixture indefinite article}
+level: a1
+explanations:
+  - depth: short
+    section: concept
+    body_en_md: Fixture explanation.
