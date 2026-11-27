@@ -62,6 +62,7 @@ def check(path: str, data: bytes = b"plain text\n", prints: object = NONE) -> li
         ".gitmodules",
         ".envrc",
         "infra/tls/server.crt",
+        "packs/nl-be/CLAUDE.md",  # notes inside a real pack are private like the rest of it
     ],
 )
 def test_private_paths_are_refused(path: str) -> None:
@@ -72,6 +73,7 @@ def test_private_paths_are_refused(path: str) -> None:
     "path",
     [
         "packs/fixture/course/u05-l03.lesson.yaml",
+        "packs/CLAUDE.md",  # the notes about the packs folder
         "server/src/franca/api/app.py",
         "docs/repository-split.md",
         ".env.example",
