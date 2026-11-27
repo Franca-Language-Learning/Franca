@@ -2,12 +2,13 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { Button, FieldError, Form, Input, Label, Text, TextField } from "react-aria-components";
+import { ACCOUNT_SWITCHED_OFF } from "../../account/messages";
 import { ApiError, signInWithRecoveryCode } from "../../api/client";
 
 function failure(error: unknown): string {
   if (error instanceof ApiError && error.detail === "too-many-attempts")
     return "There were too many wrong codes. Wait 15 minutes, then try again.";
-  if (error instanceof ApiError && error.detail === "disabled") return "Your account is switched off. Ask the person who runs Franca to switch it on again.";
+  if (error instanceof ApiError && error.detail === "disabled") return ACCOUNT_SWITCHED_OFF;
   if (error instanceof ApiError && error.status === 401)
     return "The e-mail address or the code is not right, or the code has been used already. Check both and try again.";
   return "Signing in did not work. Please try again.";

@@ -9,8 +9,9 @@
  *   - *.test.ts(x) files
  *   - src/test-setup.ts
  *   - src/mocks/ (the mock API)
+ *   - src/testing/ (helpers for the tests)
  */
-const TEST_CODE = "\\.test\\.tsx?$|^src/test-setup\\.ts$|^src/mocks/";
+const TEST_CODE = "\\.test\\.tsx?$|^src/test-setup\\.ts$|^src/mocks/|^src/testing/";
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {
   forbidden: [

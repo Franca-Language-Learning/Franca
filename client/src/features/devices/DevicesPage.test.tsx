@@ -1,10 +1,10 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import axe from "axe-core";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import { AppRoot } from "../../AppRoot";
 import { server } from "../../mocks/server";
+import { expectNoAxeViolations } from "../../testing/axe";
 
 const LAPTOP = { id: 12, deviceKind: "desktop", browser: "Chrome on Windows", signedInAt: "2026-12-01T09:00:00.000Z", lastUsedAt: "2026-12-03T18:20:00.000Z", current: true };
 const PHONE = { id: 9, deviceKind: "phone", browser: "Safari on iPhone", signedInAt: "2026-11-28T07:45:00.000Z", lastUsedAt: "2026-12-02T07:50:00.000Z", current: false };
@@ -64,8 +64,7 @@ describe("devices page", () => {
     server.use(http.get("*/api/v1/sessions", () => HttpResponse.json({ sessions: [LAPTOP, PHONE] })));
     const { container } = render(<AppRoot initialPath="/devices" />);
     await screen.findByRole("heading", { level: 2, name: /this device/ });
-    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
-    expect(results.violations).toEqual([]);
+    await expectNoAxeViolations(container);
   });
 });
 
