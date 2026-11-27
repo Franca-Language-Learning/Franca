@@ -54,6 +54,7 @@ MARKER = "franca:" + "private"  # files in the private repository have this mark
 PRIVATE_FOLDERS_ANYWHERE = {"packs", "harvest", "learner-data", "backups", "secrets"}
 PRIVATE_FOLDERS_ROOT_ONLY = {"content", "media"}
 PUBLIC_PREFIXES = ("packs/fixture/",)  # the made-up pack for the tests
+PUBLIC_PATHS = {"packs/claude.md"}  # the notes about the packs folder (paths in lower case)
 PRIVATE_EXTENSIONS = {".sqlite", ".sqlite3", ".db", ".db-wal", ".db-shm", ".db-journal", ".pem", ".key", ".crt", ".cer", ".p12", ".pfx"}
 PRIVATE_NAMES = {".gitmodules", ".envrc"}
 PUBLIC_ENV_NAMES = {".env.example"}
@@ -143,7 +144,7 @@ def _allowed_media_patterns() -> list[str]:
 
 
 def _private_path(lower: str) -> bool:
-    if lower.startswith(PUBLIC_PREFIXES):
+    if lower.startswith(PUBLIC_PREFIXES) or lower in PUBLIC_PATHS:
         return False
     parts = lower.split("/")
     name = parts[-1]
