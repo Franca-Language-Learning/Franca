@@ -1,15 +1,15 @@
 """Tests for tools/validate_pack.py (defect D17 of the M0 re-test, criterion E01-014 #9).
 
-The command checks a language pack folder against the schemas in contracts/pack. The real packs are in a private
-repository, and the command is run on them in that repository's pipeline. More people can read that log than the pack,
-so a problem is reported by file, place and rule name, with no text from the pack. The values in these tests are made
-up, and PACK_VALUE and PACK_KEY must not be in the output.
+The values in these tests are made up, and PACK_VALUE and PACK_KEY must not be in the output. The reason is in the
+module docstring. Some of the cases come from the review of pull request #38, which tried the command on broken copies
+of the fixture pack.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
 import socket
 import sys
@@ -32,6 +32,8 @@ def load_tool() -> ModuleType:
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    # Registered in sys.modules because dataclasses look up the module of a class. The two test files each load their
+    # own copy.
     sys.modules["validate_pack"] = module
     spec.loader.exec_module(module)
     return module
@@ -67,8 +69,12 @@ def run(capsys: pytest.CaptureFixture[str], *arguments: str) -> tuple[int, list[
     """The exit code, the lines written to standard output, and standard error."""
     code = validate_pack.main(list(arguments))
     captured = capsys.readouterr()
-    assert PACK_VALUE not in captured.out + captured.err
-    assert PACK_KEY not in captured.out + captured.err
+    output = captured.out + captured.err
+    for value in (PACK_VALUE, PACK_KEY):
+        # PyYAML writes some values in lower case in its messages, for example for !!float.
+        assert value not in output
+        assert value.lower() not in output
+    assert "Traceback" not in output
     return code, captured.out.splitlines(), captured.err
 
 
@@ -124,12 +130,20 @@ def test_a_file_instead_of_a_folder_is_a_usage_error(tmp_path: Path, capsys: pyt
 def test_a_file_of_unknown_type_is_reported_by_its_path(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     folder = pack(
         tmp_path,
-        {"notes/todo.yaml": f"note: {PACK_VALUE}\n", "lexicon/Capital.yaml": f"note: {PACK_VALUE}\n", "pack.yml": f"a: {PACK_VALUE}\n"},
+        {
+            "notes/todo.yaml": f"note: {PACK_VALUE}\n",
+            "lexicon/Capital.yaml": f"note: {PACK_VALUE}\n",
+            "pack.yml": f"a: {PACK_VALUE}\n",
+            "lexicon/hallo.YAML": f"a: {PACK_VALUE}\n",
+            "chunks/b.Yml": f"a: {PACK_VALUE}\n",
+        },
     )
     code, lines, _err = run(capsys, str(folder))
     assert code == 1
     assert sorted(problems(lines)) == [
+        "chunks/b.Yml: unknown-file-type",
         "lexicon/Capital.yaml: unknown-file-type",
+        "lexicon/hallo.YAML: unknown-file-type",
         "notes/todo.yaml: unknown-file-type",
         "pack.yml: unknown-file-type",
     ]
@@ -230,6 +244,149 @@ def test_a_problem_in_each_file_of_a_large_pack_leaves_no_value_in_the_output(tm
     code, lines, _err = run(capsys, str(folder))
     assert code == 1
     assert len(problems(lines)) == len(list(folder.rglob("*.yaml")))
+
+
+@pytest.mark.parametrize(
+    ("relative", "text", "expected"),
+    [
+        ("strings/ui.yaml", f"element_names: !!int {PACK_VALUE}\n", "yaml-value at line 1, column 16"),
+        ("strings/ui.yaml", f"element_names: !!float {PACK_VALUE}\n", "yaml-value at line 1, column 16"),
+        ("strings/ui.yaml", f"element_names: !!timestamp {PACK_VALUE}\n", "yaml-value at line 1, column 16"),
+        ("strings/ui.yaml", "element_names:\n  today: " + "9" * 6000 + "\n", "yaml-value at line 2, column 10"),
+        ("strings/ui.yaml", f"element_names:\n  today: {PACK_VALUE}\x07\n", "yaml-syntax at line 2, column 26"),
+    ],
+    ids=["int tag", "float tag", "timestamp tag", "long integer", "control character"],
+)
+def test_a_value_that_yaml_cannot_read_is_reported_by_line_and_column(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], relative: str, text: str, expected: str
+) -> None:
+    code, lines, _err = run(capsys, str(pack(tmp_path, {relative: text})))
+    assert code == 1
+    assert problems(lines) == [f"{relative}: {expected}"]
+    assert lines[-1] == "Files checked: 1. Problems: 1."
+
+
+@pytest.mark.parametrize("date", ["2026-13-45", "2026-02-30"])
+def test_an_unquoted_date_that_is_not_on_the_calendar_is_reported(tmp_path: Path, capsys: pytest.CaptureFixture[str], date: str) -> None:
+    text = fixture_text("pack.yaml").replace('checked_on: "2026-11-21"', f"checked_on: {date}")
+    line = text.splitlines().index(next(row for row in text.splitlines() if date in row)) + 1
+    code, lines, _err = run(capsys, str(pack(tmp_path, {"pack.yaml": text})))
+    assert code == 1
+    assert len(problems(lines)) == 1
+    assert problems(lines)[0].startswith(f"pack.yaml: yaml-value at line {line}, column ")
+    assert date not in "\n".join(lines)
+
+
+def test_deep_nesting_is_reported_and_the_other_files_are_checked(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    deep = "element_names: " + "[" * 2000 + PACK_VALUE + "]" * 2000 + "\n"
+    folder = pack(tmp_path, {"strings/ui.yaml": deep, "pack.yaml": "{}\n"})
+    code, lines, _err = run(capsys, str(folder))
+    assert code == 1
+    assert problems(lines) == ['pack.yaml: required at ""', "strings/ui.yaml: too-deep"]
+    assert lines[-1] == "Files checked: 2. Problems: 2."
+
+
+def test_deep_nesting_found_by_the_schema_check_is_reported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class TooDeep:
+        def iter_errors(self, _document: Any) -> Any:
+            raise RecursionError(PACK_VALUE)
+
+    monkeypatch.setattr(validate_pack, "validator", lambda *_args: TooDeep())
+    code, lines, _err = run(capsys, str(pack(tmp_path, {"pack.yaml": "{}\n"})))
+    assert (code, problems(lines)) == (1, ["pack.yaml: too-deep"])
+
+
+def test_an_unexpected_error_is_reported_by_its_type_without_its_message(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(*_args: Any) -> Any:
+        raise ValueError(PACK_VALUE)
+
+    monkeypatch.setattr(validate_pack, "check_file", fail)
+    code, lines, _err = run(capsys, str(pack(tmp_path, {"x.yaml": "{}\n", "pack.yaml": "{}\n"})))
+    assert code == 1
+    assert lines == ["pack.yaml: internal-error-ValueError", "x.yaml: internal-error-ValueError", "Files checked: 2. Problems: 2."]
+
+
+def test_a_file_that_cannot_be_read_is_reported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(*_args: Any) -> bytes:
+        raise PermissionError(PACK_VALUE)
+
+    monkeypatch.setattr(validate_pack, "read_file", refuse)
+    code, lines, _err = run(capsys, str(pack(tmp_path, {"pack.yaml": "{}\n"})))
+    assert (code, problems(lines)) == (1, ["pack.yaml: unreadable"])
+
+
+def test_a_file_over_the_size_limit_is_reported_and_not_read(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(validate_pack, "MAX_FILE_BYTES", 100)
+    folder = pack(tmp_path, {"strings/ui.yaml": f"element_names: [{PACK_VALUE}]\n" * 10, "pack.yaml": "# A file under the limit.\n{}\n"})
+    code, lines, _err = run(capsys, str(folder))
+    assert code == 1
+    assert problems(lines) == ['pack.yaml: required at ""', "strings/ui.yaml: too-large"]
+
+
+def test_the_size_limit_is_well_above_the_fixture_files() -> None:
+    largest = max(path.stat().st_size for path in FIXTURE.rglob("*.yaml"))
+    assert largest * 10 < validate_pack.MAX_FILE_BYTES
+
+
+# --- symlinks
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="no symlinks on this system")
+def test_a_symlink_is_reported_by_its_path_and_not_read(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.yaml").write_text(f"element_names: !!int {PACK_VALUE}\n{PACK_KEY}: 1\n", encoding="utf-8")
+    (outside / "lexicon").mkdir()
+    (outside / "lexicon" / "hallo.yaml").write_text(f"{PACK_KEY}: {PACK_VALUE}\n", encoding="utf-8")
+    folder = pack(tmp_path, {"pack.yaml": fixture_text("pack.yaml")})
+    (folder / "strings").mkdir()
+    (folder / "strings" / "ui.yaml").symlink_to(outside / "secret.yaml")
+    (folder / "lexicon").symlink_to(outside / "lexicon", target_is_directory=True)
+    (folder / "media").mkdir()
+    (folder / "media" / "gone.yaml").symlink_to(tmp_path / "missing.yaml")
+    code, lines, _err = run(capsys, str(folder))
+    assert code == 1
+    assert problems(lines) == ["lexicon: symlink", "media/gone.yaml: symlink", "strings/ui.yaml: symlink"]
+    assert lines[-1] == "Files checked: 4. Problems: 3."
+
+
+# --- file names in the output
+
+
+@pytest.mark.parametrize(
+    ("relative", "expected"),
+    [
+        ("notes/x\n::error::fixture-name.yaml", "notes/x\\x0a::error::fixture-name.yaml: unknown-file-type"),
+        ("::add-mask::fixture-name.yaml", "./::add-mask::fixture-name.yaml: unknown-file-type"),
+        (" ::warning::fixture-name.yaml", "./ ::warning::fixture-name.yaml: unknown-file-type"),
+        ("notes/\x1b[2Kfixture-name.yaml", "notes/\\x1b[2Kfixture-name.yaml: unknown-file-type"),
+        ("notes/a\rb\u202e.yaml", "notes/a\\x0db\\u202e.yaml: unknown-file-type"),
+        ("notes/##[error]fixture-name.yaml", "notes/##\\x5berror]fixture-name.yaml: unknown-file-type"),
+        ("notes/back\\slash.yaml", "notes/back\\x5cslash.yaml: unknown-file-type"),
+    ],
+    ids=["newline", "workflow command", "space and workflow command", "terminal escape", "carriage return", "old command", "backslash"],
+)
+def test_a_file_name_cannot_start_a_line_or_a_workflow_command(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], relative: str, expected: str
+) -> None:
+    folder = pack(tmp_path, {})
+    path = folder / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.write_text("a: 1\n", encoding="utf-8")
+    except OSError:
+        pytest.skip("this file system does not allow the name")
+    code, lines, _err = run(capsys, str(folder))
+    assert code == 1
+    assert lines == [expected, "Files checked: 1. Problems: 1."]
 
 
 # --- no network

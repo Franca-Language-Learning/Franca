@@ -30,6 +30,8 @@ def load_tool() -> ModuleType:
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    # Registered in sys.modules because dataclasses look up the module of a class. The two test files each load their
+    # own copy.
     sys.modules["validate_pack"] = module
     spec.loader.exec_module(module)
     return module

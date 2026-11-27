@@ -1,18 +1,27 @@
 """Checks a language pack folder against the pack schemas in contracts/pack.
 
-The *.yaml files under the folder are checked against the schema for their path (FILE_TYPES below), with the format
-checker, so that a date such as 2026-13-45 is a problem. A YAML mapping with a duplicate key is a problem, and so is a
-key that YAML reads as something other than text, such as 2026 or yes. A file whose path matches no file type is
-reported as an unknown file type. A *.yml file is reported in the same way, so that a misnamed file is not passed over.
-The checks across files, such as keys that refer to other files, belong to the pack builder (story E03-002) and are not
-made here.
+The argument is the pack folder (the folder with pack.yaml), not the root of the content repository. The *.yaml files
+under the folder are checked against the schema for their path (FILE_TYPES below), with the format checker, so that a
+date such as 2026-13-45 is a problem. A YAML mapping with a duplicate key is a problem, and so is a key that is read as
+something other than text, such as 2026 or yes. A file whose path matches no file type is reported as an unknown file
+type. A *.yml or *.YAML file is reported in the same way, so that a misnamed file is not passed over. A symlink is
+reported and not followed, and a file over MAX_FILE_BYTES is reported and not read. The checks across files, such as
+keys that refer to other files, belong to the pack builder (story E03-002) and are not made here.
 
 The real packs are kept in the private repository Franca-Content, and this command is run on them in that
-repository's pipeline. More people can read the log of that pipeline than the pack, so there is no text from the pack
-in the output. A problem is printed as one line with the file path relative to the pack folder, the name of the failed
-rule and the place in the file. The place is a JSON pointer, with * in place of a key that the schemas do not name, or
-for a YAML error a line and column. The error messages of jsonschema and PyYAML quote values and lines from the file,
-so they are not printed. The last line has the number of files checked and the number of problems.
+repository's pipeline. More people can read the log of that pipeline than the pack, so apart from the file paths there
+is no text from the pack in the output. A problem is printed as one line in the form `<path>: <rule> at <place>`, where
+the path is relative to the pack folder. The place is a JSON pointer, with * in place of a key that the schemas do not
+name, or for a YAML error a line and column. The error messages of jsonschema and PyYAML quote values and lines from
+the file, so they are not printed, and neither is the message of an unexpected error. The last line has the number of
+files checked and the number of problems.
+
+Rule names are the JSON Schema keywords, such as required or enum, and these names for problems found outside the
+schemas: duplicate-key, non-string-key, yaml-syntax, yaml-value, too-deep, too-large, encoding, unreadable, symlink,
+unknown-file-type, unresolvable-ref and internal-error-<type>.
+
+File paths are printed with escapes for characters that cannot be printed, such as \x0a for a new line, and with ./ in
+front of a path that starts with ::, so that a file name cannot start a new line or a GitHub Actions workflow command.
 
 Exit codes: 0 when there are no problems, 1 when there are problems, 2 for a usage error.
 
@@ -36,7 +45,7 @@ from __future__ import annotations
 import json
 import re
 import sys
-from collections.abc import Iterator, Sequence
+from collections.abc import Hashable, Iterator, Sequence
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -73,18 +82,37 @@ Run it with the locked packages of the server, from the root of a checkout:
 STRING_TAG = "tag:yaml.org,2002:str"
 MERGE_TAG = "tag:yaml.org,2002:merge"
 HIDDEN = "*"
+YAML_SUFFIXES = {".yaml", ".yml"}
+MAX_FILE_BYTES = 5 * 1024 * 1024  # No pack file is near this size. A larger file is a mistake and is not read.
 
 
 @dataclass(frozen=True)
 class Problem:
-    """One problem in a pack file. None of the fields has text from the file."""
+    """One problem in a pack file. Apart from the path, none of the fields has text from the file."""
 
     path: str
     rule: str
     place: str | None = None
 
     def __str__(self) -> str:
-        return f"{self.path}: {self.rule}" + (f" at {self.place}" if self.place is not None else "")
+        return f"{shown_path(self.path)}: {self.rule}" + (f" at {self.place}" if self.place is not None else "")
+
+
+def shown_path(path: str) -> str:
+    """A file path as it is printed: one line that cannot be read as a GitHub Actions workflow command or a terminal code.
+
+    A character that cannot be printed, or a backslash, is written as a Python escape such as \\x0a. The [ of ##[ is
+    written as \\x5b, because the Actions runner can take ##[name] in a line as an old-style command. A path that starts with ::,
+    after any spaces, has ./ in front.
+    """
+    shown = "".join(character if character.isprintable() and character != "\\" else escaped(character) for character in path)
+    shown = shown.replace("##[", "##\\x5b")
+    return "./" + shown if shown.lstrip().startswith("::") else shown
+
+
+def escaped(character: str) -> str:
+    code = ord(character)
+    return f"\\x{code:02x}" if code < 0x100 else f"\\u{code:04x}" if code < 0x10000 else f"\\U{code:08x}"
 
 
 @dataclass(frozen=True)
@@ -131,7 +159,7 @@ def schema_for(relative: str) -> str | None:
 
 @cache
 def schema_names(schemas: Path = SCHEMAS) -> frozenset[str]:
-    """The property names that the schemas name. Other keys in a pack are pack text and are not printed."""
+    """The property names in the schemas. Other keys in a pack are pack text and are not printed."""
     names: set[str] = set()
 
     def collect(node: Any) -> None:
@@ -156,7 +184,7 @@ def schema_names(schemas: Path = SCHEMAS) -> frozenset[str]:
 
 
 def pointer(segments: Sequence[str | int]) -> str:
-    """A JSON pointer, written as "" for the whole document."""
+    """A JSON pointer, written as "" for the root of the document."""
     if not segments:
         return '""'
     return "".join("/" + str(segment).replace("~", "~0").replace("/", "~1") for segment in segments)
@@ -167,7 +195,7 @@ def safe_segment(key: object, names: frozenset[str]) -> str:
 
 
 def safe_path(document: Any, path: Sequence[Any], names: frozenset[str]) -> list[str | int]:
-    """The path of a schema error, with * in place of each key that the schemas do not name."""
+    """The path of a schema error, with * in place of a key that the schemas do not name."""
     segments: list[str | int] = []
     node = document
     for step in path:
@@ -180,16 +208,51 @@ def safe_path(document: Any, path: Sequence[Any], names: frozenset[str]) -> list
     return segments
 
 
-def yaml_place(error: yaml.YAMLError) -> str | None:
+def line_and_column(line: int, column: int) -> str:
+    """A place in a file, from a line and column counted from 0."""
+    return f"line {line + 1}, column {column + 1}"
+
+
+def yaml_place(error: yaml.YAMLError, text: str) -> str | None:
+    """The line and column of a PyYAML error. The message of the error is not used, because it quotes the file."""
+    if isinstance(error, yaml.reader.ReaderError):
+        # A character that YAML does not allow, found before parsing. The error has its position in the text.
+        start = text.rfind("\n", 0, error.position) + 1
+        return line_and_column(text.count("\n", 0, error.position), error.position - start)
     mark = getattr(error, "problem_mark", None) or getattr(error, "context_mark", None)
-    return None if mark is None else f"line {mark.line + 1}, column {mark.column + 1}"
+    return None if mark is None else line_and_column(mark.line, mark.column)
+
+
+class UnreadableValue(Exception):
+    """A YAML value that PyYAML could not turn into a Python value, with the place of its node.
+
+    PyYAML's constructors raise ValueError, AttributeError and others for values such as !!int abc or an unquoted
+    2026-13-45. Those messages quote the value, so they are replaced with this error, which has the place only.
+    """
+
+    def __init__(self, mark: yaml.Mark) -> None:
+        super().__init__()
+        self.place = line_and_column(mark.line, mark.column)
+
+
+class PackLoader(yaml.SafeLoader):
+    """PyYAML's safe loader, which raises UnreadableValue in place of the errors of its constructors."""
+
+    def construct_object(self, node: yaml.Node, deep: bool = False) -> Any:
+        try:
+            return super().construct_object(node, deep=deep)
+        except yaml.YAMLError, RecursionError, UnreadableValue:
+            raise
+        except Exception:
+            # Neither the message nor the type of the error is kept, because the message quotes the value.
+            raise UnreadableValue(node.start_mark) from None
 
 
 def key_problems(root: yaml.Node, names: frozenset[str]) -> Iterator[tuple[str, list[str | int]]]:
     """The duplicate keys and the keys that are not text in the mappings of a composed YAML document.
 
-    Each is given as a rule name and the path of the mapping. A merge key (<<) is not a duplicate: the keys written in
-    the mapping take the place of the merged ones.
+    They are given as rule names with the path of the mapping. A merge key (<<) is not a duplicate, because the keys
+    written in the mapping take the place of the merged ones.
     """
     seen: set[int] = set()
 
@@ -220,9 +283,11 @@ def key_problems(root: yaml.Node, names: frozenset[str]) -> Iterator[tuple[str, 
 
 
 def load(text: str, names: frozenset[str]) -> tuple[Any, list[tuple[str, str | None]]]:
-    """The document in a YAML file, or the problems that stop it from being read, as rule names and places."""
-    loader = yaml.SafeLoader(text)
+    """The document in a YAML file, or, when it cannot be read, the problems as rule names and places."""
+    loader: PackLoader | None = None
     try:
+        # The loader reads the text when it is made, and raises ReaderError for a character that YAML does not allow.
+        loader = PackLoader(text)
         root = loader.get_single_node()
         if root is None:
             return None, []
@@ -231,17 +296,37 @@ def load(text: str, names: frozenset[str]) -> tuple[Any, list[tuple[str, str | N
             return None, list(dict.fromkeys(found))
         return loader.construct_document(root), []
     except yaml.YAMLError as error:
-        return None, [("yaml-syntax", yaml_place(error))]
+        return None, [("yaml-syntax", yaml_place(error, text))]
+    except UnreadableValue as error:
+        return None, [("yaml-value", error.place)]
+    except RecursionError:
+        return None, [("too-deep", None)]
     finally:
-        loader.dispose()
+        if loader is not None:
+            loader.dispose()
+
+
+def read_file(path: Path) -> bytes:
+    """The bytes of a file, up to one byte over MAX_FILE_BYTES, so that a large file is not read into memory."""
+    with path.open("rb") as file:
+        return file.read(MAX_FILE_BYTES + 1)
 
 
 def check_file(path: Path, relative: str, schemas: Path) -> list[Problem]:
+    if path.is_symlink():
+        # A symlink can point outside the pack, so it is not read.
+        return [Problem(relative, "symlink")]
     schema = schema_for(relative)
     if schema is None:
         return [Problem(relative, "unknown-file-type")]
     try:
-        text = path.read_text(encoding="utf-8")
+        data = read_file(path)
+    except OSError:
+        return [Problem(relative, "unreadable")]
+    if len(data) > MAX_FILE_BYTES:
+        return [Problem(relative, "too-large")]
+    try:
+        text = data.decode("utf-8")
     except UnicodeDecodeError:
         return [Problem(relative, "encoding")]
     names = schema_names(schemas)
@@ -249,25 +334,37 @@ def check_file(path: Path, relative: str, schemas: Path) -> list[Problem]:
     if found:
         return [Problem(relative, rule, place) for rule, place in found]
     try:
-        # Several errors can give the same line, such as one "required" error for each missing property. The line is
+        # Some errors have the same line, for example the "required" errors for two missing properties. The line is
         # printed once.
         errors = validator(schema, schemas).iter_errors(document)
-        return list(
-            dict.fromkeys(
-                Problem(relative, str(error.validator), pointer(safe_path(document, list(error.absolute_path), names))) for error in errors
-            )
+        return unique(
+            Problem(relative, str(error.validator), pointer(safe_path(document, list(error.absolute_path), names))) for error in errors
         )
     except Unresolvable:
         return [Problem(relative, "unresolvable-ref")]
+    except RecursionError:
+        return [Problem(relative, "too-deep")]
+
+
+def unique[T: Hashable](items: Iterator[T]) -> list[T]:
+    return list(dict.fromkeys(items))
 
 
 def pack_files(folder: Path) -> list[Path]:
-    return sorted(path for path in folder.rglob("*") if path.suffix in {".yaml", ".yml"} and path.is_file())
+    """The YAML files in a pack folder, with any symlinks, whatever their names. Symlinked folders are not entered."""
+    return sorted(path for path in folder.rglob("*") if path.is_symlink() or (path.suffix.lower() in YAML_SUFFIXES and path.is_file()))
 
 
 def check_pack(folder: Path, schemas: Path = SCHEMAS) -> Report:
     files = pack_files(folder)
-    problems = [problem for path in files for problem in check_file(path, path.relative_to(folder).as_posix(), schemas)]
+    problems: list[Problem] = []
+    for path in files:
+        relative = path.relative_to(folder).as_posix()
+        try:
+            problems.extend(check_file(path, relative, schemas))
+        except Exception as error:
+            # The message of an unexpected error can quote the file, so only the name of its type is printed.
+            problems.append(Problem(relative, f"internal-error-{type(error).__name__}"))
     return Report(len(files), problems)
 
 
@@ -277,7 +374,7 @@ def main(arguments: Sequence[str]) -> int:
         return 2
     folder = Path(arguments[0])
     if not folder.is_dir():
-        print(f"{arguments[0]} is not a folder.\n\n{USAGE}", file=sys.stderr)
+        print(f"{shown_path(arguments[0])} is not a folder.\n\n{USAGE}", file=sys.stderr)
         return 2
     report = check_pack(folder)
     for problem in report.problems:
