@@ -1,9 +1,9 @@
 import { render, screen } from "@testing-library/react";
-import axe from "axe-core";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import { AppRoot } from "../../AppRoot";
 import { server } from "../../mocks/server";
+import { expectNoAxeViolations } from "../../testing/axe";
 
 describe("sign-in page", () => {
   it("has a link that starts the sign-in with Google", async () => {
@@ -31,8 +31,7 @@ describe("sign-in page", () => {
   it("has no accessibility violations that axe can detect", async () => {
     const { container } = render(<AppRoot initialPath="/sign-in?error=not-invited" />);
     await screen.findByRole("alert");
-    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
-    expect(results.violations).toEqual([]);
+    await expectNoAxeViolations(container);
   });
 });
 

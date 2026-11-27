@@ -1,7 +1,7 @@
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import { server } from "../mocks/server";
-import { getHealth, signOut } from "./client";
+import { ApiError, getHealth, getMe, isNotSignedIn, needsRecentSignIn, signOut } from "./client";
 
 describe("API client", () => {
   it("reads the health response as described in the contract", async () => {
@@ -18,6 +18,26 @@ describe("API client", () => {
   it("throws when the server answers with an error", async () => {
     server.use(http.get("*/api/v1/health", () => new HttpResponse(null, { status: 503 })));
     await expect(getHealth()).rejects.toThrow("503");
+  });
+
+  it("throws an ApiError with the status for each call, including the health check and the signed-in learner", async () => {
+    server.use(
+      http.get("*/api/v1/health", () => HttpResponse.json({ detail: "The database is busy. Please try again." }, { status: 503 })),
+      http.get("*/api/v1/me", () => HttpResponse.json({ detail: "The database is busy. Please try again." }, { status: 503 })),
+    );
+    for (const call of [getHealth, getMe]) {
+      const error = await call().catch((thrown: unknown) => thrown);
+      expect(error).toBeInstanceOf(ApiError);
+      expect(error).toMatchObject({ status: 503, detail: "The database is busy. Please try again." });
+    }
+  });
+
+  it("tells a signed-out answer and a sign-in-again answer from other errors", () => {
+    expect(isNotSignedIn(new ApiError(401, "Not signed in"))).toBe(true);
+    expect(isNotSignedIn(new ApiError(403, "sign-in-again"))).toBe(false);
+    expect(isNotSignedIn(new Error("401"))).toBe(false);
+    expect(needsRecentSignIn(new ApiError(403, "sign-in-again"))).toBe(true);
+    expect(needsRecentSignIn(new ApiError(403, "Only the owner can invite learners"))).toBe(false);
   });
 });
 

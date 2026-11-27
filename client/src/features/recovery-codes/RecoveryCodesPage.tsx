@@ -2,9 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { Button } from "react-aria-components";
-import { ApiError, getRecoveryCodeStatus, makeRecoveryCodes } from "../../api/client";
-
-const DATE = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" });
+import { NotSignedIn, SignInAgain } from "../../account/messages";
+import { getRecoveryCodeStatus, isNotSignedIn, makeRecoveryCodes, needsRecentSignIn } from "../../api/client";
+import { formatDay } from "../../format";
 
 function NewCodes({ codes }: { codes: string[] }) {
   const [copied, setCopied] = useState<boolean | null>(null);
@@ -55,16 +55,7 @@ export function RecoveryCodesPage() {
     },
   });
 
-  if (codeStatus.error instanceof ApiError && codeStatus.error.status === 401) {
-    return (
-      <main>
-        <h1>Recovery codes</h1>
-        <p>
-          You are not signed in. <Link to="/sign-in">Sign in</Link> first, then open “Your recovery codes” on the home page.
-        </p>
-      </main>
-    );
-  }
+  if (isNotSignedIn(codeStatus.error)) return <NotSignedIn title="Recovery codes" pageName="Your recovery codes" />;
 
   const hasCodes = (codeStatus.data?.unused ?? 0) > 0;
   return (
@@ -82,7 +73,7 @@ export function RecoveryCodesPage() {
         ) : codeStatus.data.createdAt ? (
           <p>
             You have {codeStatus.data.unused} unused {codeStatus.data.unused === 1 ? "code" : "codes"}, made on{" "}
-            {DATE.format(new Date(codeStatus.data.createdAt))}.
+            {formatDay(codeStatus.data.createdAt)}.
           </p>
         ) : (
           <p>You have no recovery codes yet.</p>
@@ -104,11 +95,8 @@ export function RecoveryCodesPage() {
         </Button>
       )}
       {make.isError &&
-        (make.error instanceof ApiError && make.error.detail === "sign-in-again" ? (
-          <p role="alert">
-            You signed in more than 15 minutes ago, so you need to sign in again before you can make new codes.{" "}
-            <Link to="/sign-in">Sign in again</Link>, then open “Your recovery codes” on the home page.
-          </p>
+        (needsRecentSignIn(make.error) ? (
+          <SignInAgain action="make new codes" pageName="Your recovery codes" />
         ) : (
           <p role="alert">New codes could not be made. Please try again.</p>
         ))}

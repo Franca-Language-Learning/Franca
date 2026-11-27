@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { Button } from "react-aria-components";
-import { ApiError, listSessions, type Session, signOutDevice, signOutOtherDevices } from "../../api/client";
+import { NotSignedIn } from "../../account/messages";
+import { isNotSignedIn, listSessions, type Session, signOutDevice, signOutOtherDevices } from "../../api/client";
 
 const WHEN = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 const DEVICE_KINDS: Record<string, string> = { desktop: "Computer", tablet: "Tablet", phone: "Phone" };
@@ -46,16 +47,7 @@ export function DevicesPage() {
     },
   });
 
-  if (sessions.error instanceof ApiError && sessions.error.status === 401) {
-    return (
-      <main>
-        <h1>Your devices</h1>
-        <p>
-          You are not signed in. <Link to="/sign-in">Sign in</Link> first, then open “Your devices” on the home page.
-        </p>
-      </main>
-    );
-  }
+  if (isNotSignedIn(sessions.error)) return <NotSignedIn title="Your devices" pageName="Your devices" />;
 
   const others = (sessions.data ?? []).filter((session) => !session.current).length;
   return (

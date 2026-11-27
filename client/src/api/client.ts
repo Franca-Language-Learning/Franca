@@ -46,8 +46,8 @@ const api = createClient<paths>({
 });
 
 export async function getHealth(signal?: AbortSignal): Promise<Health> {
-  const { data, response } = await api.GET("/api/v1/health", { signal });
-  if (!data) throw new Error(`The health check returned ${response.status}`);
+  const { data, error, response } = await api.GET("/api/v1/health", { signal });
+  if (!data) throw failure(response, error);
   return data;
 }
 
@@ -55,9 +55,9 @@ export type Me = components["schemas"]["Me"];
 
 /** The signed-in learner, or null when nobody is signed in on this device. */
 export async function getMe(signal?: AbortSignal): Promise<Me | null> {
-  const { data, response } = await api.GET("/api/v1/me", { signal });
+  const { data, error, response } = await api.GET("/api/v1/me", { signal });
   if (response.status === 401) return null;
-  if (!data) throw new Error(`The request for the signed-in learner returned ${response.status}`);
+  if (!data) throw failure(response, error);
   return data;
 }
 
@@ -75,6 +75,16 @@ export class ApiError extends Error {
   ) {
     super(`The server answered ${status}: ${detail}`);
   }
+}
+
+/** True when the server answered that nobody is signed in on this device (401). */
+export function isNotSignedIn(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401;
+}
+
+/** True when the step needs a sign-in in the last 15 minutes, and the learner signed in earlier (sign-in-again). */
+export function needsRecentSignIn(error: unknown): boolean {
+  return error instanceof ApiError && error.detail === "sign-in-again";
 }
 
 /** The error for an answer that is not a success. body is the answer's JSON, as openapi-fetch read it. */
