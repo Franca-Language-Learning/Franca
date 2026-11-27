@@ -13,7 +13,7 @@ This repository is public and has the app's code. The courses, pictures, sound, 
 | `speech/` | Will have the speech container (speech recognition and text to speech). It has its own licence, GPL-3.0-or-later |
 | `contracts/` | The API description, the pack schemas and the database schema, with their tests |
 | `packs/fixture/` | A small made-up pack (`fx`) for the tests. Real packs are kept in the private repository |
-| `tools/` | The content guard, the pin check and the start-up file check, with their tests |
+| `tools/` | The content guard, the pin check, the start-up file check and the Harden-Runner check, with their tests |
 | `infra/` | The Docker Compose bundle, the image files, the Caddy configuration, the updater, the backup and the health monitoring, with their tests and rehearsals |
 | `docs/` | Decision records (in `docs/decisions/`) and notes for developers |
 | `scripts/` | `setup`, `check` and `update-contract` |

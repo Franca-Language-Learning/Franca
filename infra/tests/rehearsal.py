@@ -28,6 +28,22 @@ SECRET_NAMES = (
 # An open-source Tailscale control server, used in place of Tailscale's own, so no account is needed. The image is named
 # by digest, and Renovate updates it (see .github/renovate.json).
 HEADSCALE = "headscale/headscale:0.29.7@sha256:11f81665e842809db9fe3006a38c56a66e968baa5abd4bac498e86445572b970"  # renovate: image
+# Settings of the Tailscale containers in a rehearsal, so that nothing is sent to Tailscale's servers. Logs are not
+# uploaded to log.tailscale.com, and the router is not asked to open a port. The relay (DERP) in Headscale is reached
+# over plain HTTP, because Headscale has no certificate in the rehearsal. The bundle's own settings in
+# infra/compose.yaml are not changed, because on the PC the container is a device in the owner's tailnet at Tailscale.
+TAILSCALE_REHEARSAL_ENVIRONMENT = {
+    "TS_NO_LOGS_NO_SUPPORT": "true",
+    "TS_DEBUG_USE_DERP_HTTP": "true",
+    "TS_DISABLE_PORTMAPPER": "true",
+}
+# Additions to the bundle's Caddyfile for a rehearsal. For the Tailscale name, Caddy asks tailscaled for the certificate
+# first, as on the PC. When tailscaled has none, which is the case with Headscale, Caddy would try Let's Encrypt and
+# ZeroSSL next. In a rehearsal it uses its own local certificate authority in their place, and does not try to add that
+# authority to the system's trusted certificates.
+CADDY_REHEARSAL_GLOBAL_OPTIONS = "\tskip_install_trust\n"
+CADDY_REHEARSAL_TAILSCALE_SITE = "https://{$FRANCA_TAILSCALE_NAME}:8443 {\n"
+CADDY_REHEARSAL_TLS = "\ttls {\n\t\tget_certificate tailscale\n\t\tissuer internal\n\t}\n"
 
 
 def sh(*command: str, check: bool = True, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -156,8 +172,38 @@ def check_hardened(checks: Checks, compose: Sequence[str], service: str, name: s
     return settings
 
 
+def environment_lines(values: Mapping[str, str], indent: int) -> str:
+    """The values as lines of a YAML mapping, KEY: "value", indented by the given number of spaces, for the environment
+    of a service in a Compose override."""
+    return "".join(f"{' ' * indent}{key}: {json.dumps(value)}\n" for key, value in values.items())
+
+
+def rehearsal_caddyfile() -> str:
+    """The bundle's Caddyfile (infra/caddy/Caddyfile) with CADDY_REHEARSAL_GLOBAL_OPTIONS at the start of its global
+    options, and CADDY_REHEARSAL_TLS at the start of the site on the Tailscale name."""
+    lines = (ROOT / "infra" / "caddy" / "Caddyfile").read_text(encoding="utf-8").splitlines(keepends=True)
+    site = lines.index(CADDY_REHEARSAL_TAILSCALE_SITE) + 1
+    lines[site:site] = [CADDY_REHEARSAL_TLS]
+    options = lines.index("{\n") + 1
+    lines[options:options] = [CADDY_REHEARSAL_GLOBAL_OPTIONS]
+    return "".join(lines)
+
+
+def write_rehearsal_caddyfile(folder: Path) -> Path:
+    """Writes rehearsal_caddyfile() to Caddyfile in the folder and returns its path. Caddy runs as its own user, so the
+    file can be read by all users."""
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "Caddyfile"
+    path.write_text(rehearsal_caddyfile(), encoding="utf-8")
+    path.chmod(0o644)
+    return path
+
+
 def headscale_config(base_domain: str | None = None) -> str:
-    """Headscale's settings for a rehearsal. With a base domain, MagicDNS is on and the devices get names under it."""
+    """Headscale's settings for a rehearsal. With a base domain, MagicDNS is on and the devices get names under it.
+
+    Headscale runs its own relay (DERP) and STUN server, and the devices are given a relay map with that relay only.
+    There is no check on GitHub for a newer Headscale, and the devices are not asked to send their logs to Tailscale."""
     dns = f"  magic_dns: true\n  base_domain: {base_domain}\n" if base_domain else "  magic_dns: false\n"
     return f"""\
 server_url: http://headscale:8080
@@ -172,10 +218,19 @@ prefixes:
   allocation: sequential
 derp:
   server:
-    enabled: false
-  urls:
-    - https://controlplane.tailscale.com/derpmap/default
+    enabled: true
+    region_id: 999
+    region_code: headscale
+    region_name: Headscale
+    stun_listen_addr: 0.0.0.0:3478
+    private_key_path: /var/lib/headscale/derp_server_private.key
+    automatically_add_embedded_derp_region: true
+  urls: []
+  paths: []
   auto_update_enabled: false
+disable_check_updates: true
+logtail:
+  enabled: false
 database:
   type: sqlite
   sqlite:

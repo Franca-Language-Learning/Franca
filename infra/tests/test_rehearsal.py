@@ -118,6 +118,54 @@ def test_the_headscale_settings_are_valid_yaml(base_domain: str | None) -> None:
     assert settings["dns"]["override_local_dns"] is False
 
 
+@pytest.mark.parametrize("base_domain", [None, "rehearsal.ts.net"])
+def test_headscale_uses_its_own_relay_and_no_server_on_the_internet(base_domain: str | None) -> None:
+    settings = yaml.safe_load(rehearsal.headscale_config(base_domain))
+
+    derp = settings["derp"]
+    assert derp["server"]["enabled"] is True
+    assert derp["server"]["automatically_add_embedded_derp_region"] is True
+    assert derp["server"]["stun_listen_addr"] == "0.0.0.0:3478"
+    assert derp["server"]["private_key_path"].startswith("/var/lib/headscale/")
+    assert derp["urls"] == []
+    assert derp["paths"] == []
+    assert derp["auto_update_enabled"] is False
+    assert settings["disable_check_updates"] is True
+    assert settings["logtail"]["enabled"] is False
+
+
+def test_the_tailscale_containers_of_a_rehearsal_send_nothing_to_tailscale() -> None:
+    assert rehearsal.TAILSCALE_REHEARSAL_ENVIRONMENT == {
+        "TS_NO_LOGS_NO_SUPPORT": "true",
+        "TS_DEBUG_USE_DERP_HTTP": "true",
+        "TS_DISABLE_PORTMAPPER": "true",
+    }
+
+
+def test_environment_lines_are_a_yaml_mapping_at_the_given_indent() -> None:
+    lines = rehearsal.environment_lines({"A": "true", "B": "--x=http://h:1"}, indent=6)
+
+    assert lines == '      A: "true"\n      B: "--x=http://h:1"\n'
+    assert yaml.safe_load("environment:\n" + lines) == {"environment": {"A": "true", "B": "--x=http://h:1"}}
+
+
+def test_the_rehearsal_caddyfile_has_no_public_certificate_authority_and_is_otherwise_the_bundles() -> None:
+    bundle = (rehearsal.ROOT / "infra" / "caddy" / "Caddyfile").read_text(encoding="utf-8")
+    rehearsed = rehearsal.rehearsal_caddyfile()
+
+    assert "{\n\tskip_install_trust\n" in rehearsed
+    assert "https://{$FRANCA_TAILSCALE_NAME}:8443 {\n\ttls {\n\t\tget_certificate tailscale\n\t\tissuer internal\n\t}\n" in rehearsed
+    assert rehearsed.replace(rehearsal.CADDY_REHEARSAL_TLS, "").replace(rehearsal.CADDY_REHEARSAL_GLOBAL_OPTIONS, "") == bundle
+    assert "issuer internal" not in bundle
+
+
+def test_a_rehearsal_caddyfile_is_written_for_every_user_to_read(tmp_path: Path) -> None:
+    path = rehearsal.write_rehearsal_caddyfile(tmp_path / "caddy")
+
+    assert path.read_text(encoding="utf-8") == rehearsal.rehearsal_caddyfile()
+    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+
+
 def test_a_service_counts_as_healthy_only_when_it_is_running_and_its_health_check_passes() -> None:
     listed = ["app running healthy", "caddy running healthy", "socket-proxy running", "backup running unhealthy", "updater exited"]
 

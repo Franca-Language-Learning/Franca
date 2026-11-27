@@ -4,6 +4,10 @@
 #
 # A release is made by pushing a tag such as v0.1.0. The jobs run in the "release" environment, which accepts tags
 # starting with v only; the id-token permission (for keyless signing) is given in this workflow only.
+#
+# Harden-Runner is in audit mode in these jobs, because the workflow has not run yet and the hosts it connects to are
+# not known. After the first release (v0.1.0), the endpoints will be taken from its logs and the jobs switched to block
+# mode, as in ci.yml. Until then, audit mode in this file is accepted by tools/check_harden_runner.py.
 name: Release
 
 on:
