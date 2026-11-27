@@ -5,9 +5,9 @@
 #   scripts/check                  all parts, in the order listed under Parts
 #   scripts/check python client    some parts
 #
-# Parts: guard (content guard), secrets (gitleaks over the history of the checked-out commit), python (server,
-# contracts, tools, infra and installer), windows (the Windows installer, when pwsh is installed), client, browser
-# (browser tests).
+# Parts: guard (content guard), secrets (gitleaks over the history of the checked-out commit, merge commits
+# included), python (server, contracts, tools, infra and installer), windows (the Windows installer, when pwsh is
+# installed), client, browser (browser tests).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 root="$(pwd)"
@@ -51,7 +51,22 @@ check_secrets() {
         echo "gitleaks could not be used on this computer (the reason is above), so the secret scan runs in the pipeline only."
         return 0
     fi
-    "$gitleaks" git --redact --verbose --no-banner --log-opts=HEAD .
+    # git log shows no diff for a merge commit, so a secret added while a merge conflict is resolved would not be
+    # scanned. With --diff-merges=remerge, a merge commit is shown as the difference between git's own merge of the
+    # parents and the commit, which is the part that the person who merged wrote. A clean merge has no difference.
+    # (With -m, the changes of the merged branch would be scanned again under the merge commit, and a finding listed
+    # in .gitleaksignore would come back with the merge commit's fingerprint.)
+    # When git log fails, gitleaks reports no leaks and exits with 0. A git older than 2.36 has no --diff-merges=remerge
+    # and fails in this way, so git log is run here first, and a failure stops the check.
+    if ! git log --diff-merges=remerge -1 --format=%H HEAD >/dev/null; then
+        echo "git log could not read the history (the reason is above), so the secrets were not scanned." >&2
+        echo "The secret scan needs git 2.36 or later. This computer has $(git --version)." >&2
+        return 1
+    fi
+    "$gitleaks" git --redact --verbose --no-banner "--log-opts=--diff-merges=remerge HEAD" .
+    # git has no remerge view of a merge with more than two parents (an octopus merge), so those merges are scanned
+    # again with -m, as the difference from each parent. GitHub does not make octopus merges, so there are few or none.
+    "$gitleaks" git --redact --verbose --no-banner "--log-opts=-m --min-parents=3 HEAD" .
 }
 
 check_python() {
