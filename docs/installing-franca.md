@@ -30,4 +30,5 @@ These steps install Franca on your Windows PC (stories E01-011 and E01-012). Fra
 ## If something goes wrong
 
 - If the installer stops with a message, fix the problem it describes and run `Install-Franca.cmd` again. Passwords and keys from the earlier run, such as the backup password, are kept.
+- At the question about the Tailscale auth key, press Enter if the `franca` machine is on the **Machines** page of the Tailscale admin console. Otherwise make a new key with steps 5 to 8 of `docs/private-network.md`.
 - If Franca does not open after a restart, open **Task Scheduler** on the PC and check that the task **Franca** is listed with the status **Running**.

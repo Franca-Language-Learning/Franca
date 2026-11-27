@@ -45,4 +45,4 @@ Franca is reached from phones and laptops over your tailnet, the private network
 - The alerts to ntfy.sh and the heartbeats to healthchecks.io (hc-ping.com) go over the PC's internet connection. The tailnet policy above does not apply to them.
 - The name `franca.` plus your tailnet name is published in the public logs of HTTPS certificates. Anyone can see that a device of that name exists. Knowing the name is not enough to get in.
 - If the PC has to join again, for example after a reinstall, make a new key with steps 5 to 8, run the installer again and paste the key when it asks.
-- To run the installer again on a PC that is still in the tailnet, for example to change an answer, press Enter at the question about the auth key. The saved Tailscale state is used.
+- To run the installer again on a PC that is still in the tailnet, for example to change an answer, press Enter at the question about the auth key. The saved Tailscale state is used. If the installer says "Franca could not sign in to your tailnet with the saved Tailscale state", make a new auth key with steps 5 to 8 and run the installer again with that key.

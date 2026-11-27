@@ -8,9 +8,9 @@ These checks run on the PC, so there is no alert from them when the PC itself is
 
 1. On your phone, install the **ntfy** app from the App Store or Google Play. You do not need an account.
 2. On a computer, open https://healthchecks.io.
-3. Click **Sign Up**.
+3. Click **Sign Up**. The free plan is enough.
 4. Type your e-mail address.
-5. Click the button below the address. A sign-in link is sent to you by e-mail. The free plan is enough.
+5. Click the button below the address. A sign-in link is sent to you by e-mail.
 6. In the e-mail from healthchecks.io, click the link.
 7. In your project, click **Add Check**. A new check is added to the list.
 8. Click the new check's name.
@@ -38,14 +38,15 @@ These checks run on the PC, so there is no alert from them when the PC itself is
 24. As the topic, type the topic name from step 17. Leave the server as `https://ntfy.sh`.
 25. Click **Save Integration**.
 26. On the **Integrations** page, check that the Franca check is switched on for the ntfy integration.
-27. Click **Test!** beside the ntfy integration, and check that the test message arrives on your phone.
-28. After about ten minutes, open the Franca check on healthchecks.io. Its status should be **up**, with the time of the last heartbeat. If it still says **new**, check that the PC is on and connected to the internet, and that the ping address in your password manager is the one on the check's page.
+27. Click **Test!** beside the ntfy integration.
+28. Check that the test message arrives on your phone.
+29. After about ten minutes, open the Franca check on healthchecks.io. Its status should be **up**, with the time of the last heartbeat. If it still says **new**, check that the PC is on and connected to the internet, and that the ping address in your password manager is the one on the check's page.
 
 ## Changing the ping address later
 
-29. On the PC, double-click `Install-Franca.cmd` again, as in step 7 of `docs/installing-franca.md`.
-30. Answer the questions as before. At the question about the Tailscale auth key, press Enter. The PC is in your tailnet already, so no new key is needed.
-31. At the question about the healthchecks.io ping address, paste the new address. To switch the heartbeat off, type `off`. If you press Enter, the saved address is kept.
+30. On the PC, double-click `Install-Franca.cmd` again, as in step 7 of `docs/installing-franca.md`.
+31. Answer the questions as before. At the question about the Tailscale auth key, press Enter. The PC is in your tailnet already, so no new key is needed. If the installer says "Franca could not sign in to your tailnet with the saved Tailscale state", make a new auth key with steps 5 to 8 of `docs/private-network.md` and run the installer again with that key.
+32. At the question about the healthchecks.io ping address, paste the new address. To switch the heartbeat off, type `off`. If you press Enter, the saved address is kept.
 
 ## What the alerts mean
 
@@ -65,7 +66,7 @@ These checks run on the PC, so there is no alert from them when the PC itself is
 
 ## Looking at the dashboard
 
-32. On the PC, open http://127.0.0.1:8081 in a browser. It lists each check with its recent results. The dashboard cannot be opened from other devices.
+33. On the PC, open http://127.0.0.1:8081 in a browser. It lists each check with its recent results. The dashboard cannot be opened from other devices.
 
 ## When the PC is off
 

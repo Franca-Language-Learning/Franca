@@ -9,8 +9,8 @@
 # When the healthchecks_ping_url secret has an address, a heartbeat is sent to it every few minutes while Gatus
 # answers. healthchecks.io sends an alert when the heartbeats stop, for example when the PC is off. Anyone who has the
 # address can send heartbeats for the owner's check, so it is a secret. It is not passed to Gatus, it is not written to
-# the log, and it is given to curl on standard input, so it is in no process's command line. A bad heartbeat setting
-# turns the heartbeat off with a message; Gatus and its alerts go on.
+# the log, and it is given to curl on standard input, so it is in no process's command line. When a heartbeat setting
+# is not valid, the heartbeat is switched off and a message is written to the log. Gatus and its alerts go on.
 set -eu
 
 fail() {
@@ -63,13 +63,14 @@ case ",${FRANCA_PROFILES:-}," in
 esac
 
 # Sends a heartbeat to the address in $1 every FRANCA_HEARTBEAT_SECONDS, while Gatus answers its own health check.
-# printf is built into the shell, so the address reaches curl's standard input (-K -) without a command line. curl's
-# messages could name the address, so they are thrown away and a message without it is written instead.
+# printf is built into the shell, so the address reaches curl's standard input (-K -) without a command line. With -q
+# first, curl reads no .curlrc file. curl's messages could name the address, so they are thrown away and a message
+# without it is written instead.
 heartbeat() {
     while :; do
         sleep "$FRANCA_HEARTBEAT_SECONDS"
         if wget -q -T 10 -O /dev/null http://127.0.0.1:8080/health 2>/dev/null; then
-            if ! printf 'url = "%s"\n' "$1" | curl -fsS -m 10 -o /dev/null -K - 2>/dev/null; then
+            if ! printf 'url = "%s"\n' "$1" | curl -q -fsS -m 10 -o /dev/null -K - 2>/dev/null; then
                 echo "franca-status: the heartbeat to healthchecks.io could not be sent" >&2
             fi
         fi

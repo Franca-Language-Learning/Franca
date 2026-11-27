@@ -108,7 +108,8 @@ function New-AnswersJson {
         # Empty when Franca is installed already: the Linux part then uses the saved Tailscale state.
         [Parameter(Mandatory)] [AllowEmptyString()] [string] $TailscaleAuthKey,
         [Parameter(Mandatory)] [string] $BackupDir,
-        # Optional: the ping address of the owner's check on healthchecks.io. Empty means no heartbeat.
+        # Optional: the ping address of the owner's check on healthchecks.io. Empty keeps the saved address, or means no
+        # heartbeat on a first installation. off switches the heartbeat off.
         [string] $HealthchecksPingUrl = ''
     )
     $answers = [ordered] @{

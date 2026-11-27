@@ -58,7 +58,7 @@ TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{32,128}")
 # The ping address of the owner's check on healthchecks.io: https://hc-ping.com/ followed by the check's id (a UUID).
 # Other hosts are refused. The status container's start script has a looser pattern, so the rehearsal can use a
 # stand-in.
-# The answer that switches the heartbeat off. An empty answer keeps the address that an earlier run saved.
+# The answer that switches the heartbeat off. When the answer is empty, the address saved by an earlier run is kept.
 PING_OFF = "off"
 PING_URL_PATTERN = re.compile(r"https://hc-ping\.com/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
@@ -94,8 +94,8 @@ class Answers:
     tailscale_authkey: str = field(repr=False)
     backup_dir: Path
     tailscale_hostname: str = "franca"
-    # Optional (story E01-012). Empty keeps the address saved by an earlier run, or means no heartbeat on a first
-    # installation. "off" switches the heartbeat off.
+    # Optional (story E01-012). When the answer is empty, the address saved by an earlier run is kept, or there is no
+    # heartbeat on a first installation. With "off", the heartbeat is switched off.
     healthchecks_ping_url: str = field(default="", repr=False)
 
     @classmethod
@@ -136,7 +136,7 @@ class Answers:
             raise InstallError(
                 "The healthchecks.io ping address has to be https://hc-ping.com/ followed by the check's id, such as "
                 "https://hc-ping.com/0f5a7c2e-1b3d-4e8f-9a6b-2c4d6e8f0a1b. Run the installer again and paste the address from "
-                "the check's page. To install without the heartbeat, type off at that question."
+                "the check's page. To install without the heartbeat, type off at the question about the ping address."
             )
 
 
@@ -158,8 +158,8 @@ def _write_private(path: Path, value: str) -> None:
 
 
 def _write_ping_url(path: Path, answer: str) -> None:
-    """Writes the healthchecks.io ping address. "off" empties the file. An empty answer keeps the saved address, so a
-    later run of the installer does not switch the heartbeat off by mistake."""
+    """Writes the healthchecks.io ping address. With "off", the file is emptied. When the answer is empty, the saved
+    address is kept, so the heartbeat is not switched off by mistake in a later run of the installer."""
     if answer.lower() == PING_OFF:
         _write_private(path, "")
     elif answer or not path.is_file():
@@ -215,6 +215,14 @@ def check_no_links(bundle: Path) -> None:
 
 
 # --- the bundle's files
+
+
+# The message when the PC was to sign in with the saved Tailscale state and that failed. docs/health-alerts.md and
+# docs/private-network.md have the same sentence.
+SAVED_STATE_REFUSED = (
+    "Franca could not sign in to your tailnet with the saved Tailscale state. Make a new auth key with steps 5 to 8 of "
+    "docs/private-network.md and run the installer again with that key."
+)
 
 
 def check_tailscale_key(answers: Answers, bundle: Path, run: Run = run_command, project: str | None = None) -> None:
@@ -373,6 +381,10 @@ def start_bundle(bundle: Path, release: fu.Release, answers: Answers, run: Run =
     try:
         _check(run(_compose(bundle, "up", "--detach", "--no-build", "--wait", "--wait-timeout", "180", "tailscale")), "Joining the tailnet")
         name = tailscale_name(bundle, run)
+    except InstallError as error:
+        if answers.tailscale_authkey:
+            raise
+        raise InstallError(SAVED_STATE_REFUSED) from error
     finally:
         # An auth key can be used once, so it is emptied here whether the PC joined the tailnet or not.
         _write_private(bundle / "secrets" / "tailscale_authkey", "")
