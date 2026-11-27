@@ -1,0 +1,29 @@
+Franca
+A web app for learning languages as an adult.
+https://github.com/Franca-Language-Learning/Franca
+
+Copyright 2026 the Franca authors
+
+The copyright line above and the Apache License 2.0 (in the file LICENSE)
+apply to the original work in this repository that was written for Franca.
+The made-up test pack in packs/fixture/ was written for Franca and is
+covered too. If you pass on copies of Franca or of work based on it, keep
+this NOTICE file with them, as required by section 4(d) of the licence.
+
+Work that was not written for Franca keeps its own copyright and licence,
+and is not licensed by this file. This includes:
+- the libraries and packages that Franca uses
+- the programs and container images that Franca's images are built from
+- fonts, pictures and code taken from other projects
+
+Franca's course material is not in this repository and is not licensed by it.
+
+The speech container in speech/ is licensed separately, under
+GPL-3.0-or-later. Its licence text is in speech/LICENSE.
+
+Third-party files in this repository
+
+server/src/franca/platform/migrations/script.py.mako
+  Based on the migration template of Alembic
+  (https://github.com/sqlalchemy/alembic), shortened for Franca.
+  Copyright 2009-2026 Michael Bayer. MIT License, in LICENSES/Alembic-MIT.txt.

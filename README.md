@@ -45,4 +45,8 @@ Python packages are installed only as ready-built files (wheels), so no package 
 
 ## Licence
 
-The app's code has no licence yet, so others can read it and fork it on GitHub, but not reuse it. The speech container in `speech/` is licensed under GPL-3.0-or-later because a library it needs has that licence.
+Franca's own code is licensed under the Apache License 2.0, in [LICENSE](LICENSE), with the copyright line "Copyright 2026 the Franca authors". The licence applies to the original work in this repository that was written for Franca, and that includes the made-up test pack in `packs/fixture/`. [NOTICE](NOTICE) has the attribution that copies of the code have to keep, and the list of third-party files in the repository.
+
+Work that was not written for Franca, such as the libraries it uses, keeps its own copyright and licence. Franca's course material is not in this repository and is not licensed by it.
+
+The speech container in `speech/` is licensed under GPL-3.0-or-later because a library it needs has that licence.
