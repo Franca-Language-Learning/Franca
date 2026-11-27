@@ -5,8 +5,9 @@
 #   scripts/check                  all parts, in the order listed under Parts
 #   scripts/check python client    some parts
 #
-# Parts: guard (content guard), python (server, contracts, tools, infra and installer), windows (the Windows
-# installer, when pwsh is installed), client, browser (browser tests).
+# Parts: guard (content guard), secrets (gitleaks over the history of the checked-out commit), python (server,
+# contracts, tools, infra and installer), windows (the Windows installer, when pwsh is installed), client, browser
+# (browser tests).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 root="$(pwd)"
@@ -19,6 +20,7 @@ python_paths=(. ../contracts ../tools ../infra/updater ../infra/backup ../infra/
 strict_scripts=(
     ../tools/content_guard.py
     ../tools/check_pins.py
+    ../tools/install_program.py
     ../infra/updater/franca_updater.py
     ../infra/backup/franca_backup.py
     ../infra/tests/rehearse_update.py
@@ -32,6 +34,22 @@ strict_scripts=(
 check_guard() {
     step "Content guard"
     python3 -I tools/content_guard.py --index
+}
+
+check_secrets() {
+    step "Secrets in the history"
+    # gitleaks is downloaded once and checked against its SHA-256 in tools/programs.txt. After that, the scan needs no
+    # network. Findings that were checked and are not secrets are listed in .gitleaksignore (docs/secret-scanning.md).
+    # The exit codes of install_program.py: 3 for a download with another hash, 4 for another platform.
+    local gitleaks status=0
+    gitleaks="$(python3 -I tools/install_program.py gitleaks)" || status=$?
+    if [ "$status" -eq 3 ] || { [ "$status" -ne 0 ] && [ -n "${GITHUB_ACTIONS:-}" ]; }; then
+        return 1
+    elif [ "$status" -ne 0 ]; then
+        echo "gitleaks could not be used on this computer (the reason is above), so the secret scan runs in the pipeline only."
+        return 0
+    fi
+    "$gitleaks" git --redact --verbose --no-banner --log-opts=HEAD .
 }
 
 check_python() {
@@ -89,13 +107,13 @@ check_browser() {
 
 parts=("$@")
 if [ ${#parts[@]} -eq 0 ]; then
-    parts=(guard python windows client browser)
+    parts=(guard secrets python windows client browser)
 fi
 for part in "${parts[@]}"; do
     case "$part" in
-        guard | python | windows | client | browser) "check_$part" ;;
+        guard | secrets | python | windows | client | browser) "check_$part" ;;
         *)
-            echo "Unknown part: $part. The parts are guard, python, windows, client and browser." >&2
+            echo "Unknown part: $part. The parts are guard, secrets, python, windows, client and browser." >&2
             exit 2
             ;;
     esac

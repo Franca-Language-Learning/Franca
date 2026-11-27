@@ -1,0 +1,6 @@
+# Findings of the secret scan that were checked by a person and are not secrets (docs/secret-scanning.md).
+# Each line is the fingerprint that gitleaks prints: commit, file, rule and line.
+
+# A made-up Tailscale key in a test of the installer's answer checks ("tskey-api-123").
+1a0ea0014086e7a6e7eb3d6787fcd2a4bf74ae76:installer/linux/tests/test_install.py:generic-api-key:60
+d8080cfd7a7b8c205895288316b65d9a2de9273f:installer/linux/tests/test_install.py:generic-api-key:60
