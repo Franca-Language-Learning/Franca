@@ -226,7 +226,8 @@ def test_without_an_answer_from_the_updater_the_restore_test_fails_after_the_wai
 
     message = status(tmp_path, "restore-test.json")["message"]
     assert "15 minutes" in message
-    assert "updater" in message
+    assert "The updater may have stopped" in message
+    assert "restore-check-not-run" in message
     # The fake clock moves 10 seconds a call; the backup waits 10 seconds between looks.
     assert 40 <= updater.waits <= 100
     assert list(updater.folder.iterdir()) == []
@@ -252,11 +253,29 @@ def test_a_damaged_backup_is_not_given_to_the_app(tmp_path: Path) -> None:
     assert updater.copies == []
 
 
-def test_the_service_uses_the_shared_folder_for_the_app_check(monkeypatch: pytest.MonkeyPatch) -> None:
-    backup = fb.from_environment({})
+def test_the_service_uses_the_shared_folder_for_the_app_check_when_updates_are_on() -> None:
+    backup = fb.from_environment({"FRANCA_PROFILES": "updates,backups,tailnet,monitoring"})
 
     assert backup.app_check_dir == Path("/restore-test")
     assert fb.APP_CHECK_WAIT == timedelta(minutes=15)
+
+
+@pytest.mark.parametrize("profiles", ["backups", "", None])
+def test_without_the_updates_profile_the_app_check_is_left_out(profiles: str | None) -> None:
+    backup = fb.from_environment({} if profiles is None else {"FRANCA_PROFILES": profiles})
+
+    assert backup.app_check_dir is None
+
+
+def test_a_restore_test_without_the_app_check_says_so(tmp_path: Path) -> None:
+    backup, _restic = make(tmp_path)
+    backup.back_up(NOW)
+    backup.app_check_note = fb.APP_CHECK_OFF
+
+    assert backup.restore_test(NOW) == "restore-test-passed"
+
+    message = status(tmp_path, "restore-test.json")["message"]
+    assert "updates profile, which is off" in message
 
 
 def test_the_restore_test_restores_the_latest_backup_and_checks_it(tmp_path: Path) -> None:

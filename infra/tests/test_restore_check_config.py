@@ -30,11 +30,12 @@ def test_the_one_off_container_is_the_app_image_on_the_restored_copy(compose: di
     assert check["restart"] == "no"
 
 
-def test_the_one_off_container_has_no_network_and_only_the_session_secret(compose: dict[str, Any]) -> None:
+def test_the_one_off_container_has_no_network_and_no_secret(compose: dict[str, Any]) -> None:
+    # The app needs a session secret to start; the script in the container makes a throwaway one.
     check = compose["services"]["restore-check"]
     assert check["network_mode"] == "none"
     assert "networks" not in check
-    assert check["secrets"] == ["session_secret"]
+    assert "secrets" not in check
     assert "ports" not in check
 
 
@@ -51,11 +52,18 @@ def test_the_backup_and_the_updater_share_the_restore_test_volume(compose: dict[
     assert "restore-test:/restore-test" in compose["services"]["updater"]["volumes"]
     # The backup does not get the Docker API. Only the updater is on the proxy's network.
     assert "docker-api" not in compose["services"]["backup"]["networks"]
+    # The updater writes a failure answer when the one-off container cannot start, through the folder's group.
+    assert compose["services"]["updater"]["group_add"] == ["10001"]
+
+
+def test_the_backup_knows_whether_the_updates_profile_is_on(compose: dict[str, Any]) -> None:
+    assert compose["services"]["backup"]["environment"]["FRANCA_PROFILES"] == "${COMPOSE_PROFILES:-}"
 
 
 @pytest.mark.parametrize("image", ["backup", "updater"])
 def test_the_shared_folder_belongs_to_the_apps_user_in_each_image(image: str) -> None:
     # A new volume takes the owner of the folder in the image that mounts it first, and the backup and the one-off
     # container (both user 10001) write there.
+    # The group may write, and new files get the folder's group (setgid), so the backup can remove the updater's answer.
     dockerfile = (INFRA / "images" / f"{image}.Dockerfile").read_text(encoding="utf-8")
-    assert "install -d -o 10001 -g 10001 /restore-test" in dockerfile
+    assert "install -d -o 10001 -g 10001 -m 2775 /restore-test" in dockerfile

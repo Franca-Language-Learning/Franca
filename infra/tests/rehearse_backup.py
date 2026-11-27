@@ -6,7 +6,8 @@ It needs Docker with Compose and builds the images itself. A temporary folder st
 The rehearsal:
 1. starts the app, the socket proxy and the updater, and writes a row to the database;
 2. runs a backup in the backup container, then the monthly restore test. In the restore test the updater has to start
-   the app on the restored copy in a one-off container, and the app's health check has to answer there;
+   the app on the restored copy in a one-off container, and the app's health check has to answer there. With the
+   updates profile off, the restore test leaves out the app check and says so;
 3. checks that the backup folder has an encrypted restic repository and no readable copy of the database;
 4. deletes the row, stops the app, restores the latest backup and starts the app again; the row has to be back, and
    the database from before the restore has to be kept beside it;
@@ -118,6 +119,14 @@ def main() -> int:
             checks.check("restore-check-not-run" not in started, "the updater starts the one-off container without an error")
             left = in_backup_shell("ls -A /restore-test")
             checks.check(left.returncode == 0 and not left.stdout.strip(), "the restored copy is removed after the app check")
+            without_updates = sh(
+                *compose, "run", "--rm", "--no-deps", "-e", "FRANCA_PROFILES=backups", "backup", "python", "/app/franca_backup.py", "restore-test",
+                check=False,
+            )  # fmt: skip
+            checks.check(
+                without_updates.returncode == 0 and "updates profile, which is off" in without_updates.stdout,
+                "with the updates profile off, the restore test passes without the app check and says so",
+            )
 
             look = in_backup_shell("test -f /backups/restic/config && echo repository")
             checks.check("repository" in look.stdout, "the backup folder has a restic repository")
