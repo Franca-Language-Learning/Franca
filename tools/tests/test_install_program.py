@@ -15,6 +15,7 @@ import re
 import sys
 import tarfile
 import urllib.request
+import zipfile
 from pathlib import Path
 from types import ModuleType
 
@@ -257,30 +258,154 @@ def test_a_redirect_to_an_address_that_is_not_https_is_refused() -> None:
     assert handler.redirect_request(request, io.BytesIO(), 302, "Found", http.client.HTTPMessage(), "https://example.org/a") is not None
 
 
+# --- PowerShell modules (.nupkg files are zip files)
+
+
+def nupkg(files: dict[str, bytes]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, data in files.items():
+            archive.writestr(name, data)
+    return buffer.getvalue()
+
+
+MODULE = nupkg({"Module.psd1": b"@{ ModuleVersion = '1.2.3' }", "en-US/about_Module.help.txt": b"help", "[Content_Types].xml": b"<x/>"})
+
+
+def module_programs_file(
+    tmp_path: Path, data: bytes, address: str = "https://www.powershellgallery.com/api/v2/package/Module/{tag}"
+) -> Path:
+    path = tmp_path / "programs.txt"
+    path.write_text(f"Module  1.2.3  {hashlib.sha256(data).hexdigest()}  {address}\n", encoding="utf-8")
+    return path
+
+
+def test_a_module_is_unpacked_into_a_folder(tmp_path: Path) -> None:
+    (program,) = ip.read_programs(module_programs_file(tmp_path, MODULE)).values()
+    folder = ip.install(program, tmp_path / "cache", fetch=Downloads(MODULE))
+    assert folder == tmp_path / "cache" / "Module-1.2.3" / "Module"
+    assert (folder / "Module.psd1").read_bytes() == b"@{ ModuleVersion = '1.2.3' }"
+    assert (folder / "en-US" / "about_Module.help.txt").read_bytes() == b"help"
+
+
+def test_a_module_from_a_github_release_is_unpacked_too(tmp_path: Path) -> None:
+    address = "https://github.com/example/Module/releases/download/{tag}/Module.{version}.nupkg"
+    (program,) = ip.read_programs(module_programs_file(tmp_path, MODULE, address)).values()
+    assert (ip.install(program, tmp_path / "cache", fetch=Downloads(MODULE)) / "Module.psd1").is_file()
+
+
+def test_a_kept_module_is_used_again_without_a_network(tmp_path: Path) -> None:
+    (program,) = ip.read_programs(module_programs_file(tmp_path, MODULE)).values()
+    downloads = Downloads(MODULE)
+    ip.install(program, tmp_path / "cache", fetch=downloads)
+    ip.install(program, tmp_path / "cache", fetch=downloads)
+    assert len(downloads.addresses) == 1
+
+
+def test_a_module_that_was_changed_in_the_cache_is_unpacked_again(tmp_path: Path) -> None:
+    (program,) = ip.read_programs(module_programs_file(tmp_path, MODULE)).values()
+    folder = ip.install(program, tmp_path / "cache", fetch=Downloads(MODULE))
+    (folder / "Module.psd1").write_bytes(b"changed")
+    (folder / "extra.ps1").write_bytes(b"added")
+    folder = ip.install(program, tmp_path / "cache", fetch=Downloads(MODULE))
+    assert (folder / "Module.psd1").read_bytes() == b"@{ ModuleVersion = '1.2.3' }"
+    assert not (folder / "extra.ps1").exists()
+
+
+@pytest.mark.parametrize("name", ["../outside.txt", "/etc/outside.txt", "folder/../../outside.txt"])
+def test_a_module_with_a_path_outside_its_folder_is_refused(tmp_path: Path, name: str) -> None:
+    data = nupkg({"Module.psd1": b"x", name: b"outside"})
+    (program,) = ip.read_programs(module_programs_file(tmp_path, data)).values()
+    with pytest.raises(ip.InstallError, match="outside"):
+        ip.install(program, tmp_path / "cache", fetch=Downloads(data))
+    assert not (tmp_path / "cache" / "outside.txt").exists()
+
+
+def test_a_download_that_is_neither_a_tar_gz_nor_a_zip_file_is_refused(tmp_path: Path) -> None:
+    data = b"<html>not a package</html>"
+    (program,) = ip.read_programs(module_programs_file(tmp_path, data)).values()
+    with pytest.raises(ip.InstallError, match="neither"):
+        ip.install(program, tmp_path / "cache", fetch=Downloads(data))
+
+
 # --- The programs in this repository
+
+
+def renovate_matches(text: str) -> dict[str, set[tuple[str, str, str | None]]]:
+    """What each Renovate manager for tools/programs.txt finds, by datasource: (dependency, version, hash) for each line."""
+    config = json.loads((ROOT / ".github" / "renovate.json").read_text(encoding="utf-8"))
+    managers = [m for m in config["customManagers"] if any(re.search(p.strip("/"), "tools/programs.txt") for p in m["managerFilePatterns"])]
+    found: dict[str, set[tuple[str, str, str | None]]] = {}
+    for manager in managers:
+        for match_string in manager["matchStrings"]:
+            for match in re.finditer(match_string.replace("(?<", "(?P<"), text):
+                digest = match.groupdict().get("currentDigest")
+                found.setdefault(manager["datasourceTemplate"], set()).add((match["depName"], match["currentValue"], digest))
+    return found
 
 
 def test_the_programs_in_this_repository_can_be_read() -> None:
     programs = ip.read_programs(ip.PROGRAMS)
-    assert "gitleaks" in programs
-    assert programs["gitleaks"].platform == ("Linux", "x86_64")
-    assert all(program.url.startswith("https://github.com/") for program in programs.values())
+    assert set(programs) == {"gitleaks", "grype", "syft", "PSScriptAnalyzer", "Pester"}
+    assert {name for name, program in programs.items() if program.platform == ("Linux", "x86_64")} == {"gitleaks", "grype", "syft"}
+    assert programs["Pester"].platform is None
 
 
 def test_renovate_finds_each_program_with_its_version_and_hash() -> None:
+    programs = ip.read_programs(ip.PROGRAMS).values()
+    on_github = {
+        (match[1], p.tag, p.sha256) for p in programs if (match := re.match(r"https://github\.com/([^/]+/[^/]+)/releases/download/", p.url))
+    }
+    on_the_gallery = {(p.name, p.tag, None) for p in programs if p.url.startswith("https://www.powershellgallery.com/api/v2/package/")}
+    assert len(on_github) + len(on_the_gallery) == len(programs)
+    assert renovate_matches(ip.PROGRAMS.read_text(encoding="utf-8")) == {"github-release-attachments": on_github, "nuget": on_the_gallery}
+
+
+def test_renovate_looks_up_powershell_modules_in_the_gallery() -> None:
+    config = json.loads((ROOT / ".github" / "renovate.json").read_text(encoding="utf-8"))
+    (manager,) = [m for m in config["customManagers"] if m.get("datasourceTemplate") == "nuget"]
+    assert manager["registryUrlTemplate"] == "https://www.powershellgallery.com/api/v2/"
+
+
+def test_the_workflows_install_the_pinned_programs_only() -> None:
+    """Anchore's actions and Install-Module download a version without checking a hash, so the workflows do not use them."""
+    for path in [*(ROOT / ".github").rglob("*.yml"), *(ROOT / ".github").rglob("*.yaml")]:
+        text = path.read_text(encoding="utf-8")
+        for unpinned in ("anchore/scan-action", "anchore/sbom-action", "Install-Module"):
+            assert unpinned not in text, f"{path.name} uses {unpinned}"
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    for name, workflow in [("grype", ci), ("Pester", ci), ("PSScriptAnalyzer", ci), ("grype", release), ("syft", release)]:
+        assert f"tools/install_program.py {name}" in workflow, name
+
+
+def test_renovate_finds_the_installers_cosign_with_its_version_and_hash() -> None:
     config = json.loads((ROOT / ".github" / "renovate.json").read_text(encoding="utf-8"))
     (manager,) = [
-        m for m in config["customManagers"] if any(re.search(p.strip("/"), "tools/programs.txt") for p in m["managerFilePatterns"])
+        m
+        for m in config["customManagers"]
+        if "/^installer/.+\\.py$/" in m["managerFilePatterns"] and m.get("datasourceTemplate") == "github-release-attachments"
     ]
-    assert manager["datasourceTemplate"] == "github-release-attachments"
-    text = ip.PROGRAMS.read_text(encoding="utf-8")
-    found = {
-        (match["depName"], match["currentValue"], match["currentDigest"])
-        for match_string in manager["matchStrings"]
-        for match in re.finditer(match_string.replace("(?<", "(?P<"), text)
-    }
-    expected = {
-        (re.search(r"github\.com/([^/]+/[^/]+)/", p.url)[1], p.tag, p.sha256)  # type: ignore[index]
-        for p in ip.read_programs(ip.PROGRAMS).values()
-    }
-    assert found == expected
+    text = (ROOT / "installer" / "linux" / "franca_install.py").read_text(encoding="utf-8")
+    (match,) = re.finditer(manager["matchStrings"][0].replace("(?<", "(?P<"), text)
+    version = re.search(r"COSIGN_URL = \".*/download/(v[^/]+)/", text)
+    digest = re.search(r'COSIGN_SHA256 = "([0-9a-f]{64})"', text)
+    assert version is not None and digest is not None
+    assert (match["depName"], match["currentValue"], match["currentDigest"]) == ("sigstore/cosign", version[1], digest[1])
+
+
+def test_updates_to_the_pinned_programs_wait_for_a_review() -> None:
+    config = json.loads((ROOT / ".github" / "renovate.json").read_text(encoding="utf-8"))
+    (rule,) = [r for r in config["packageRules"] if "gitleaks/gitleaks" in r.get("matchDepNames", [])]
+    assert rule["automerge"] is False
+    assert rule["addLabels"]
+    found = renovate_matches(ip.PROGRAMS.read_text(encoding="utf-8"))
+    dependencies = {name for matches in found.values() for name, _, _ in matches} | {"sigstore/cosign"}
+    assert dependencies == set(rule["matchDepNames"])
+    assert set(rule["matchFileNames"]) == {"tools/programs.txt", "installer/**"}
+
+
+def test_the_socket_proxy_waits_for_a_review() -> None:
+    config = json.loads((ROOT / ".github" / "renovate.json").read_text(encoding="utf-8"))
+    rules = [r for r in config["packageRules"] if "lscr.io/linuxserver/socket-proxy" in r.get("matchPackageNames", [])]
+    assert any(r.get("automerge") is False for r in rules)

@@ -1,11 +1,16 @@
-"""Downloads a command-line program listed in tools/programs.txt and checks it against its SHA-256 (E01-004, E01-013).
+"""Downloads a program listed in tools/programs.txt and checks it against its SHA-256 (E01-004, E01-013).
 
-The programs that the pipeline and scripts/check run, such as gitleaks, are downloaded from their GitHub release
-pages. A release file can be replaced after it is published, so each program is pinned by the SHA-256 of the file in
-tools/programs.txt, and a download with another hash is not kept. Renovate updates the version and the hash together
-(.github/renovate.json).
+The programs that the pipeline and scripts/check run, such as gitleaks, Grype and the PowerShell modules that check
+the Windows installer, are downloaded from their release pages. A release file can be replaced after it is
+published, so each program is pinned by the SHA-256 of the file in tools/programs.txt, and a download with another
+hash is not kept (.github/renovate.json, docs/package-updates.md).
 
   python3 -I tools/install_program.py gitleaks     download gitleaks if needed, and print the path of the program
+  python3 -I tools/install_program.py Pester       download Pester if needed, and print the path of its folder
+
+From a .tar.gz download, the file with the program's name is taken out. A zip download, such as a PowerShell
+module's .nupkg file, is unpacked into a folder with the program's name. The kind of download is read from its
+first bytes, because an address such as the PowerShell Gallery's has no file extension.
 
 The checked download is kept in ~/.cache/franca/programs (or $XDG_CACHE_HOME/franca/programs), so the program can
 be used again without a network. The program is unpacked from the checked download on each run. The .tar.gz files
@@ -23,11 +28,13 @@ import hashlib
 import os
 import platform
 import re
+import shutil
 import sys
 import tarfile
 import tempfile
 import urllib.error
 import urllib.request
+import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from http.client import HTTPMessage
@@ -41,6 +48,8 @@ LINE = re.compile(r"^(?P<name>\w[\w.-]*)\s+(?P<tag>[\w.-]+)\s+(?P<sha256>[0-9a-f
 PLATFORM_LINE = re.compile(r"^platform\s+(?P<system>\S+)\s+(?P<machine>\S+)$")
 EXIT_HASH_MISMATCH = 3
 EXIT_OTHER_PLATFORM = 4
+GZIP_START = b"\x1f\x8b"
+ZIP_START = b"PK\x03\x04"
 
 Fetch = Callable[[str], bytes]
 
@@ -147,7 +156,7 @@ def _write(path: Path, data: bytes, mode: int = 0o644) -> None:
         raise
 
 
-def _unpack(archive: Path, name: str, target: Path) -> None:
+def _unpack_program(archive: Path, name: str, target: Path) -> None:
     """Copies the file called name out of a .tar.gz archive. Only that file is read from the archive."""
     with tarfile.open(archive, mode="r:gz") as files:
         member = next((m for m in files.getmembers() if m.isfile() and Path(m.name).name == name), None)
@@ -157,13 +166,40 @@ def _unpack(archive: Path, name: str, target: Path) -> None:
         _write(target, content.read(), mode=0o755)
 
 
+def _unpack_folder(archive: Path, target: Path) -> None:
+    """Unpacks a zip file into the target folder. A file whose path would end up outside the folder is refused."""
+    temporary = Path(tempfile.mkdtemp(dir=target.parent, prefix=f".{target.name}."))
+    try:
+        with zipfile.ZipFile(archive) as files:
+            for member in files.infolist():
+                path = Path(member.filename)
+                if path.is_absolute() or member.filename.startswith(("/", "\\")) or ".." in path.parts:
+                    raise InstallError(f"{archive.name} has a file outside its folder: {member.filename}")
+                if member.is_dir():
+                    continue
+                destination = temporary / path
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(files.read(member))
+        os.replace(temporary, target)
+    except BaseException:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+
+
+def _remove(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink(missing_ok=True)
+
+
 def current_platform() -> tuple[str, str]:
     return platform.system(), platform.machine()
 
 
 def install(program: Program, cache: Path, fetch: Fetch = download, this_platform: tuple[str, str] | None = None) -> Path:
-    """The path of the program. It is downloaded into the cache unless a checked copy is there already, and it is
-    unpacked from the checked copy on each run, so a program that was changed in the cache is not run."""
+    """The path of the program (or the module's folder). It is downloaded into the cache unless a checked copy is there
+    already, and it is unpacked from the checked copy on each run, so a program that was changed in the cache is not run."""
     this_platform = this_platform or current_platform()
     if program.platform and program.platform != this_platform:
         system, machine = program.platform
@@ -183,8 +219,15 @@ def install(program: Program, cache: Path, fetch: Fetch = download, this_platfor
             )
         folder.mkdir(parents=True, exist_ok=True)
         _write(archive, data)
-    target.unlink(missing_ok=True)
-    _unpack(archive, program.name, target)
+    _remove(target)
+    with archive.open("rb") as file:
+        start = file.read(4)
+    if start.startswith(GZIP_START):
+        _unpack_program(archive, program.name, target)
+    elif start.startswith(ZIP_START):
+        _unpack_folder(archive, target)
+    else:
+        raise InstallError(f"{program.file_name} is neither a .tar.gz file nor a zip file")
     return target
 
 

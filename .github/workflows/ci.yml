@@ -40,12 +40,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: scripts/check python
+      # Pester and PSScriptAnalyzer are downloaded and checked against their SHA-256 in tools/programs.txt, then
+      # loaded from those folders. The runner has other versions of both, which are not used.
       - name: Windows installer
         shell: pwsh
         run: |
-          Set-PSRepository PSGallery -InstallationPolicy Trusted
-          Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force
-          Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force
+          $pester = python3 -I tools/install_program.py Pester
+          if ($LASTEXITCODE) { throw "Pester could not be installed" }
+          $analyzer = python3 -I tools/install_program.py PSScriptAnalyzer
+          if ($LASTEXITCODE) { throw "PSScriptAnalyzer could not be installed" }
+          Remove-Module Pester, PSScriptAnalyzer -ErrorAction SilentlyContinue
+          Import-Module (Join-Path $pester Pester.psd1) -Force
+          Import-Module (Join-Path $analyzer PSScriptAnalyzer.psd1) -Force
+          Get-Module Pester, PSScriptAnalyzer | Format-Table Name, Version, Path -AutoSize | Out-String -Width 200 | Write-Host
           $issues = Invoke-ScriptAnalyzer -Path installer/windows -Recurse -Settings installer/windows/PSScriptAnalyzerSettings.psd1
           $issues | Format-Table -AutoSize | Out-String | Write-Host
           if ($issues) { throw "PSScriptAnalyzer found $(@($issues).Count) issue(s) in the Windows installer" }
@@ -166,22 +173,17 @@ jobs:
         run: >-
           uv run --no-project --python 3.14 python -I -c "import pathlib, sys, tempfile; sys.path[:0] = ['installer/linux', 'infra/updater'];
           import franca_install; franca_install.install_cosign(pathlib.Path(tempfile.mkdtemp()) / 'cosign')"
-      # The same scan as in the release workflow, so a vulnerable image is found before a release. Grype is installed
-      # once and reads .grype.yaml from the repository root. Each image is scanned, and the step fails at the end if
-      # any of them has a finding of high or critical severity that has a fix.
-      - name: Install Grype
-        id: grype
-        uses: anchore/scan-action/download-grype@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
-        with:
-          grype-version: "v0.122.1" # renovate: datasource=github-releases depName=anchore/grype
+      # The same scan as in the release workflow, so a vulnerable image is found before a release. Grype is downloaded
+      # and checked against its SHA-256 in tools/programs.txt, and reads .grype.yaml from the repository root. Each image
+      # is scanned, and the step fails at the end if any of them has a finding of high or critical severity that has a fix.
       - name: Scan the images for known vulnerabilities
-        env:
-          GRYPE: ${{ steps.grype.outputs.cmd }}
         run: |
+          grype="$(python3 -I tools/install_program.py grype)"
+          "$grype" version
           status=0
           for image in app caddy updater backup tailscale status; do
             echo "== franca/$image:0.1.0-dev"
-            "$GRYPE" "docker:franca/$image:0.1.0-dev" --fail-on high --only-fixed --output table || status=1
+            "$grype" "docker:franca/$image:0.1.0-dev" --fail-on high --only-fixed --output table || status=1
           done
           exit "$status"
 
