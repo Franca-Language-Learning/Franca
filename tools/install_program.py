@@ -18,10 +18,10 @@ are for the platform on the platform line of tools/programs.txt, and on another 
 Only the Python standard library is needed.
 
 A download that fails with a connection error, a timeout, HTTP 429 or HTTP 5xx is tried up to three times, with waits
-of 5 and 15 seconds. HTTP 403 for an address on the PowerShell Gallery, before or after redirects, is tried again in the
-same way, because the gallery has refused a request once and accepted it on the next run. Before a new try, a line with
-the address, the reason and the number of the try is written to standard error. Other HTTP errors fail at once, and a
-download with another hash is not tried again.
+of 5 and 15 seconds. A download that fails with HTTP 403 for an address on the PowerShell Gallery, before or after
+redirects, is tried again in the same way, because the gallery has refused a request once and accepted it on the next
+run. Before a new try, a line with the address, the reason and the number of the try is written to standard error.
+Other HTTP errors fail at once, and a download with another hash is not tried again.
 
 Exit codes: 0 when the program is ready, 3 when the download has another hash, 4 when this computer is not on the
 platform of the file, and 1 for other problems, such as no network.
@@ -151,8 +151,8 @@ class TemporaryFailure(InstallError):
 def _failure(url: str, error: BaseException) -> InstallError:
     """The error to raise for a failed download: a TemporaryFailure when the download is worth trying again.
 
-    A 403 is retried when the address asked for or the address that answered is on the PowerShell Gallery, because the
-    gallery can redirect a package download to storage on another host.
+    A download that fails with HTTP 403 is tried again when the address asked for or the address that answered is on the
+    PowerShell Gallery, because the gallery can redirect a package download to storage on another host.
     """
     if isinstance(error, urllib.error.HTTPError):
         # The error holds the open response, which is closed here so that it is not left open during the next try.
