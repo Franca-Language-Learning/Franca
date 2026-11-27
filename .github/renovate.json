@@ -208,6 +208,17 @@
       "matchStrings": [
         "/releases/download/(?<currentValue>v[^/]+)/[^\"]*\"  # renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)"
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "Programs downloaded in the pipeline and by scripts/check, pinned by the SHA-256 of the release file in tools/programs.txt. Renovate finds the file with that hash in the current release, and writes the hash of the same file in the new release.",
+      "managerFilePatterns": [
+        "/^tools/programs\\.txt$/"
+      ],
+      "matchStrings": [
+        "\\n[\\w.-]+ +(?<currentValue>[\\w.-]+) +(?<currentDigest>[a-f0-9]{64}) +https://github\\.com/(?<depName>[\\w.-]+/[\\w.-]+)/releases/download/"
+      ],
+      "datasourceTemplate": "github-release-attachments"
     }
   ]
 }
