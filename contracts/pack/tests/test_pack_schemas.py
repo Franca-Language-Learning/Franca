@@ -6,16 +6,16 @@ the CHECK constraints in contracts/db/schema.sql and the reference data in contr
 passes its schema can also be imported.
 """
 
-import json
+import importlib.util
 import re
-from functools import cache
+import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import pytest
 import yaml
 from jsonschema import Draft202012Validator
-from referencing import Registry, Resource
 
 ROOT = Path(__file__).resolve().parents[3]
 SCHEMAS = ROOT / "contracts" / "pack"
@@ -23,45 +23,23 @@ FIXTURE = ROOT / "packs" / "fixture"
 DATABASE = (ROOT / "contracts" / "db" / "schema.sql").read_text(encoding="utf-8")
 SEED = (ROOT / "contracts" / "db" / "seed.sql").read_text(encoding="utf-8")
 
-# Which schema each file in a pack follows, by its path in the pack. The first matching pattern is used.
-FILE_TYPES = [
-    (r"pack\.yaml", "pack.schema.json"),
-    (r"course-config\.yaml", "course-config.schema.json"),
-    (r"lexicon/[a-z0-9-]+\.yaml", "lexeme.schema.json"),
-    (r"chunks/[a-z0-9-]+\.yaml", "chunk.schema.json"),
-    (r"grammar/[a-z0-9-]+\.yaml", "grammar-point.schema.json"),
-    (r"sounds/[a-z0-9-]+\.yaml", "sound.schema.json"),
-    (r"scenarios/[a-z0-9-]+\.yaml", "scenario.schema.json"),
-    (r"course/[a-z0-9-]+\.lesson\.yaml", "lesson.schema.json"),
-    (r"course/[a-z0-9-]+\.node\.yaml", "course-node.schema.json"),
-    (r"course/[a-z0-9-]+\.can-do\.yaml", "can-do.schema.json"),
-    (r"media/[a-z0-9-]+\.yaml", "media.schema.json"),
-    (r"strings/[a-z0-9-]+\.yaml", "strings.schema.json"),
-]
+
+def load_tool() -> ModuleType:
+    """tools/validate_pack.py, which has the file types, the schema registry and the validator."""
+    spec = importlib.util.spec_from_file_location("validate_pack", ROOT / "tools" / "validate_pack.py")
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["validate_pack"] = module
+    spec.loader.exec_module(module)
+    return module
 
 
-@cache
-def load_schema(name: str) -> dict[str, Any]:
-    loaded: dict[str, Any] = json.loads((SCHEMAS / name).read_text(encoding="utf-8"))
-    return loaded
-
-
-@cache
-def registry() -> Registry[Any]:
-    """All pack schemas, so that one schema can refer to the shared definitions in another."""
-    resources = [(load_schema(path.name)["$id"], Resource.from_contents(load_schema(path.name))) for path in SCHEMAS.glob("*.schema.json")]
-    return Registry().with_resources(resources)
-
-
-@cache
-def validator(name: str) -> Draft202012Validator:
-    # With the format checker, "format": "date" is checked as a calendar date. "format": "uri" stays a note, because
-    # rfc3987 is not installed, and a pattern is used for it instead.
-    return Draft202012Validator(load_schema(name), registry=registry(), format_checker=Draft202012Validator.FORMAT_CHECKER)
-
-
-def schema_for(relative: str) -> str | None:
-    return next((schema for pattern, schema in FILE_TYPES if re.fullmatch(pattern, relative)), None)
+validate_pack = load_tool()
+FILE_TYPES = validate_pack.FILE_TYPES
+load_schema = validate_pack.load_schema
+validator = validate_pack.validator
+schema_for = validate_pack.schema_for
 
 
 def fixture_files() -> list[Path]:
