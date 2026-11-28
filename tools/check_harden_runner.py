@@ -55,10 +55,8 @@ ACTION = "step-security/harden-runner@"
 # The workflow whose jobs may stay in audit mode.
 AUDIT_ALLOWED = "release.yml"
 # The jobs that may call a reusable workflow, as (workflow file name, job id), with the reason.
-REUSABLE_WORKFLOW_EXCEPTIONS: dict[tuple[str, str], str] = {
-    ("osv-scanner.yml", "scan-pr"): "removed after the required check is swapped (N2)",
-    ("osv-scanner.yml", "scan-main"): "removed after the required check is swapped (N2)",
-}
+# There are none at the moment.
+REUSABLE_WORKFLOW_EXCEPTIONS: dict[tuple[str, str], str] = {}
 # A host name, which may start with *. for a wildcard, a colon and a port number.
 ENDPOINT = re.compile(r"^(?:\*\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+:(?P<port>[0-9]{1,5})$")
 HIGHEST_PORT = 65535
