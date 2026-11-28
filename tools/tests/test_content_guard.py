@@ -301,7 +301,7 @@ NOT_FINGERPRINTED_PATHS = ["secrets/fingerprint-key", "secrets/sub/other-key", "
 
 
 @pytest.mark.parametrize("path", NOT_FINGERPRINTED_PATHS)
-def test_paths_in_the_list_are_not_fingerprinted(tmp_path: Path, path: str) -> None:
+def test_paths_in_not_fingerprinted_are_left_out(tmp_path: Path, path: str) -> None:
     root = content_checkout(tmp_path / "content", {path: text_with_long_lines()})
     assert guard.make_fingerprints(root, KEY) == set()
 
@@ -333,7 +333,7 @@ FINGERPRINTED_PATHS = [
 
 
 @pytest.mark.parametrize("path", FINGERPRINTED_PATHS)
-def test_files_outside_the_list_are_fingerprinted(tmp_path: Path, path: str) -> None:
+def test_files_outside_not_fingerprinted_are_fingerprinted(tmp_path: Path, path: str) -> None:
     text = text_with_long_lines()
     root = content_checkout(tmp_path / "content", {path: text})
     assert guard.Fingerprints(key=KEY, values=frozenset()).of_file(text.encode()) in guard.make_fingerprints(root, KEY)
@@ -386,7 +386,7 @@ def test_the_staged_version_is_fingerprinted_and_unstaged_changes_are_named(tmp_
     assert guard.unstaged_changes(root) == ["packs/nl-be/lesson.yaml"]
 
 
-def test_a_submodule_stops_the_fingerprint_command(tmp_path: Path) -> None:
+def test_the_fingerprint_command_stops_for_a_submodule(tmp_path: Path) -> None:
     other = committed_checkout(tmp_path / "other", {"lesson.yaml": text_with_long_lines()})
     sha = git(other, "rev-parse", "HEAD").strip()
     root = content_checkout(tmp_path / "content", {"packs/fr/lesson.yaml": "x: 1\n"})
@@ -395,7 +395,7 @@ def test_a_submodule_stops_the_fingerprint_command(tmp_path: Path) -> None:
         guard.make_fingerprints(root, KEY)
 
 
-def test_a_merge_conflict_stops_the_fingerprint_command(tmp_path: Path) -> None:
+def test_the_fingerprint_command_stops_for_a_merge_conflict(tmp_path: Path) -> None:
     root = committed_checkout(tmp_path / "content", {"packs/nl-be/lesson.yaml": "a: 1\n"})
     git(root, "checkout", "-q", "-b", "other")
     (root / "packs" / "nl-be" / "lesson.yaml").write_text("a: 2\n")
@@ -420,7 +420,8 @@ def test_git_variables_from_a_hook_do_not_change_the_files(tmp_path: Path, monke
 
 
 def test_the_fingerprint_command_needs_a_git_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # With the ceiling, Git does not look for a checkout above the temporary folder, which matters when TMPDIR is in one.
+    # With GIT_CEILING_DIRECTORIES, Git does not look for a checkout above the temporary folder. That matters when TMPDIR
+    # is inside a checkout.
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
     folder = tmp_path / "plain"
     folder.mkdir()
@@ -519,7 +520,7 @@ def test_public_and_skip_public_cannot_be_used_together(checkouts: tuple[Path, P
     assert fingerprint_command(content, "--public", str(public), "--skip-public").returncode == 2
     result = fingerprint_command(content, "--skip-public", "--public-ref", "main")
     assert result.returncode == 2
-    assert "--public-ref is used with --public only" in result.stderr
+    assert "--public-ref can be used with --public only" in result.stderr
 
 
 @pytest.mark.parametrize("option", [("--public", "."), ("--skip-public",), ("--output", "x.txt"), ("--public-ref", "main")])
@@ -635,7 +636,7 @@ def sentence_kept(values: set[str] | None) -> bool:
         ("docs/y.md", f"  {SENTENCE.upper()}   \n"),  # in upper case, with extra spaces
     ],
 )
-def test_a_course_line_in_a_public_file_stops_the_refresh(lesson_checkout: Path, tmp_path: Path, path: str, text: str) -> None:
+def test_the_refresh_stops_for_a_course_line_in_a_public_file(lesson_checkout: Path, tmp_path: Path, path: str, text: str) -> None:
     public = public_checkout(tmp_path / "franca", {path: text})
     values, message = refresh(lesson_checkout, public)
     assert values is None
@@ -647,7 +648,7 @@ def test_a_course_line_in_a_public_file_stops_the_refresh(lesson_checkout: Path,
 SCHEMA_COMMENT = "# yaml-language-server: $schema=../../spec/lesson.schema.json"
 
 
-def test_a_comment_line_of_a_lesson_in_the_public_fixture_pack_is_a_notice(tmp_path: Path) -> None:
+def test_a_comment_line_of_a_lesson_in_the_public_fixture_pack_is_left_out_with_a_notice(tmp_path: Path) -> None:
     content = committed_checkout(tmp_path / "content", {"packs/nl/l.yaml": f"{SCHEMA_COMMENT}\nprompt: {SENTENCE}\n"})
     public = public_checkout(tmp_path / "franca", {"packs/fixture/l.yaml": f"{SCHEMA_COMMENT}\n"})
     values, message = refresh(content, public)
@@ -657,7 +658,7 @@ def test_a_comment_line_of_a_lesson_in_the_public_fixture_pack_is_a_notice(tmp_p
     assert "packs/fixture/l.yaml has lines that are in packs/nl/l.yaml" in message
 
 
-def test_the_same_comment_line_of_many_lessons_in_the_fixture_pack_is_a_notice(tmp_path: Path) -> None:
+def test_the_same_comment_line_of_many_lessons_in_the_fixture_pack_is_left_out_with_a_notice(tmp_path: Path) -> None:
     lessons = {f"packs/nl/u{i}.yaml": f"{SCHEMA_COMMENT}\nprompt: {SENTENCE} {i}\n" for i in range(8)}
     content = committed_checkout(tmp_path / "content", lessons)
     public = public_checkout(tmp_path / "franca", {"packs/fixture/l.yaml": f"{SCHEMA_COMMENT}\n"})
@@ -699,7 +700,7 @@ FLOW_LIST_LINE = 'examples: ["' + '", "'.join(FLOW_LIST_SENTENCES) + '"]\n'
         ({"packs/nl/l.md": f"# {made_up_line(42)}\n\n{made_up_line(43)}\n"}, {"packs/fixture/a.yaml": f"# {made_up_line(42)}\n"}),
     ],
 )
-def test_a_line_of_a_lesson_that_is_not_a_comment_in_the_fixture_pack_stops_the_refresh(
+def test_the_refresh_stops_for_a_line_of_a_lesson_that_is_not_a_comment_in_the_fixture_pack(
     tmp_path: Path, lessons: dict[str, str], fixture_files: dict[str, str]
 ) -> None:
     content = committed_checkout(tmp_path / "content", lessons)
@@ -723,7 +724,9 @@ SECOND_SENTENCE = "Een tweede verzonnen zin uit dezelfde proefles, die ook nerge
         {"packs/fixture/a.yaml": f"prompt: {SENTENCE}\n", "packs/fixture/b.yaml": f"answer: {SECOND_SENTENCE}\n"},  # one in each
     ],
 )
-def test_more_than_one_line_of_a_course_file_in_the_fixture_pack_stops_the_refresh(tmp_path: Path, fixture_files: dict[str, str]) -> None:
+def test_the_refresh_stops_for_more_than_one_line_of_a_course_file_in_the_fixture_pack(
+    tmp_path: Path, fixture_files: dict[str, str]
+) -> None:
     content = committed_checkout(tmp_path / "content", {"packs/nl/l.yaml": f"prompt: {SENTENCE}\nanswer: {SECOND_SENTENCE}\n"})
     public = public_checkout(tmp_path / "franca", fixture_files)
     values, message = refresh(content, public)
@@ -734,7 +737,7 @@ def test_more_than_one_line_of_a_course_file_in_the_fixture_pack_stops_the_refre
     assert SENTENCE not in message and SECOND_SENTENCE not in message
 
 
-def test_two_comment_lines_of_a_course_file_in_the_fixture_pack_stop_the_refresh(tmp_path: Path) -> None:
+def test_the_refresh_stops_for_two_comment_lines_of_a_course_file_in_the_fixture_pack(tmp_path: Path) -> None:
     content = committed_checkout(tmp_path / "content", {"packs/nl/l.yaml": f"# {SENTENCE}\n# {SECOND_SENTENCE}\nprompt: x\n"})
     public = public_checkout(tmp_path / "franca", {"packs/fixture/l.yaml": f"# {SENTENCE}\n# {SECOND_SENTENCE}\n"})
     values, message = refresh(content, public)
@@ -742,7 +745,7 @@ def test_two_comment_lines_of_a_course_file_in_the_fixture_pack_stop_the_refresh
     assert "packs/fixture/l.yaml has lines that are in packs/nl/l.yaml" in message
 
 
-def test_a_whole_course_file_of_one_line_in_the_fixture_pack_stops_the_refresh(tmp_path: Path) -> None:
+def test_the_refresh_stops_for_a_whole_course_file_of_one_line_in_the_fixture_pack(tmp_path: Path) -> None:
     content = committed_checkout(tmp_path / "content", {"packs/nl/l.yaml": f"prompt: {SENTENCE}\n"})
     public = public_checkout(tmp_path / "franca", {"packs/fixture/l.yaml": f"prompt: {SENTENCE}\n"})
     values, message = refresh(content, public)
@@ -751,7 +754,7 @@ def test_a_whole_course_file_of_one_line_in_the_fixture_pack_stops_the_refresh(t
 
 
 @pytest.mark.parametrize("private_path", ["tests/fixtures/lesson.yaml", "notes/lesson-ideas.md", "docs/setup.md", "README.md"])
-def test_text_of_a_file_outside_the_tooling_list_in_a_public_file_stops_the_refresh(tmp_path: Path, private_path: str) -> None:
+def test_the_refresh_stops_for_text_of_a_file_outside_the_tooling_list_in_a_public_file(tmp_path: Path, private_path: str) -> None:
     # Course text can be in any folder of franca-content, so only the files in TOOLING_PATHS may share text with franca.
     content = committed_checkout(tmp_path / "content", {private_path: f"prompt: {SENTENCE}\n", "packs/nl/l.yaml": LESSON})
     public = public_checkout(tmp_path / "franca", {"docs/a.md": f"{SENTENCE}\n"})
@@ -794,11 +797,11 @@ def test_the_tooling_list_is_named_in_the_docs() -> None:
         assert f"`{rule}`" in docs, rule
 
 
-def test_a_tooling_file_that_is_in_the_public_commit_is_a_notice(checkouts: tuple[Path, Path]) -> None:
+def test_a_tooling_file_that_is_in_the_public_commit_is_left_out_with_a_notice(checkouts: tuple[Path, Path]) -> None:
     content, public = checkouts
     values, message = refresh(content, public)
     assert values == private_values()
-    assert "tooling files of franca-content" in message
+    assert "tooling file of franca-content" in message
     assert "  .github/workflows/check.yml is a copy of .github/workflows/check.yml\n" in message
 
 
@@ -809,7 +812,7 @@ def test_a_tooling_file_that_is_in_the_public_commit_is_a_notice(checkouts: tupl
         ".github/lesson.yaml",  # where Git records .GitHub/lesson.yaml when core.ignorecase is true (probe Q2)
     ],
 )
-def test_course_text_in_other_github_files_in_a_public_file_stops_the_refresh(tmp_path: Path, private_path: str) -> None:
+def test_the_refresh_stops_for_course_text_of_other_github_files_in_a_public_file(tmp_path: Path, private_path: str) -> None:
     content = committed_checkout(tmp_path / "content", {private_path: f"prompt: {SENTENCE}\n", ".github/workflows/check.yml": WORKFLOW})
     public = public_checkout(tmp_path / "franca", {"docs/a.md": f"{SENTENCE}\n"})
     values, message = refresh(content, public)
@@ -817,7 +820,7 @@ def test_course_text_in_other_github_files_in_a_public_file_stops_the_refresh(tm
     assert f"docs/a.md has lines that are in {private_path}" in message
 
 
-def test_text_of_a_tooling_file_in_the_public_fixture_pack_stops_the_refresh(tmp_path: Path) -> None:
+def test_the_refresh_stops_for_text_of_a_tooling_file_in_the_public_fixture_pack(tmp_path: Path) -> None:
     # A workflow and the fixture pack are not expected to have text in common (probe Q7).
     content = committed_checkout(tmp_path / "content", {".github/workflows/x.yml": f"run: echo '{SENTENCE}'\n", "packs/nl/l.yaml": LESSON})
     public = public_checkout(tmp_path / "franca", {"packs/fixture/a.yaml": f"x: {SENTENCE}\n"})
@@ -827,7 +830,7 @@ def test_text_of_a_tooling_file_in_the_public_fixture_pack_stops_the_refresh(tmp
 
 
 @pytest.mark.parametrize("odd_path", [".GITHUB/workflows/check.yml", ".github/Workflows/check.yml", "PyProject.toml", "UV.LOCK"])
-def test_a_path_that_differs_from_a_tooling_path_only_in_case_stops_the_refresh(tmp_path: Path, odd_path: str) -> None:
+def test_the_refresh_stops_for_a_path_that_differs_from_a_tooling_path_only_in_case(tmp_path: Path, odd_path: str) -> None:
     content = committed_checkout(tmp_path / "content", {odd_path: "x = 1\n", "packs/nl/l.yaml": LESSON})
     public = public_checkout(tmp_path / "franca", {})
     values, message = refresh(content, public)
@@ -905,7 +908,7 @@ def test_the_public_commit_and_the_remote_are_printed(lesson_checkout: Path, tmp
         assert part not in message
 
 
-def test_the_public_checkout_without_a_remote_url_is_named_as_such(lesson_checkout: Path, tmp_path: Path) -> None:
+def test_a_public_checkout_without_a_remote_url_is_reported(lesson_checkout: Path, tmp_path: Path) -> None:
     values, message = refresh(lesson_checkout, public_checkout(tmp_path / "franca", {}))
     assert sentence_kept(values), message
     assert "Remote origin has no URL" in message
@@ -920,7 +923,7 @@ def test_a_content_checkout_that_has_fetched_franca_is_not_a_copy(lesson_checkou
     assert sentence_kept(values), message
 
 
-def test_a_public_commit_with_a_pack_stops_the_refresh(lesson_checkout: Path, tmp_path: Path) -> None:
+def test_the_refresh_stops_for_a_public_commit_with_a_pack(lesson_checkout: Path, tmp_path: Path) -> None:
     public = public_checkout(tmp_path / "franca", {"packs/nl/l.yaml": f"prompt: {SENTENCE}\n"})
     values, message = refresh(lesson_checkout, public)
     assert values is None
@@ -945,7 +948,7 @@ def test_a_clone_of_franca_content_without_packs_is_not_a_public_checkout(tmp_pa
     git(content, "commit", "-q", "-m", "more")
     values, message = refresh(content, tmp_path / "clone")
     assert values is None
-    assert "have a first commit in common" in message
+    assert "start from the same first commit" in message
     assert "history from franca" in message
 
 
@@ -992,7 +995,7 @@ def test_a_file_stored_with_git_lfs_is_fingerprinted_by_its_content(tmp_path: Pa
     assert values_of(words) <= guard.make_fingerprints(root, KEY)
 
 
-def test_a_git_lfs_file_whose_content_cannot_be_read_stops_the_command(tmp_path: Path) -> None:
+def test_the_command_stops_for_a_git_lfs_file_whose_content_cannot_be_read(tmp_path: Path) -> None:
     root = content_checkout(tmp_path / "content", {"packs/nl/l.yaml": f"prompt: {SENTENCE}\n"})
     pointer = f"version https://git-lfs.github.com/spec/v1\noid sha256:{'ab' * 32}\nsize 120\n"
     sha = git(root, "hash-object", "-w", "--stdin", stdin=pointer).strip()
@@ -1046,7 +1049,7 @@ def test_a_path_that_uses_the_git_lfs_filter_is_read_with_git_lfs_whatever_its_c
         f"version https://hawser.github.com/spec/v1\noid sha256:{'ab' * 32}\nsize 120\n",  # the old name of the format
     ],
 )
-def test_a_path_that_uses_the_git_lfs_filter_and_cannot_be_read_stops_the_command(tmp_path: Path, blob: str) -> None:
+def test_the_command_stops_for_a_path_that_uses_the_git_lfs_filter_and_cannot_be_read(tmp_path: Path, blob: str) -> None:
     root = content_checkout(tmp_path / "content", {".gitattributes": LFS_ATTRIBUTES, "packs/nl/l.yaml": f"prompt: {SENTENCE}\n"})
     add_blob(root, "packs/nl/words.csv", blob)
     with pytest.raises(guard.GuardError, match=r"Git LFS.*packs/nl/words\.csv"):
@@ -1082,7 +1085,7 @@ def test_new_files_that_are_not_added_are_named(checkouts: tuple[Path, Path], tm
 
 
 @pytest.mark.parametrize("text", ["", "\n", f"{guard.FINGERPRINT_HEADER}\n"])
-def test_a_fingerprint_file_without_values_stops_the_guard(tmp_path: Path, text: str) -> None:
+def test_the_guard_stops_for_a_fingerprint_file_without_values(tmp_path: Path, text: str) -> None:
     # When a refresh that was redirected with > stops, the file is left empty. Without this check, copies of course
     # material would pass the guard.
     file = tmp_path / "prints.txt"
@@ -1099,7 +1102,7 @@ def test_a_fingerprint_file_that_says_it_has_no_values_is_accepted(tmp_path: Pat
         guard.load_fingerprints(file, key=None, values_expected=True)
 
 
-def test_an_empty_fingerprint_file_stops_the_check_of_a_fork_pull_request(repo: Path, tmp_path: Path) -> None:
+def test_the_check_of_a_fork_pull_request_stops_for_an_empty_fingerprint_file(repo: Path, tmp_path: Path) -> None:
     # A pull request from a fork has no key, so the fingerprints are skipped. An emptied file is still an error.
     prints = tmp_path / "prints.txt"
     prints.write_text("", encoding="utf-8")

@@ -47,65 +47,75 @@ To refresh the fingerprints:
    python3 -I ../franca/tools/content_guard.py --fingerprint . --public ../franca --output ../franca/tools/content-fingerprints.txt
    ```
 
-3. Read what is printed. The first line has the public commit and the URL of its remote. Check that the URL is the address of `Franca-Language-Learning/Franca`. Then there is a list of paths for the left-out values (see below). If the command stops because a file of `franca-content` has text in the public commit, tell the product owner.
-4. Read the list of files that are not added to Git or have changes that are not staged, if there is one. Their new text is not fingerprinted. Add and commit them in `franca-content`, then run the command again.
+   The command expects the checkout of `franca` to be in the same parent folder as `franca-content`. If it is somewhere else, replace each `../franca` with its path.
+
+3. Read what is printed. The first line has the public commit and the URL of its remote. The URL should be the address of `Franca-Language-Learning/Franca` on GitHub. If it is another address, stop and tell the product owner. After that line there may be a list of pairs of paths for values that were left out (see "Values that are also in this repository" below).
+
+   If the command stops with a list of pairs of paths, send the list to the product owner, without any text from the files, and do not go on to step 4.
+4. If the output ends with a list of files that are not added to Git or that have changes that are not staged, their new text is not in the fingerprint file. Commit those files in `franca-content` and go back to step 2.
 5. Commit `tools/content-fingerprints.txt` in `franca` on a new branch and open a pull request.
 
-The fingerprint file is written after the values are made. If the command stops with a message, for example because the folder is not the top folder of a Git checkout, the fingerprint file is not changed. Do not redirect the output into the fingerprint file with `>`, because the file is emptied by the shell before the command starts. The guard stops with a message when the fingerprint file has no values, so an emptied file is noticed. A fingerprint file for a test that is meant to have no values has the line `# No fingerprints`. That line is not accepted in `tools/content-fingerprints.txt`.
+The fingerprint file is replaced in one step at the end of the run. If the command stops with a message, for example because the folder is not the top folder of a Git checkout, the old file is kept as it was. Do not redirect the output into the fingerprint file with `>`, because the shell empties the file before the command starts.
+
+The guard stops with a message when the fingerprint file has no values, so a file that was emptied by mistake is caught. A fingerprint file for a test that is meant to have no values has the line `# No fingerprints`. That line is not accepted in `tools/content-fingerprints.txt`.
 
 ### Which files are fingerprinted
 
-The fingerprints are made from the files in the Git index of `franca-content`, which are the files that Git tracks, in the version that was last staged. Files that Git does not track are left out, such as the files in the `.venv` folder made by `uv sync` and in the caches of the test tools. Because the version in the index is read, a file that is left out of the work tree by a sparse checkout, or that was deleted from it, is still fingerprinted. Files with changes that are not staged, and files that are not added to Git and not ignored, are named when the command finishes, because their new text is not fingerprinted.
+The fingerprints are made from the files in the Git index of `franca-content`, which are the files that Git tracks, in the version that was last staged. Files that Git does not track are not fingerprinted, such as the files in the `.venv` folder made by `uv sync` and in the caches of the test tools. Because the version in the index is read, a file that is not in the work tree because of a sparse checkout, or that was deleted from it, is still fingerprinted. Files with changes that are not staged, and files that are not added to Git and not ignored, are named when the command finishes (see step 4).
 
-For a file stored with Git LFS, the index has a small pointer file, and the content is read with `git lfs smudge`. The paths that use the Git LFS filter are found with `git check-attr`, and those files are read with `git lfs smudge` whatever the index has for them. If Git LFS is not installed or the content has not been downloaded, the command stops with a message that names the files.
+For a file stored with Git LFS, the index has a small pointer file in place of the content. The content is read with `git lfs smudge`. That is done for each path that uses the Git LFS filter, whatever the index has for it. If Git LFS is not installed or the content has not been downloaded, the command stops with a message that names the files. Install Git LFS, run `git lfs pull` in `franca-content` and run the command again.
 
-Tracked links are not followed. If the checkout has a submodule or a merge conflict, the command stops with a message that names the paths.
+Symbolic links that Git tracks are not followed, so the file a link points to is not read. If the checkout has a submodule or a merge conflict, the command stops with a message that names the paths. For a submodule, move its files into `franca-content` itself. For a merge conflict, finish the merge. Then run the command again.
 
-These tracked files are left out:
+These tracked files are not fingerprinted:
 
-| Left out | Where it is matched |
+| Not fingerprinted | Where it is matched |
 |---|---|
 | The folder `secrets/`, with everything in it | At the top of the checkout |
 | `course-config.yaml` | In any folder |
 
-The keys in `secrets/` are not content. The planner settings in `course-config.yaml` are left out because the fixture pack in this repository has the same settings, so that the tests use them. The lists are `NOT_FINGERPRINTED` and `NOT_FINGERPRINTED_NAMES` in `tools/content_guard.py`.
+The keys in `secrets/` are not content. The fixture pack in this repository has a copy of the planner settings in `course-config.yaml` for the tests. If the file were fingerprinted, the guard would refuse that copy. The two lists are `NOT_FINGERPRINTED` and `NOT_FINGERPRINTED_NAMES` in `tools/content_guard.py`.
 
 ### Values that are also in this repository
 
-Some files in `franca-content` have lines that are the same as lines in this repository, such as the line in a workflow that pins `actions/checkout`. If their values were in the fingerprint file, the guard would refuse the files of this repository that have the same line. With `--public`, the values of the files in `origin/main` of the given checkout of `franca` are made as well. Another commit can be given with `--public-ref`. The commit and the URL of the remote are printed, so that a fork or an old commit can be noticed.
+Some files in `franca-content` have lines that are the same as lines in this repository, such as the line in a workflow that pins `actions/checkout`. If their values were in the fingerprint file, the guard would refuse the files of this repository that have the same line. With `--public`, the files in `origin/main` of the given checkout of `franca` are fingerprinted too, so that values in both repositories can be found. Another commit can be given with `--public-ref`. The commit and the URL of the remote are printed, so that a fork or an old commit can be noticed.
 
 A private value that is the same as a public value is left out when:
 
 - the private file is on the list of tooling files below, and the public file is outside `packs/`
 - the public file is in `packs/fixture/` and has one comment line of the private file, such as the schema comment at the top of a lesson
 
-Otherwise the command stops with the pairs of paths, and the fingerprint file is not changed. So the command stops when the fixture pack has more of a file of `franca-content` than one comment line, such as the whole file or a second line. The lines are counted over all the files in `packs/fixture/`. A comment line is a line of a YAML file that starts with `#`. Course text can be in any folder of `franca-content`, such as `tests/` or `notes/`. For that reason the command also stops when a file that is not on the list has text in a public file outside `packs/fixture/`. The text may already be public. If its values were left out, the guard would not refuse more copies.
+In any other case the command stops with the pairs of paths, and the fingerprint file is not changed.
 
-The tooling files are listed in `TOOLING_PATHS` in `tools/content_guard.py`. A path that ends in `/` is a folder with everything in it. The paths are matched from the top of the checkout of `franca-content`, with their case. If a file has a path that differs from one of them only in case, such as `.GITHUB/workflows/check.yml`, the command stops.
+For the fixture pack, this means that the command stops when `packs/fixture/` has more of a file of `franca-content` than one comment line, such as a second line or the whole file. The lines are counted over all the files in `packs/fixture/` together. A comment line is a line of a YAML file that starts with `#` in the first column.
+
+Course text can be in any folder of `franca-content`, such as `tests/` or `notes/`. For that reason the command also stops when a file that is not on the tooling list has text in a public file outside `packs/fixture/`. Even if that text is already public, its values are kept, so that the guard goes on refusing new copies of it.
+
+The tooling files are listed in `TOOLING_PATHS` in `tools/content_guard.py`. A path that ends in `/` is a folder with everything in it. The paths are matched from the top of the checkout of `franca-content`, with their case. If a file has a path that differs from one of them only in case, such as `.GITHUB/workflows/check.yml`, the command stops. In that case, rename the file in `franca-content`, or tell the product owner.
 
 | Path in `franca-content` | What it is |
 |---|---|
-| `.github/workflows/` | The workflows |
-| `.github/renovate.json` | Renovate's file in `.github/` |
+| `.github/workflows/` | The GitHub Actions workflows |
+| `.github/renovate.json` | The settings of Renovate, the tool that updates packages, in `.github/` |
 | `pyproject.toml` | The Python project file at the top |
 | `uv.lock` | The locked Python packages |
-| `renovate.json` | Renovate's file at the top |
+| `renovate.json` | The settings of Renovate, at the top |
 | `.gitattributes` | Git's file for line endings and Git LFS |
-| `.gitignore` | The files that Git ignores |
+| `.gitignore` | The list of files that Git ignores |
 
-The files on the list are fingerprinted like the other files. The list is about the matches only. If a refresh stops because of a file of `franca-content` that has no course text, ask for a review before the file is added to the list.
+The files on the list are fingerprinted like the other files. The list is used only when a value is found in both repositories. If a refresh stops because of a file of `franca-content` that has no course text, tell the product owner. A file is added to the list only after a review.
 
-For the left-out values, each pair of paths is printed, the public file first and then the private file, with no text from the files. A pair is shown as "is a copy of" when the whole file is the same, and as "has lines that are in" otherwise. The pairs with tooling files and the pairs with the fixture pack are printed in two groups.
+For the left-out values, the pairs of paths are printed, the public file first and then the private file, with no text from the files. A pair is shown as "is a copy of" when the whole file is the same, and as "has lines that are in" otherwise. The pairs with tooling files and the pairs with the fixture pack are printed in two groups.
 
 Before any public file is read, the checkout given with `--public` is checked, and the command stops in these cases:
 
 - the commit has no `tools/content_guard.py`
 - the commit has files that the guard keeps out of `franca`
-- the commit and `HEAD` of `franca-content` have a first commit in common
+- the commit and `HEAD` of `franca-content` start from the same first commit, which means that they share history
 
-So a clone or a worktree of `franca-content` is refused. Because of the last check, the command also stops if `franca-content` has history from `franca`, for example because it was made from a copy of `franca`.
+With these checks, a clone or a worktree of `franca-content` is refused. Because of the last check, the command also stops if `franca-content` has history from `franca`, for example because it was made from a copy of `franca`. If that happens with a real checkout of `franca`, tell the product owner.
 
-The command stops if `--public` is missing. With `--skip-public`, all the values are kept. That option is meant for tests, because without `--public`, files of this repository are likely to be refused by the guard.
+The command stops if `--public` is missing. With `--skip-public`, all the values are kept. That option is meant for tests. Do not use it for a real refresh, because without `--public` the guard is likely to refuse files of this repository.
 
 The folders where icons and documentation screenshots may be kept are listed in `tools/content-guard-allowed-media.txt`. A file that matches one of those entries has to be a real PNG or ICO file.
 
