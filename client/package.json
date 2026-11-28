@@ -1,6 +1,7 @@
 {
   "name": "@franca/client",
   "private": true,
+  "license": "Apache-2.0",
   "version": "0.1.0",
   "description": "Franca's web client: the learner's interface in the browser.",
   "type": "module",

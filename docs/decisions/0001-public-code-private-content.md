@@ -27,4 +27,4 @@ The product owner chose option A. It is the only option without a paid plan in w
 - Anyone can read the app's code. The code holds no secrets and no course content.
 - Course material pushed by mistake could not be fully withdrawn, so the content guard (story E01-014) runs before each commit, before each push and in the pipeline. See [repository-split.md](../repository-split.md).
 - Franca can use the free tier of Harden-Runner and build attestations, because on the free plans they are available for public repositories.
-- The code has no licence until the product owner chooses one, so others can read it and fork it on GitHub, but not reuse it. The speech container has to be GPL-3.0-or-later and has that licence now.
+- The code has no licence until the product owner chooses one, so others can read it and fork it on GitHub, but not reuse it. The speech container has to be GPL-3.0-or-later and has that licence now. On 27 November 2026 the product owner chose the Apache License 2.0 (decision record 0003).

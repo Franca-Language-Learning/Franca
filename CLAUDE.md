@@ -9,6 +9,7 @@ Franca is a language-learning app. The product owner reviews the work, and anyth
 - Run `scripts/check` before saying a change is finished.
 - Modules in `server/src/franca/` import each other's package root only (`from franca.study import ...`, never `from franca.study.planner_rules import ...` in another module).
 - After changing a route, run `scripts/update-contract` and commit `contracts/openapi.yaml` with the change.
+- The code is Apache-2.0 (`LICENSE`, `NOTICE`, decision record 0003). A file copied from another project is listed in `NOTICE` and keeps its header. Its licence text goes in `LICENSES/`. Do not add licence headers to source files.
 - New packages: check the licence (no AGPL or GPL packages outside `speech/`), and add them with `uv add` or `pnpm add`, so that no release younger than seven days is installed. For a security fix that is newer, follow `docs/package-updates.md`.
 - Interface text and documentation follow the writing rules in the language-standard skill, and an independent agent reviews new text.
 
