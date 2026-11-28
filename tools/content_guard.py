@@ -17,10 +17,10 @@ with -I, so PYTHONPATH, the user's site folder and files in the current folder a
 Fingerprints of the private repository are HMAC-SHA-256 values made with a key that is kept out of this
 repository (see docs/repository-split.md). They are made from the files in the Git index of franca-content, apart
 from the files listed in NOT_FINGERPRINTED and NOT_FINGERPRINTED_NAMES. The values of a file in TOOLING_PATHS that
-also match a file or a line in origin/main of a checkout of this repository are left out, and their paths are
-printed. So is one line of another file that is also in the fixture pack. The refresh stops when any other file of
-franca-content has text in origin/main. To refresh them, run git fetch in the checkout of this repository, then run
-in the top folder of a checkout of franca-content:
+also match a file or a line outside packs/ in origin/main of a checkout of this repository are left out, and their
+paths are printed. So is one comment line of another file that is also in the fixture pack. The refresh stops when any
+other file of franca-content has text in origin/main. To refresh them, run git fetch in the checkout of this
+repository, then run in the top folder of a checkout of franca-content:
   python3 -I <franca>/tools/content_guard.py --fingerprint . --public <franca> --output <franca>/tools/content-fingerprints.txt
 """
 
@@ -74,11 +74,19 @@ LFS_POINTER_FORMAT = re.compile(
 LFS_POINTER_MAX_BYTES = 1024  # pointer files are about 130 bytes
 # The full name of the ref, because Git finds a local branch or tag called origin/main before the remote-tracking ref.
 DEFAULT_PUBLIC_REF = "refs/remotes/origin/main"
-# Files of franca-content that may have text that is also in franca, as paths from the top of its checkout. A path that
-# ends in a slash is a folder with everything under it. Course text can be in any folder of franca-content, so the
-# refresh stops when any other file has text in the public commit (one line in the fixture pack is accepted). This
-# list is about the matches only. The files in it are fingerprinted like the others.
-TOOLING_PATHS = (".github/", "pyproject.toml", "uv.lock", "renovate.json", ".gitattributes", ".gitignore")
+# Files of franca-content that may have text that is also in franca outside packs/, as paths from the top of its
+# checkout. A path that ends in a slash is a folder with everything under it. Course text can be in any folder of
+# franca-content, so the refresh stops when any other file has text in the public commit (one comment line in the
+# fixture pack is accepted). This list is about the matches only. The files in it are fingerprinted like the others.
+TOOLING_PATHS = (
+    ".github/workflows/",
+    ".github/renovate.json",
+    "pyproject.toml",
+    "uv.lock",
+    "renovate.json",
+    ".gitattributes",
+    ".gitignore",
+)
 # Variables with the path of a repository or an index for Git. Git hooks have them, and with them, the files of
 # another repository would be read in place of franca-content or the public checkout.
 GIT_REPOSITORY_VARIABLES = frozenset(
@@ -356,12 +364,22 @@ def is_fingerprinted(path: str) -> bool:
     return not any(path.startswith(rule) if rule.endswith("/") else path == rule for rule in NOT_FINGERPRINTED)
 
 
+def _matches_tooling_rule(path: str, rule: str) -> bool:
+    return path.startswith(rule) if rule.endswith("/") else path == rule
+
+
 def is_tooling(path: str) -> bool:
     """Whether a file of the private repository is in TOOLING_PATHS, by its path from the root of the checkout.
 
     Names are compared with their case, so .GITHUB/ is not .github/.
     """
-    return any(path.startswith(rule) if rule.endswith("/") else path == rule for rule in TOOLING_PATHS)
+    return any(_matches_tooling_rule(path, rule) for rule in TOOLING_PATHS)
+
+
+def differs_from_tooling_only_in_case(path: str) -> bool:
+    """Whether a path is not in TOOLING_PATHS but would be if the case of its letters were ignored, such as
+    .GITHUB/workflows/check.yml or PyProject.toml."""
+    return not is_tooling(path) and any(_matches_tooling_rule(path.casefold(), rule.casefold()) for rule in TOOLING_PATHS)
 
 
 def _git_env() -> dict[str, str]:
@@ -422,8 +440,27 @@ def untracked_files(root: Path) -> list[str]:
     return sorted(_decode(path) for path in listing.split(b"\0") if path)
 
 
+def lfs_paths(root: Path, paths: Iterable[str]) -> set[str]:
+    """The paths that use the Git LFS filter, from the attributes in the index of a checkout (git check-attr --cached)."""
+    names = b"".join(path.encode("utf-8", "surrogateescape") + b"\0" for path in paths)
+    listing = _git("-C", str(root), "check-attr", "--cached", "-z", "--stdin", "filter", stdin=names, env=_git_env())
+    fields = listing.split(b"\0")
+    return {_decode(path) for path, _attribute, value in zip(fields[0::3], fields[1::3], fields[2::3], strict=False) if value == b"lfs"}
+
+
+def _pointer_like(data: bytes) -> bool:
+    """Whether data looks like a Git LFS pointer in any version of the layout: a short text with a version line and
+    an oid line."""
+    return len(data) < LFS_POINTER_MAX_BYTES and data.startswith(b"version ") and b"\noid " in data
+
+
 def _lfs_content(root: Path, path: str, pointer: bytes) -> bytes | None:
-    """The content of a file stored with Git LFS, from git lfs smudge. None when it cannot be read."""
+    """The content of a file stored with Git LFS, from git lfs smudge. None when it cannot be read.
+
+    git lfs smudge gives back a blob that is not a pointer as it is, so a file that was committed before its path used
+    Git LFS is read as its content. A pointer that Git LFS does not know is given back as it is too, so a result that
+    looks like a pointer counts as not read.
+    """
     command = ["git", *GIT_SETTINGS, "-C", str(root), "lfs", "smudge", "--", path]
     try:
         result = subprocess.run(command, input=pointer, capture_output=True, env={**_git_env(), "GIT_TERMINAL_PROMPT": "0"}, timeout=600)
@@ -431,7 +468,7 @@ def _lfs_content(root: Path, path: str, pointer: bytes) -> bytes | None:
         return None
     except subprocess.TimeoutExpired:
         return None
-    if result.returncode != 0 or result.stdout.startswith(LFS_POINTER):
+    if result.returncode != 0 or result.stdout.startswith(LFS_POINTER) or _pointer_like(result.stdout):
         return None
     return result.stdout
 
@@ -470,17 +507,22 @@ def fingerprint_sources(root: Path, key: bytes) -> dict[str, set[str]]:
 def _file_contents(root: Path, entries: list[Entry], *, private: bool) -> Iterator[tuple[list[str], bytes]]:
     """The content of these files of a checkout, each with the paths that have it.
 
-    For the private repository, the content of a file stored with Git LFS is read with git lfs smudge. Stops with a
-    GuardError, after the other files are read, when the content of a Git LFS file cannot be read.
+    For the private repository, a file is read with git lfs smudge when its path uses the Git LFS filter, whatever
+    the blob in the index looks like, and when the blob is a Git LFS pointer. Stops with a GuardError, after the other
+    files are read, when the content of a Git LFS file cannot be read.
     """
     paths_by_sha: dict[str, list[str]] = {}
     for entry in entries:
         paths_by_sha.setdefault(entry.sha, []).append(entry.path)
+    with_lfs_filter = lfs_paths(root, [entry.path for entry in entries]) if private and entries else set()
     unreadable: list[str] = []
     for sha, blob in _checkout_blobs(root, paths_by_sha):
         data: bytes | None = blob
-        if private and len(blob) < LFS_POINTER_MAX_BYTES and LFS_POINTER_FORMAT.match(blob):
-            data = _lfs_content(root, paths_by_sha[sha][0], blob)
+        lfs_path = next((path for path in paths_by_sha[sha] if path in with_lfs_filter), None)
+        if lfs_path is None and private and len(blob) < LFS_POINTER_MAX_BYTES and LFS_POINTER_FORMAT.match(blob):
+            lfs_path = paths_by_sha[sha][0]
+        if lfs_path is not None:
+            data = _lfs_content(root, lfs_path, blob)
         if data is None:
             unreadable += paths_by_sha[sha]
         else:
@@ -516,22 +558,41 @@ def _values_of(root: Path, entries: list[Entry], key: bytes, *, private: bool) -
     return sources
 
 
-def matched_lines(root: Path, values_by_path: dict[str, set[str]], key: bytes) -> dict[str, int]:
-    """For files of a checkout of the private repository, the number of their lines that have one of the given values.
+def is_yaml_comment(path: str, line: str) -> bool:
+    """Whether a line of a file is a YAML comment: the file is a YAML file and the line starts with # in the first
+    column. A line that starts with # after spaces can be text in a block scalar, so it is not counted as a comment."""
+    return Path(path).suffix.lower() in (".yaml", ".yml") and line.startswith("#")
 
-    A line has more than one value (see _line_variants), so the values are counted by the line they came from. Lines
-    with the same values are counted once.
+
+@dataclass(frozen=True)
+class MatchedLines:
+    """The lines of a private file that have one of the values it shares with public files."""
+
+    count: int  # lines with the same values are counted once
+    comments_only: bool  # whether all of these lines are YAML comments
+
+
+def matched_lines(root: Path, values_by_path: dict[str, set[str]], key: bytes) -> dict[str, MatchedLines]:
+    """For files of a checkout of the private repository, the lines that have one of the given values.
+
+    A line has more than one value (see _line_variants), so the values are counted by the line they came from. For a
+    file whose lines are not fingerprinted, the count is 0.
     """
     entries = [e for e in checkout_entries(root, "Run the command in a checkout of franca-content.") if e.path in values_by_path]
     prints = Fingerprints(key=key, values=frozenset())
-    counts: dict[str, int] = {}
+    result: dict[str, MatchedLines] = {}
     for paths, data in _file_contents(root, entries, private=True):
         lines = data.decode("utf-8", errors="replace").splitlines()
         for path in paths:
+            if not _has_line_values(path, private=True):
+                result[path] = MatchedLines(count=0, comments_only=False)
+                continue
             wanted = values_by_path[path]
-            matched = {frozenset(hit) for line in lines if (hit := prints.of_line(line) & wanted)}
-            counts[path] = len(matched) if _has_line_values(path, private=True) else 0
-    return counts
+            matched = [(line, frozenset(hit)) for line in lines if (hit := prints.of_line(line) & wanted)]
+            result[path] = MatchedLines(
+                count=len({hit for _line, hit in matched}), comments_only=all(is_yaml_comment(path, line) for line, _hit in matched)
+            )
+    return result
 
 
 def make_fingerprints(content_root: Path, key: bytes) -> set[str]:
@@ -558,8 +619,9 @@ class LeftOut:
 
     @property
     def tooling(self) -> bool:
-        """Whether the private file is in TOOLING_PATHS, so that the match is expected."""
-        return is_tooling(self.private_path)
+        """Whether the private file is in TOOLING_PATHS and the public file is outside packs/, so that the match is
+        expected."""
+        return is_tooling(self.private_path) and not self.public_path.lower().startswith("packs/")
 
     @property
     def in_fixture_pack(self) -> bool:
@@ -586,17 +648,21 @@ def leave_out_public(private: dict[str, set[str]], public: dict[str, set[str]]) 
 def unexpected_matches(content_root: Path, left_out: list[LeftOut], key: bytes) -> list[LeftOut]:
     """The pairs for which the refresh stops, because the private file is not in TOOLING_PATHS and may be course material.
 
-    A file may have one line in the fixture pack, such as the schema comment at the top of a lesson. Its pairs with the
-    fixture pack are in the result when the fixture pack has the whole file, or more than one of its lines. The lines
-    are counted over all the files of the fixture pack. The other pairs of a file outside TOOLING_PATHS are in the
-    result in any case.
+    A file may have one comment line in the fixture pack, such as the schema comment at the top of a lesson. Its pairs
+    with the fixture pack are in the result when the fixture pack has more of the file than that one comment line. The
+    lines are counted over all the files of the fixture pack. The other pairs of a file
+    outside TOOLING_PATHS are in the result in any case. So is a pair of a file in TOOLING_PATHS and a file in packs/.
     """
     fixture_values: dict[str, set[str]] = {}
     for item in left_out:
         if not item.tooling and item.in_fixture_pack:
             fixture_values.setdefault(item.private_path, set()).update(item.values)
     lines = matched_lines(content_root, fixture_values, key) if fixture_values else {}
-    too_much = {path for path, values in fixture_values.items() if lines.get(path, 0) != 1 or any(v.startswith("file:") for v in values)}
+    too_much = set()
+    for path, values in fixture_values.items():
+        matched = lines.get(path, MatchedLines(count=0, comments_only=False))
+        if matched.count != 1 or not matched.comments_only or any(value.startswith("file:") for value in values):
+            too_much.add(path)
     return [item for item in left_out if not item.tooling and (not item.in_fixture_pack or item.private_path in too_much)]
 
 
@@ -643,7 +709,8 @@ def _remote_description(root: Path, ref: str) -> str:
         url = ""
     if not url:
         return f"Remote {name} has no URL."
-    return f"The URL of remote {name} is {re.sub(r'(?<=://)[^/@]*@', '', url)}."
+    # Up to the last @ before the first /, so that no part of a password with a plain @ in it is printed.
+    return f"The URL of remote {name} is {re.sub(r'(?<=://)[^/]*@', '', url)}."
 
 
 def _first_commits(root: Path, *revisions: str) -> set[str]:
@@ -696,6 +763,8 @@ def refresh_fingerprints(
     (see unexpected_matches).
     """
     public = public_sources(public_root, public_ref, content_root, key) if public_root is not None else {}
+    if public_root is not None:
+        _stop_on_tooling_paths_in_other_case(content_root)
     private = fingerprint_sources(content_root, key)
     if not private:
         raise GuardError("No files were fingerprinted. Check that the folder is a full checkout of franca-content.")
@@ -705,16 +774,16 @@ def refresh_fingerprints(
             f"The refresh was stopped, because files in {public_ref} have text from files of franca-content that may be"
             " course material (public path first):\n"
             + "".join(f"  {item.describe()}\n" for item in stops)
-            + "Only the files in TOOLING_PATHS in tools/content_guard.py may have text that is also in franca. A file of"
-            " franca-content may have one line in packs/fixture/, but not more than one line and not the whole file."
-            " Tell the product owner before the fingerprints are refreshed. The fingerprint file was not changed."
+            + "Only the files in TOOLING_PATHS in tools/content_guard.py may have text that is also in franca outside"
+            " packs/. A file of franca-content may have one comment line in packs/fixture/ and nothing more. Tell the"
+            " product owner before the fingerprints are refreshed. The fingerprint file was not changed."
         )
     for heading, items in (
         (
             "the same file or line is in franca and in tooling files of franca-content, listed in TOOLING_PATHS",
             [item for item in left_out if item.tooling],
         ),
-        ("one line of a file of franca-content is in the fixture pack", [item for item in left_out if not item.tooling]),
+        ("one comment line of a file of franca-content is in the fixture pack", [item for item in left_out if not item.tooling]),
     ):
         if items:
             print(f"Values left out because {heading} (public path first):", file=sys.stderr)
@@ -736,6 +805,19 @@ def refresh_fingerprints(
     else:
         write_fingerprint_file(output, values)
         print(f"{len(values)} values were written to {output}.", file=sys.stderr)
+
+
+def _stop_on_tooling_paths_in_other_case(content_root: Path) -> None:
+    """Stops with a GuardError when a file of franca-content has a path that differs from a path in TOOLING_PATHS only
+    in the case of its letters. Such a file is not on the list, and on a file system that ignores case it can be mixed
+    up with a file that is."""
+    entries = checkout_entries(content_root, "Run the command in a checkout of franca-content.")
+    odd = sorted(entry.path for entry in entries if differs_from_tooling_only_in_case(entry.path))
+    if odd:
+        raise GuardError(
+            f"These files of franca-content have a path that differs from a path in TOOLING_PATHS only in case: {', '.join(odd)}."
+            " Rename them in franca-content, or tell the product owner. The fingerprint file was not changed."
+        )
 
 
 def _same_checkout(a: Path, b: Path) -> bool:

@@ -451,12 +451,12 @@ LESSON = text_with_long_lines()
 SETUP = f"{WORKFLOW_LINE}\n"
 
 
-SETUP_PATH = ".github/actions/setup/action.yml"
+SETUP_PATH = ".github/workflows/release.yml"
 
 
 def private_values() -> set[str]:
-    """The values that are kept when the public checkout of the fixture is left out: the lesson, and the setup action as
-    a whole file, because only its line is public."""
+    """The values that are kept when the public checkout of the fixture is left out: the lesson, and the second workflow
+    as a whole file, because only its line is public."""
     return values_of(LESSON) | {guard.Fingerprints(key=KEY, values=frozenset()).of_file(SETUP.encode())}
 
 
@@ -644,15 +644,72 @@ def test_a_course_line_in_a_public_file_stops_the_refresh(lesson_checkout: Path,
     assert SENTENCE not in message and SENTENCE.upper() not in message
 
 
-def test_a_course_line_in_the_public_fixture_pack_is_a_notice(tmp_path: Path) -> None:
-    schema = "# yaml-language-server: $schema=../../spec/lesson.schema.json"
-    content = committed_checkout(tmp_path / "content", {"packs/nl/l.yaml": f"{schema}\nprompt: {SENTENCE}\n"})
-    public = public_checkout(tmp_path / "franca", {"packs/fixture/l.yaml": f"{schema}\n"})
+SCHEMA_COMMENT = "# yaml-language-server: $schema=../../spec/lesson.schema.json"
+
+
+def test_a_comment_line_of_a_lesson_in_the_public_fixture_pack_is_a_notice(tmp_path: Path) -> None:
+    content = committed_checkout(tmp_path / "content", {"packs/nl/l.yaml": f"{SCHEMA_COMMENT}\nprompt: {SENTENCE}\n"})
+    public = public_checkout(tmp_path / "franca", {"packs/fixture/l.yaml": f"{SCHEMA_COMMENT}\n"})
     values, message = refresh(content, public)
     assert sentence_kept(values)
-    assert not guard.Fingerprints(key=KEY, values=frozenset()).of_line(schema) & (values or set())
-    assert "one line of a file of franca-content is in the fixture pack" in message
+    assert not guard.Fingerprints(key=KEY, values=frozenset()).of_line(SCHEMA_COMMENT) & (values or set())
+    assert "one comment line of a file of franca-content is in the fixture pack" in message
     assert "packs/fixture/l.yaml has lines that are in packs/nl/l.yaml" in message
+
+
+def test_the_same_comment_line_of_many_lessons_in_the_fixture_pack_is_a_notice(tmp_path: Path) -> None:
+    lessons = {f"packs/nl/u{i}.yaml": f"{SCHEMA_COMMENT}\nprompt: {SENTENCE} {i}\n" for i in range(8)}
+    content = committed_checkout(tmp_path / "content", lessons)
+    public = public_checkout(tmp_path / "franca", {"packs/fixture/l.yaml": f"{SCHEMA_COMMENT}\n"})
+    values, message = refresh(content, public)
+    assert values is not None, message
+    for path in lessons:
+        assert f"packs/fixture/l.yaml has lines that are in {path}" in message
+
+
+def made_up_line(number: int) -> str:
+    return f"Dit is een verzonnen lange zin uit een proefles die nergens anders staat, nummer {number}."
+
+
+EIGHT_LESSONS = {f"packs/nl/u{i}.yaml": f"prompt: {made_up_line(10 + i)}\nanswer: {made_up_line(50 + i)}\n" for i in range(8)}
+FLOW_LIST_SENTENCES = [made_up_line(30), made_up_line(31), made_up_line(32)]
+FLOW_LIST_LINE = 'examples: ["' + '", "'.join(FLOW_LIST_SENTENCES) + '"]\n'
+
+
+@pytest.mark.parametrize(
+    "lessons,fixture_files",
+    [
+        # one line of each of eight lessons, in eight fixture files (probe Q4)
+        (EIGHT_LESSONS, {f"packs/fixture/f{i}.yaml": f"prompt: {made_up_line(10 + i)}\n" for i in range(8)}),
+        # one line of each of eight lessons, all in one fixture file (probe Q4b)
+        (EIGHT_LESSONS, {"packs/fixture/all.yaml": "".join(f"prompt: {made_up_line(10 + i)}\n" for i in range(8))}),
+        # one lesson line with three sentences in a YAML flow list, copied whole (probe Q6)
+        ({"packs/nl/l.yaml": f"{FLOW_LIST_LINE}prompt: {made_up_line(33)}\n"}, {"packs/fixture/a.yaml": FLOW_LIST_LINE}),
+        # the three sentences of that line as three fixture lines (probe Q6b)
+        (
+            {"packs/nl/l.yaml": f"{FLOW_LIST_LINE}prompt: {made_up_line(33)}\n"},
+            {"packs/fixture/a.yaml": "".join(f'- "{s}"\n' for s in FLOW_LIST_SENTENCES)},
+        ),
+        # a line that starts with # in a YAML block scalar is text, not a comment
+        (
+            {"packs/nl/l.yaml": f"text: |\n  # {made_up_line(40)}\nprompt: {made_up_line(41)}\n"},
+            {"packs/fixture/a.yaml": f"# {made_up_line(40)}\n"},
+        ),
+        # a Markdown heading is text, not a comment
+        ({"packs/nl/l.md": f"# {made_up_line(42)}\n\n{made_up_line(43)}\n"}, {"packs/fixture/a.yaml": f"# {made_up_line(42)}\n"}),
+    ],
+)
+def test_a_line_of_a_lesson_that_is_not_a_comment_in_the_fixture_pack_stops_the_refresh(
+    tmp_path: Path, lessons: dict[str, str], fixture_files: dict[str, str]
+) -> None:
+    content = committed_checkout(tmp_path / "content", lessons)
+    public = public_checkout(tmp_path / "franca", fixture_files)
+    values, message = refresh(content, public)
+    assert values is None
+    for path in lessons:
+        assert f" has lines that are in {path}\n" in message
+    assert "product owner" in message and "comment line" in message
+    assert "Dit is een verzonnen" not in message
 
 
 SECOND_SENTENCE = "Een tweede verzonnen zin uit dezelfde proefles, die ook nergens anders te vinden is."
@@ -675,6 +732,14 @@ def test_more_than_one_line_of_a_course_file_in_the_fixture_pack_stops_the_refre
         assert f"  {path} " in message and "packs/nl/l.yaml" in message
     assert "product owner" in message
     assert SENTENCE not in message and SECOND_SENTENCE not in message
+
+
+def test_two_comment_lines_of_a_course_file_in_the_fixture_pack_stop_the_refresh(tmp_path: Path) -> None:
+    content = committed_checkout(tmp_path / "content", {"packs/nl/l.yaml": f"# {SENTENCE}\n# {SECOND_SENTENCE}\nprompt: x\n"})
+    public = public_checkout(tmp_path / "franca", {"packs/fixture/l.yaml": f"# {SENTENCE}\n# {SECOND_SENTENCE}\n"})
+    values, message = refresh(content, public)
+    assert values is None
+    assert "packs/fixture/l.yaml has lines that are in packs/nl/l.yaml" in message
 
 
 def test_a_whole_course_file_of_one_line_in_the_fixture_pack_stops_the_refresh(tmp_path: Path) -> None:
@@ -701,6 +766,10 @@ def test_text_of_a_file_outside_the_tooling_list_in_a_public_file_stops_the_refr
     [
         (".github/workflows/check.yml", True),
         (".github/renovate.json", True),
+        (".github/ISSUE_TEMPLATE/lesson.yaml", False),
+        (".github/lesson.yaml", False),
+        (".github/actions/setup/action.yml", False),
+        (".github/workflows", False),
         ("pyproject.toml", True),
         ("uv.lock", True),
         ("renovate.json", True),
@@ -731,6 +800,40 @@ def test_a_tooling_file_that_is_in_the_public_commit_is_a_notice(checkouts: tupl
     assert values == private_values()
     assert "tooling files of franca-content" in message
     assert "  .github/workflows/check.yml is a copy of .github/workflows/check.yml\n" in message
+
+
+@pytest.mark.parametrize(
+    "private_path",
+    [
+        ".github/ISSUE_TEMPLATE/lesson.yaml",  # probe Q1
+        ".github/lesson.yaml",  # where Git records .GitHub/lesson.yaml when core.ignorecase is true (probe Q2)
+    ],
+)
+def test_course_text_in_other_github_files_in_a_public_file_stops_the_refresh(tmp_path: Path, private_path: str) -> None:
+    content = committed_checkout(tmp_path / "content", {private_path: f"prompt: {SENTENCE}\n", ".github/workflows/check.yml": WORKFLOW})
+    public = public_checkout(tmp_path / "franca", {"docs/a.md": f"{SENTENCE}\n"})
+    values, message = refresh(content, public)
+    assert values is None
+    assert f"docs/a.md has lines that are in {private_path}" in message
+
+
+def test_text_of_a_tooling_file_in_the_public_fixture_pack_stops_the_refresh(tmp_path: Path) -> None:
+    # A workflow and the fixture pack are not expected to have text in common (probe Q7).
+    content = committed_checkout(tmp_path / "content", {".github/workflows/x.yml": f"run: echo '{SENTENCE}'\n", "packs/nl/l.yaml": LESSON})
+    public = public_checkout(tmp_path / "franca", {"packs/fixture/a.yaml": f"x: {SENTENCE}\n"})
+    values, message = refresh(content, public)
+    assert values is None
+    assert "packs/fixture/a.yaml has lines that are in .github/workflows/x.yml" in message
+
+
+@pytest.mark.parametrize("odd_path", [".GITHUB/workflows/check.yml", ".github/Workflows/check.yml", "PyProject.toml", "UV.LOCK"])
+def test_a_path_that_differs_from_a_tooling_path_only_in_case_stops_the_refresh(tmp_path: Path, odd_path: str) -> None:
+    content = committed_checkout(tmp_path / "content", {odd_path: "x = 1\n", "packs/nl/l.yaml": LESSON})
+    public = public_checkout(tmp_path / "franca", {})
+    values, message = refresh(content, public)
+    assert values is None
+    assert odd_path in message and "case" in message
+    assert "The fingerprint file was not changed" in message
 
 
 def test_a_copy_staged_in_the_public_checkout_is_not_public(lesson_checkout: Path, tmp_path: Path) -> None:
@@ -781,15 +884,25 @@ def test_the_public_commit_is_read_from_the_remote_tracking_ref(lesson_checkout:
     assert sentence_kept(values), message
 
 
-def test_the_public_commit_and_the_remote_are_printed(lesson_checkout: Path, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://someone:made-up-token@example.invalid/franca.git",
+        "https://someone:made%40up-token@example.invalid/franca.git",  # an @ in the password, written as it should be
+        "https://someone:made@up@token@example.invalid/franca.git",  # a plain @ in the password (probe Q8)
+        "https://made-up-token@example.invalid/franca.git",
+    ],
+)
+def test_the_public_commit_and_the_remote_are_printed(lesson_checkout: Path, tmp_path: Path, url: str) -> None:
     public = public_checkout(tmp_path / "franca", {})
-    git(public, "remote", "add", "origin", "https://someone:made-up-token@example.invalid/franca.git")
+    git(public, "remote", "add", "origin", url)
     commit = git(public, "rev-parse", "refs/remotes/origin/main").strip()
     values, message = refresh(lesson_checkout, public)
     assert sentence_kept(values), message
     assert commit in message
-    assert "https://example.invalid/franca.git" in message
-    assert "made-up-token" not in message
+    assert "The URL of remote origin is https://example.invalid/franca.git." in message
+    for part in ("someone", "made", "token"):
+        assert part not in message
 
 
 def test_the_public_checkout_without_a_remote_url_is_named_as_such(lesson_checkout: Path, tmp_path: Path) -> None:
@@ -895,6 +1008,56 @@ def test_a_pointer_with_an_extension_line_is_read_as_a_git_lfs_pointer(tmp_path:
     git(root, "update-index", "--add", "--cacheinfo", f"100644,{sha},packs/nl/words.csv")
     with pytest.raises(guard.GuardError, match=r"Git LFS.*packs/nl/words\.csv"):
         guard.make_fingerprints(root, KEY)
+
+
+def add_blob(root: Path, path: str, text: str) -> None:
+    """Adds text to the index under path as it is, without the clean filter that git add would run."""
+    sha = git(root, "hash-object", "-w", "--stdin", stdin=text).strip()
+    git(root, "update-index", "--add", "--cacheinfo", f"100644,{sha},{path}")
+
+
+LFS_ATTRIBUTES = "*.csv filter=lfs diff=lfs merge=lfs -text\n"
+
+
+@pytest.mark.parametrize("path", ["packs/nl/words.csv", "packs/nl/a b é.csv"])
+def test_a_path_that_uses_the_git_lfs_filter_is_read_with_git_lfs_whatever_its_content(
+    tmp_path: Path, path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A file that was committed before the path was given to Git LFS is not a pointer, but Git asks Git LFS for it.
+    root = content_checkout(tmp_path / "content", {".gitattributes": LFS_ATTRIBUTES})
+    add_blob(root, path, "plain text that is not a pointer\n")
+    asked: list[str] = []
+    smudged = f"prompt: {SENTENCE}\n"
+
+    def fake_lfs_content(_root: Path, lfs_path: str, _blob: bytes) -> bytes:
+        asked.append(lfs_path)
+        return smudged.encode()
+
+    monkeypatch.setattr(guard, "_lfs_content", fake_lfs_content)
+    assert values_of(smudged) <= guard.make_fingerprints(root, KEY)
+    assert asked == [path]
+
+
+@pytest.mark.parametrize(
+    "blob",
+    [
+        f"version https://git-lfs.github.com/spec/v1\noid sha256:{'ab' * 32}\nsize 120",  # no newline at the end
+        f"version https://git-lfs.github.com/spec/v1\noid sha256:{'ab' * 32}\nsize 120\nx-note: hand-made\n",  # an extra line
+        f"version https://hawser.github.com/spec/v1\noid sha256:{'ab' * 32}\nsize 120\n",  # the old name of the format
+    ],
+)
+def test_a_path_that_uses_the_git_lfs_filter_and_cannot_be_read_stops_the_command(tmp_path: Path, blob: str) -> None:
+    root = content_checkout(tmp_path / "content", {".gitattributes": LFS_ATTRIBUTES, "packs/nl/l.yaml": f"prompt: {SENTENCE}\n"})
+    add_blob(root, "packs/nl/words.csv", blob)
+    with pytest.raises(guard.GuardError, match=r"Git LFS.*packs/nl/words\.csv"):
+        guard.make_fingerprints(root, KEY)
+
+
+def test_the_git_lfs_paths_are_read_from_the_attributes_in_the_index(tmp_path: Path) -> None:
+    root = content_checkout(tmp_path / "content", {".gitattributes": LFS_ATTRIBUTES, "packs/nl/l.yaml": "x: 1\n"})
+    add_blob(root, "packs/nl/words.csv", "a,b\n")
+    (root / ".gitattributes").write_text("", encoding="utf-8")  # a change in the work tree that is not staged
+    assert guard.lfs_paths(root, ["packs/nl/words.csv", "packs/nl/l.yaml"]) == {"packs/nl/words.csv"}
 
 
 def test_a_text_file_that_starts_like_a_git_lfs_pointer_is_fingerprinted(tmp_path: Path) -> None:

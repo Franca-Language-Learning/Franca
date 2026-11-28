@@ -57,7 +57,7 @@ The fingerprint file is written after the values are made. If the command stops 
 
 The fingerprints are made from the files in the Git index of `franca-content`, which are the files that Git tracks, in the version that was last staged. Files that Git does not track are left out, such as the files in the `.venv` folder made by `uv sync` and in the caches of the test tools. Because the version in the index is read, a file that is left out of the work tree by a sparse checkout, or that was deleted from it, is still fingerprinted. Files with changes that are not staged, and files that are not added to Git and not ignored, are named when the command finishes, because their new text is not fingerprinted.
 
-For a file stored with Git LFS, the index has a small pointer file. The content is read with `git lfs smudge`. If Git LFS is not installed or the content has not been downloaded, the command stops with a message that names the files.
+For a file stored with Git LFS, the index has a small pointer file, and the content is read with `git lfs smudge`. The paths that use the Git LFS filter are found with `git check-attr`, and those files are read with `git lfs smudge` whatever the index has for them. If Git LFS is not installed or the content has not been downloaded, the command stops with a message that names the files.
 
 Tracked links are not followed. If the checkout has a submodule or a merge conflict, the command stops with a message that names the paths.
 
@@ -74,18 +74,19 @@ The keys in `secrets/` are not content. The planner settings in `course-config.y
 
 Some files in `franca-content` have lines that are the same as lines in this repository, such as the line in a workflow that pins `actions/checkout`. If their values were in the fingerprint file, the guard would refuse the files of this repository that have the same line. With `--public`, the values of the files in `origin/main` of the given checkout of `franca` are made as well. Another commit can be given with `--public-ref`. The commit and the URL of the remote are printed, so that a fork or an old commit can be noticed.
 
-A private value that is the same as a public value is left out in two cases:
+A private value that is the same as a public value is left out when:
 
-- the private file is on the list of tooling files below
-- the public file is in `packs/fixture/` and has one line of the private file, such as the schema comment at the top of a lesson
+- the private file is on the list of tooling files below, and the public file is outside `packs/`
+- the public file is in `packs/fixture/` and has one comment line of the private file, such as the schema comment at the top of a lesson
 
-Otherwise the command stops with the pairs of paths, and the fingerprint file is not changed. So the command stops when the fixture pack has a whole file of `franca-content`, or more than one line of it. The lines are counted over all the files in `packs/fixture/`. Course text can be in any folder of `franca-content`, such as `tests/` or `notes/`. For that reason the command also stops when a file that is not on the list has text in a public file outside `packs/fixture/`. The text may already be public. If its values were left out, the guard would not refuse more copies.
+Otherwise the command stops with the pairs of paths, and the fingerprint file is not changed. So the command stops when the fixture pack has more of a file of `franca-content` than one comment line, such as the whole file or a second line. The lines are counted over all the files in `packs/fixture/`. A comment line is a line of a YAML file that starts with `#`. Course text can be in any folder of `franca-content`, such as `tests/` or `notes/`. For that reason the command also stops when a file that is not on the list has text in a public file outside `packs/fixture/`. The text may already be public. If its values were left out, the guard would not refuse more copies.
 
-The tooling files are listed in `TOOLING_PATHS` in `tools/content_guard.py`. A path that ends in `/` is a folder with everything in it. The paths are matched from the top of the checkout of `franca-content`, with their case.
+The tooling files are listed in `TOOLING_PATHS` in `tools/content_guard.py`. A path that ends in `/` is a folder with everything in it. The paths are matched from the top of the checkout of `franca-content`, with their case. If a file has a path that differs from one of them only in case, such as `.GITHUB/workflows/check.yml`, the command stops.
 
 | Path in `franca-content` | What it is |
 |---|---|
-| `.github/` | Workflows and other GitHub files |
+| `.github/workflows/` | The workflows |
+| `.github/renovate.json` | Renovate's file in `.github/` |
 | `pyproject.toml` | The Python project file at the top |
 | `uv.lock` | The locked Python packages |
 | `renovate.json` | Renovate's file at the top |
