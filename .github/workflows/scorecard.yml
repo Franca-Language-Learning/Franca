@@ -1,6 +1,7 @@
 # OpenSSF Scorecard: a weekly score of the repository's security practices. The results are uploaded to code scanning
-# and can be read in the repository's Security tab. They are not published to the OpenSSF public API, because nothing
-# uses the published results and publishing needs the id-token permission, which only the release jobs have (story E01-013).
+# and can be read in the repository's Security and quality tab. They are not published to the OpenSSF public API,
+# because nothing uses the published results and publishing needs the id-token permission, which only the release
+# jobs have (story E01-013).
 name: Scorecard
 
 on:
