@@ -1,3 +1,4 @@
+import fc from "fast-check";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import { server } from "../mocks/server";
@@ -72,5 +73,38 @@ describe("anti-forgery token", () => {
     await signOut();
     expect(asked).toEqual(["health", "sign-out fresh-token"]);
     document.cookie = "franca_csrf=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
+  });
+
+  it("sends the cookie's value unchanged, for any value that a cookie can have", async () => {
+    // A cookie value is made of the characters that RFC 6265 allows (cookie-octet), which include "=".
+    const cookieOctet = fc.constantFrom(
+      ...Array.from({ length: 0x7e - 0x21 + 1 }, (_, i) => String.fromCharCode(0x21 + i)).filter((character) => !'",;\\'.includes(character)),
+    );
+    const cookieValue = fc.string({ unit: cookieOctet, minLength: 1, maxLength: 40 });
+    const otherCookies = fc.uniqueArray(fc.tuple(fc.stringMatching(/^x[a-z0-9]{0,7}$/), cookieValue), {
+      maxLength: 3,
+      selector: ([name]) => name,
+    });
+    await fc.assert(
+      fc.asyncProperty(cookieValue, otherCookies, async (token, others) => {
+        const names = ["franca_csrf", ...others.map(([name]) => name)];
+        for (const [name, value] of others) document.cookie = `${name}=${value}; path=/`;
+        document.cookie = `franca_csrf=${token}; path=/`;
+        let sent: string | null = null;
+        server.use(
+          http.post("*/api/v1/auth/sign-out", ({ request }) => {
+            sent = request.headers.get("X-CSRF-Token");
+            return new HttpResponse(null, { status: 204 });
+          }),
+        );
+        try {
+          await signOut();
+          expect(sent).toBe(token);
+        } finally {
+          for (const name of names) document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+        }
+      }),
+      { numRuns: 50 },
+    );
   });
 });
