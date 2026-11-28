@@ -45,8 +45,8 @@ Python packages are installed only as ready-built files (wheels), so no package 
 
 ## Licence
 
-Franca's own work in this repository is licensed under the Apache License 2.0, in [LICENSE](LICENSE), with the copyright line "Copyright 2026 the Franca authors". This is the original work written for Franca, which includes the documentation and the made-up test pack in `packs/fixture/` as well as the code. The `speech/` folder is not included. [NOTICE](NOTICE) has the attribution notices that copies have to keep, and a list of the files in the repository that came from other projects.
+Franca's own work in this repository is licensed under the Apache License 2.0, in [LICENSE](LICENSE), with the copyright line "Copyright 2026 the Franca authors". This is the code and documentation written for Franca, including the made-up test pack in `packs/fixture/`. The `speech/` folder is not included. [NOTICE](NOTICE) has the attribution notices that copies have to keep, and a list of the files in the repository that came from other projects.
 
 The `speech/` folder, for the speech container that is still to be built, was also written by the Franca authors. It is licensed under GPL-3.0-or-later, because espeak-ng, which is used by the Piper voices, has that licence. See [speech/README.md](speech/README.md).
 
-Material from other projects, such as the packages that Franca uses, keeps its own copyright and licence. Franca's course material is kept in a private repository and is not covered by the Apache License.
+The Apache License does not cover documentation that comes from, or belongs to, the packages and components that Franca uses. Examples are the licence texts and README files that come with a package. Text copied from a package's documentation is not covered either. That documentation keeps its own copyright and licence, as does the packages' code. Franca's course material is kept in a private repository and is not covered by the Apache License.

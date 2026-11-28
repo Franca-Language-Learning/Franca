@@ -9,12 +9,19 @@ of Franca and works derived from it have to keep the attribution notices in
 this NOTICE file.
 
 The licence and the copyright line cover the original work written for
-Franca in this repository, apart from the speech/ folder, which is licensed
-under GPL-3.0-or-later (see speech/LICENSE). Material from other projects
-keeps its own licence, and the files of that kind in this repository are
-listed below.
+Franca in this repository, both code and documentation. The speech/ folder
+is licensed under GPL-3.0-or-later instead (see speech/LICENSE). Code and
+documentation from the packages and components that Franca uses keep their
+own copyright and licence. This includes their licence texts and any text
+copied from their documentation or README files. The course material is
+kept in a private repository and is not covered by this licence.
 
 Third-party files in this repository
+
+LICENSE and speech/LICENSE
+  The texts of the Apache License 2.0, by the Apache Software Foundation,
+  and the GNU General Public License version 3, by the Free Software
+  Foundation, unchanged.
 
 server/src/franca/platform/migrations/script.py.mako
   Based on the generic migration template in Alembic 1.20.1
