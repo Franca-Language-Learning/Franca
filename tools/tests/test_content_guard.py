@@ -398,7 +398,8 @@ def test_a_merge_conflict_stops_the_fingerprint_command(tmp_path: Path) -> None:
     git(root, "checkout", "-q", "main")
     (root / "packs" / "nl-be" / "lesson.yaml").write_text("a: 3\n")
     git(root, "commit", "-q", "-am", "three")
-    subprocess.run(["git", "-C", str(root), "merge", "-q", "other"], capture_output=True)
+    git(root, "merge", "-q", "other", check=False)  # the merge stops with a conflict
+    assert git(root, "ls-files", "--unmerged")
     with pytest.raises(guard.GuardError, match=r"merge conflict.*packs/nl-be/lesson\.yaml"):
         guard.make_fingerprints(root, KEY)
 
@@ -730,7 +731,8 @@ def test_a_range_without_a_base_is_an_error(text: str) -> None:
 # --- the guard as the hooks and the pipeline run it
 
 
-def git(repo: Path, *args: str, stdin: str | None = None) -> str:
+def git(repo: Path, *args: str, stdin: str | None = None, check: bool = True) -> str:
+    """Runs git in repo with a made-up author, so that commits and merges work without a Git identity on the computer."""
     env = {
         **os.environ,
         "GIT_AUTHOR_NAME": "t",
@@ -738,7 +740,7 @@ def git(repo: Path, *args: str, stdin: str | None = None) -> str:
         "GIT_COMMITTER_NAME": "t",
         "GIT_COMMITTER_EMAIL": "t@example.invalid",
     }
-    return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True, input=stdin, env=env).stdout
+    return subprocess.run(["git", "-C", str(repo), *args], check=check, capture_output=True, text=True, input=stdin, env=env).stdout
 
 
 def run_guard(repo: Path, *args: str, stdin: str | None = None, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
