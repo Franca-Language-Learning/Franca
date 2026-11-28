@@ -47,10 +47,10 @@ To refresh the fingerprints:
    python3 -I ../franca/tools/content_guard.py --fingerprint . --public ../franca --output ../franca/tools/content-fingerprints.txt
    ```
 
-3. Read the list of left-out values that is printed (see below). If a public file in the list has course material, stop and tell the product owner, because the material is already public.
+3. Read the list of paths that is printed for the left-out values (see below). If a public file in the list has course material, stop and tell the product owner, because the material is already public.
 4. Commit `tools/content-fingerprints.txt` in `franca` on a new branch and open a pull request.
 
-The fingerprint file is written after the values are made. If the command stops with a message, for example because the folder is not the top folder of a Git checkout, the fingerprint file is not changed. Do not redirect the output into the fingerprint file with `>`, because the shell empties the file before the command starts. The guard stops with a message when the fingerprint file has no values, so an emptied file is noticed. A fingerprint file for a test that is meant to have no values has the line `# No fingerprints`.
+The fingerprint file is written after the values are made. If the command stops with a message, for example because the folder is not the top folder of a Git checkout, the fingerprint file is not changed. Do not redirect the output into the fingerprint file with `>`, because the file is emptied by the shell before the command starts. The guard stops with a message when the fingerprint file has no values, so an emptied file is noticed. A fingerprint file for a test that is meant to have no values has the line `# No fingerprints`.
 
 ### Which files are fingerprinted
 
