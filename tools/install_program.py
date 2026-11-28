@@ -9,12 +9,14 @@ hash is not kept (.github/renovate.json, docs/package-updates.md).
   python3 -I tools/install_program.py Pester       download Pester if needed, and print the path of its folder
 
 From a .tar.gz download, the file with the program's name is taken out. A zip download, such as a PowerShell
-module's .nupkg file, is unpacked into a folder with the program's name. The kind of download is read from its
-first bytes, because an address such as the PowerShell Gallery's has no file extension.
+module's .nupkg file, is unpacked into a folder with the program's name. A program that is published as a bare
+Linux program file (ELF), such as OSV-Scanner, is copied under the program's name. The kind of download is read from
+its first bytes, because an address such as the PowerShell Gallery's has no file extension.
 
 The checked download is kept in ~/.cache/franca/programs (or $XDG_CACHE_HOME/franca/programs), so the program can
-be used again without a network. The program is unpacked from the checked download on each run. The .tar.gz files
-are for the platform on the platform line of tools/programs.txt, and on another platform nothing is downloaded.
+be used again without a network. The program is unpacked from the checked download on each run. The PowerShell
+modules work on any platform. The other files are for the platform on the platform line of tools/programs.txt, and
+on another platform nothing is downloaded.
 Only the Python standard library is needed.
 
 A download that fails with a connection error, a timeout, HTTP 429 or HTTP 5xx is tried up to three times, with waits
@@ -60,6 +62,9 @@ EXIT_HASH_MISMATCH = 3
 EXIT_OTHER_PLATFORM = 4
 GZIP_START = b"\x1f\x8b"
 ZIP_START = b"PK\x03\x04"
+ELF_START = b"\x7fELF"
+# PowerShell modules are .nupkg files, from a GitHub release or from the PowerShell Gallery, and work on any platform.
+GALLERY = "https://www.powershellgallery.com/"
 # A failed download is tried again after each of these waits, so it is tried up to three times.
 RETRY_WAITS_SECONDS = (5, 15)
 POWERSHELL_GALLERY_HOSTS = {"www.powershellgallery.com", "cdn.powershellgallery.com"}
@@ -105,7 +110,7 @@ class Program:
 def read_programs(path: Path) -> dict[str, Program]:
     """The programs in the file, by name. Blank lines and lines starting with # are left out.
 
-    The platform line applies to the programs that are downloaded as .tar.gz files.
+    The platform line applies to the programs that are not PowerShell modules.
     """
     found = []
     file_platform = None
@@ -121,9 +126,13 @@ def read_programs(path: Path) -> dict[str, Program]:
         found.append(match)
     programs = {}
     for match in found:
-        needs = file_platform if match["address"].endswith(".tar.gz") else None
+        needs = None if is_powershell_module(match["address"]) else file_platform
         programs[match["name"]] = Program(match["name"], match["tag"], match["sha256"], match["address"], needs)
     return programs
+
+
+def is_powershell_module(address: str) -> bool:
+    return address.endswith(".nupkg") or address.startswith(GALLERY)
 
 
 class HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
@@ -227,6 +236,11 @@ def _unpack_program(archive: Path, name: str, target: Path) -> None:
         _write(target, content.read(), mode=0o755)
 
 
+def _copy_program(download: Path, target: Path) -> None:
+    """Copies a program that was downloaded as a bare file, and makes the copy executable."""
+    _write(target, download.read_bytes(), mode=0o755)
+
+
 def _unpack_folder(archive: Path, target: Path) -> None:
     """Unpacks a zip file into the target folder. A file whose path would end up outside the folder is refused."""
     temporary = Path(tempfile.mkdtemp(dir=target.parent, prefix=f".{target.name}."))
@@ -270,6 +284,8 @@ def install(program: Program, cache: Path, fetch: Fetch = download, this_platfor
     folder = cache / f"{program.name}-{program.tag}"
     archive = folder / program.file_name
     target = folder / program.name
+    if archive == target:
+        raise InstallError(f"{program.file_name}: the download and the program would have the same name in the cache")
     if not _has_hash(archive, program.sha256):
         data = fetch(program.url)
         actual = hashlib.sha256(data).hexdigest()
@@ -287,8 +303,10 @@ def install(program: Program, cache: Path, fetch: Fetch = download, this_platfor
         _unpack_program(archive, program.name, target)
     elif start.startswith(ZIP_START):
         _unpack_folder(archive, target)
+    elif start.startswith(ELF_START):
+        _copy_program(archive, target)
     else:
-        raise InstallError(f"{program.file_name} is neither a .tar.gz file nor a zip file")
+        raise InstallError(f"{program.file_name} is not a .tar.gz file, a zip file or a Linux program (ELF)")
     return target
 
 
