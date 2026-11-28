@@ -7,13 +7,16 @@ folder and run the guard as the hooks run it, with  python -I.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 import pytest
@@ -233,9 +236,11 @@ def content_checkout(root: Path, files: dict[str, str]) -> Path:
 
 
 def public_checkout(root: Path, files: dict[str, str]) -> Path:
-    """A made-up checkout of franca: the guard's own file and these files, committed."""
+    """A made-up checkout of franca: the guard's own file and these files, committed, with origin/main at the commit
+    as after a git fetch."""
     content_checkout(root, {"tools/content_guard.py": "# a stand-in for the guard\n", **files})
     git(root, "commit", "-q", "-m", "start")
+    git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
     return root
 
 
@@ -509,9 +514,12 @@ def test_the_fingerprint_command_stops_without_the_public_checkout(checkouts: tu
 def test_public_and_skip_public_cannot_be_used_together(checkouts: tuple[Path, Path]) -> None:
     content, public = checkouts
     assert fingerprint_command(content, "--public", str(public), "--skip-public").returncode == 2
+    result = fingerprint_command(content, "--skip-public", "--public-ref", "main")
+    assert result.returncode == 2
+    assert "--public-ref is used with --public only" in result.stderr
 
 
-@pytest.mark.parametrize("option", [("--public", "."), ("--skip-public",), ("--output", "x.txt")])
+@pytest.mark.parametrize("option", [("--public", "."), ("--skip-public",), ("--output", "x.txt"), ("--public-ref", "main")])
 def test_the_fingerprint_options_need_the_fingerprint_command(repo: Path, option: tuple[str, ...]) -> None:
     result = run_guard(repo, "--index", *option)
     assert result.returncode == 2
@@ -528,6 +536,7 @@ def test_the_public_checkout_must_not_be_the_content_checkout(checkouts: tuple[P
 def test_the_public_checkout_must_be_a_checkout_of_franca(checkouts: tuple[Path, Path], tmp_path: Path) -> None:
     content, _ = checkouts
     other = committed_checkout(tmp_path / "other", {"notes.md": "x\n"})
+    git(other, "update-ref", "refs/remotes/origin/main", "HEAD")
     result = fingerprint_command(content, "--public", str(other))
     assert result.returncode == 2
     assert "tools/content_guard.py" in result.stderr
@@ -586,6 +595,186 @@ def test_unstaged_changes_are_named_by_the_fingerprint_command(checkouts: tuple[
     result = fingerprint_command(content, "--public", str(public), "--output", str(tmp_path / "prints.txt"))
     assert result.returncode == 0, result.stderr
     assert "not staged" in result.stderr and "packs/nl-be/lesson.yaml" in result.stderr
+
+
+# --- the public values: read from origin/main, from a checkout of franca and not of franca-content
+
+
+SENTENCE = "Dit is een verzonnen lange zin uit een proefles die nergens anders staat, nummer een."
+
+
+def refresh(content: Path, public: Path, ref: str = "origin/main") -> tuple[set[str] | None, str]:
+    """Runs the refresh in this process. Gives the values, or None when it stopped, and what was printed or the error."""
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            guard.refresh_fingerprints(content, public, None, KEY, public_ref=ref)
+    except guard.GuardError as error:
+        return None, f"{err.getvalue()}{error}"
+    return {line for line in out.getvalue().splitlines() if not line.startswith("#")}, err.getvalue()
+
+
+@pytest.fixture
+def lesson_checkout(tmp_path: Path) -> Path:
+    """A made-up franca-content with one lesson sentence."""
+    return committed_checkout(tmp_path / "content", {"packs/nl/l.yaml": f"prompt: {SENTENCE}\n"})
+
+
+def sentence_kept(values: set[str] | None) -> bool:
+    return values is not None and guard.Fingerprints(key=KEY, values=frozenset()).of_line(SENTENCE) <= values
+
+
+@pytest.mark.parametrize(
+    "path,text",
+    [
+        ("docs/x.md", f"{SENTENCE}\n"),  # a course line that is already public
+        ("server/x.py", f"msg = '{SENTENCE}'  # comment\n"),  # pasted into code as a string
+        ("docs/y.md", f"  {SENTENCE.upper()}   \n"),  # in upper case, with extra spaces
+    ],
+)
+def test_a_course_line_in_a_public_file_stops_the_refresh(lesson_checkout: Path, tmp_path: Path, path: str, text: str) -> None:
+    public = public_checkout(tmp_path / "franca", {path: text})
+    values, message = refresh(lesson_checkout, public)
+    assert values is None
+    assert f"{path} has lines that are in packs/nl/l.yaml" in message
+    assert "product owner" in message
+    assert SENTENCE not in message and SENTENCE.upper() not in message
+
+
+def test_a_course_line_in_the_public_fixture_pack_is_a_notice(tmp_path: Path) -> None:
+    schema = "# yaml-language-server: $schema=../../spec/lesson.schema.json"
+    content = committed_checkout(tmp_path / "content", {"packs/nl/l.yaml": f"{schema}\nprompt: {SENTENCE}\n"})
+    public = public_checkout(tmp_path / "franca", {"packs/fixture/l.yaml": f"{schema}\n"})
+    values, message = refresh(content, public)
+    assert sentence_kept(values)
+    assert not guard.Fingerprints(key=KEY, values=frozenset()).of_line(schema) & (values or set())
+    assert "packs/fixture/l.yaml has lines that are in packs/nl/l.yaml" in message
+
+
+def test_a_copy_staged_in_the_public_checkout_is_not_public(lesson_checkout: Path, tmp_path: Path) -> None:
+    public = public_checkout(tmp_path / "franca", {})
+    (public / "notes.md").write_text(f"{SENTENCE}\n")
+    git(public, "add", "notes.md")
+    (public / "packs" / "nl").mkdir(parents=True)
+    (public / "packs" / "nl" / "l.yaml").write_text(f"prompt: {SENTENCE}\n")
+    git(public, "add", "-f", "packs/nl/l.yaml")
+    values, message = refresh(lesson_checkout, public)
+    assert sentence_kept(values), message
+
+
+def test_a_copy_in_a_local_commit_of_the_public_checkout_is_not_public(lesson_checkout: Path, tmp_path: Path) -> None:
+    public = public_checkout(tmp_path / "franca", {})
+    git(public, "checkout", "-q", "-b", "feature")
+    (public / "draft.py").write_text(f'X = "{SENTENCE}"\n')
+    git(public, "add", "draft.py")
+    git(public, "commit", "-q", "-m", "draft")
+    values, message = refresh(lesson_checkout, public)
+    assert sentence_kept(values), message
+
+
+def test_the_public_commit_must_exist(lesson_checkout: Path, tmp_path: Path) -> None:
+    public = committed_checkout(tmp_path / "franca", {"tools/content_guard.py": "# a stand-in for the guard\n"})
+    values, message = refresh(lesson_checkout, public)
+    assert values is None
+    assert "origin/main" in message and "git fetch" in message
+
+
+def test_the_public_commit_can_be_named(lesson_checkout: Path, tmp_path: Path) -> None:
+    public = committed_checkout(tmp_path / "franca", {"tools/content_guard.py": "# a stand-in for the guard\n"})
+    values, message = refresh(lesson_checkout, public, ref="main")
+    assert sentence_kept(values), message
+
+
+def test_a_public_commit_with_a_pack_stops_the_refresh(lesson_checkout: Path, tmp_path: Path) -> None:
+    public = public_checkout(tmp_path / "franca", {"packs/nl/l.yaml": f"prompt: {SENTENCE}\n"})
+    values, message = refresh(lesson_checkout, public)
+    assert values is None
+    assert "packs/nl/l.yaml" in message and "keeps out of franca" in message
+
+
+def test_an_older_clone_of_franca_content_is_not_a_public_checkout(tmp_path: Path) -> None:
+    content = committed_checkout(tmp_path / "content", {"packs/nl/l.yaml": f"prompt: {SENTENCE}\n", "tools/content_guard.py": "# a copy\n"})
+    git(tmp_path, "clone", "-q", str(content), str(tmp_path / "clone"))
+    values, message = refresh(content, tmp_path / "clone")
+    assert values is None
+    assert "packs/nl/l.yaml" in message
+
+
+def test_a_clone_of_franca_content_without_packs_is_not_a_public_checkout(tmp_path: Path) -> None:
+    # The first commit is the same in both, so the clone is found even without files that the guard keeps out.
+    content = committed_checkout(tmp_path / "content", {"docs/notes.md": f"{SENTENCE}\n", "tools/content_guard.py": "# a copy\n"})
+    git(tmp_path, "clone", "-q", str(content), str(tmp_path / "clone"))
+    (content / "packs" / "nl").mkdir(parents=True)
+    (content / "packs" / "nl" / "l.yaml").write_text(f"prompt: {SENTENCE[::-1]}\n")
+    git(content, "add", "packs/nl/l.yaml")
+    git(content, "commit", "-q", "-m", "more")
+    values, message = refresh(content, tmp_path / "clone")
+    assert values is None
+    assert "first commit" in message
+
+
+def test_a_linked_worktree_of_franca_content_is_not_a_public_checkout(tmp_path: Path) -> None:
+    content = committed_checkout(tmp_path / "content", {"packs/nl/l.yaml": f"prompt: {SENTENCE}\n", "tools/content_guard.py": "# a copy\n"})
+    git(content, "worktree", "add", "-q", str(tmp_path / "worktree"))
+    values, _ = refresh(content, tmp_path / "worktree", ref="HEAD")
+    assert values is None
+
+
+def test_the_public_checkout_is_checked_before_its_files_are_read(
+    lesson_checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    public = public_checkout(tmp_path / "franca", {"packs/nl/l.yaml": f"prompt: {SENTENCE}\n"})
+    read: list[Path] = []
+    original = guard._checkout_blobs
+
+    def recording(root: Path, shas: Iterable[str]) -> Iterator[tuple[str, bytes]]:
+        read.append(root)
+        return original(root, shas)
+
+    monkeypatch.setattr(guard, "_checkout_blobs", recording)
+    values, _ = refresh(lesson_checkout, public)
+    assert values is None
+    assert public not in read
+
+
+# --- files that are not in the index as their content
+
+
+def lfs_available() -> bool:
+    return subprocess.run(["git", "lfs", "version"], capture_output=True).returncode == 0
+
+
+@pytest.mark.skipif(not lfs_available(), reason="Git LFS is not installed")
+def test_a_file_stored_with_git_lfs_is_fingerprinted_by_its_content(tmp_path: Path) -> None:
+    root = content_checkout(tmp_path / "content", {".gitattributes": "*.csv filter=lfs diff=lfs merge=lfs -text\n"})
+    git(root, "lfs", "install", "--local")
+    words = f"{SENTENCE}\n{SENTENCE[::-1]}\n"
+    (root / "packs" / "nl").mkdir(parents=True)
+    (root / "packs" / "nl" / "words.csv").write_text(words)
+    git(root, "add", "packs/nl/words.csv")
+    assert git(root, "cat-file", "-p", ":packs/nl/words.csv").startswith("version https://git-lfs")
+    assert values_of(words) <= guard.make_fingerprints(root, KEY)
+
+
+def test_a_git_lfs_file_whose_content_cannot_be_read_stops_the_command(tmp_path: Path) -> None:
+    root = content_checkout(tmp_path / "content", {"packs/nl/l.yaml": f"prompt: {SENTENCE}\n"})
+    pointer = f"version https://git-lfs.github.com/spec/v1\noid sha256:{'ab' * 32}\nsize 120\n"
+    sha = git(root, "hash-object", "-w", "--stdin", stdin=pointer).strip()
+    git(root, "update-index", "--add", "--cacheinfo", f"100644,{sha},packs/nl/words.csv")
+    with pytest.raises(guard.GuardError, match=r"Git LFS.*packs/nl/words\.csv"):
+        guard.make_fingerprints(root, KEY)
+
+
+def test_new_files_that_are_not_added_are_named(checkouts: tuple[Path, Path], tmp_path: Path) -> None:
+    content, public = checkouts
+    (content / "packs" / "nl-be" / "new.yaml").write_text(f"prompt: {SENTENCE}\n")
+    (content / ".gitignore").write_text("ignored.txt\n")
+    (content / "ignored.txt").write_text("x\n")
+    assert guard.untracked_files(content) == [".gitignore", "packs/nl-be/new.yaml"]
+    result = fingerprint_command(content, "--public", str(public), "--output", str(tmp_path / "prints.txt"))
+    assert result.returncode == 0, result.stderr
+    assert "not added" in result.stderr and "packs/nl-be/new.yaml" in result.stderr
+    assert "ignored.txt" not in result.stderr
 
 
 # --- the fingerprint file
