@@ -23,14 +23,19 @@ is a known malicious package when one of the group's IDs or aliases starts with 
 data, which osv.dev serves), or when one of its records has database_specific.malicious-packages-origins.
 
 The other findings are listed and do not fail the job. A vulnerability that is ignored in osv-scanner.toml is left
-out of the scanner's output, so it is not listed here either. In GitHub Actions (GITHUB_ACTIONS=true), a finding that
-fails the job is also printed as an error annotation.
+out of the scanner's output, so it is not listed here either. The rules for those entries are checked by
+tools/check_osv_ignores.py. In GitHub Actions (GITHUB_ACTIONS=true), a finding that fails the job is also printed as
+an error annotation.
 
-  python3 -I tools/check_osv_results.py osv-results.json
+  python3 -I tools/check_osv_results.py --lockfile uv.lock --lockfile pnpm-lock.yaml osv-results.json
 
 Exit codes: 0 when no finding fails the job, 1 when at least one does, and 2 when the file could not be read. A file
 that is not in the form of OSV-Scanner's JSON output, for example one with no "results" list or with a record that is
 in no group, counts as a file that could not be read, so that it is not taken for a scan with no findings.
+
+A lockfile given with --lockfile in which OSV-Scanner found no packages also counts as a file that could not be read,
+because OSV-Scanner reads a lockfile in a format that it does not know as empty, with no error. For this check, the
+output has to be written with --all-packages, so that a lockfile with packages and no findings is listed too.
 
 Only the Python standard library is needed, so the job needs no project environment. The script is run with the
 runner's own Python, which can be older than the project's, so the code is kept to syntax that Python 3.10 reads.
@@ -40,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -61,6 +67,10 @@ NOT_OSV_OUTPUT = "it is not in the form of OSV-Scanner's JSON output"
 
 class UnreadableResults(Exception):
     """The file is missing, is not JSON, or is not in the form of OSV-Scanner's JSON output."""
+
+
+class LockfileNotRead(UnreadableResults):
+    """A lockfile given with --lockfile is missing from the output, or has no packages in it."""
 
 
 @dataclass(frozen=True)
@@ -128,23 +138,25 @@ def _fixed_versions(records: Sequence[dict[str, Any]], ecosystem: str, name: str
 
 
 def _score(max_severity: Any) -> float | None:
-    """The score as a number, or None when it is missing, empty or not a number."""
-    if not isinstance(max_severity, (str, int, float)):
+    """The score as a number, or None when it is missing, empty, true or false, or not a finite number."""
+    if isinstance(max_severity, bool) or not isinstance(max_severity, (str, int, float)):
         return None
     try:
-        return float(max_severity)
+        score = float(max_severity)
     except ValueError:
         return None
+    return score if math.isfinite(score) else None
 
 
 def _label(records: Sequence[dict[str, Any]]) -> str | None:
-    """The highest severity label of the records, as written by the database, in capitals."""
+    """The highest severity label of the records, as written by the database, in capitals and without the spaces
+    around it."""
     order = ["LOW", "MODERATE", "MEDIUM", "HIGH", "CRITICAL"]
     labels = []
     for record in records:
         severity = (record.get("database_specific") or {}).get("severity")
-        if isinstance(severity, str) and severity:
-            labels.append(severity.upper())
+        if isinstance(severity, str) and severity.strip():
+            labels.append(severity.strip().upper())
     known = [label for label in labels if label in order]
     if known:
         return max(known, key=order.index)
@@ -164,16 +176,19 @@ def _is_malicious(group: dict[str, Any], records: Sequence[dict[str, Any]]) -> b
 def findings(output: dict[str, Any]) -> list[Finding]:
     """The findings in OSV-Scanner's JSON output, in the order they are written.
 
-    Raises UnreadableResults for a package that has vulnerabilities and no groups, and for a record that is in no
-    group. OSV-Scanner v2 puts each record in a group, so either of these means that the format has changed, and the
-    records would otherwise not be judged."""
+    Raises UnreadableResults for a package that has vulnerabilities and no groups, for a record that is in no group,
+    for a group with no IDs and for a group ID that has no record. OSV-Scanner v2 builds the groups from the records,
+    so any of these means that the format has changed, and the records would otherwise not be judged. Records with the
+    same ID are all read."""
     found = []
     for result in output["results"]:
         source = str((result.get("source") or {}).get("path", ""))
         for entry in result.get("packages") or []:
             package = entry.get("package") or {}
             name, version, ecosystem = str(package.get("name", "")), str(package.get("version", "")), str(package.get("ecosystem", ""))
-            records = {str(record.get("id", "")): record for record in entry.get("vulnerabilities") or []}
+            records: dict[str, list[dict[str, Any]]] = {}
+            for record in entry.get("vulnerabilities") or []:
+                records.setdefault(str(record.get("id", "")), []).append(record)
             groups = entry.get("groups") or []
             if records and not groups:
                 raise UnreadableResults(f"{name} in {source} has vulnerabilities and no groups")
@@ -182,8 +197,13 @@ def findings(output: dict[str, Any]) -> list[Finding]:
                 if vuln_id not in grouped:
                     raise UnreadableResults(f"{vuln_id} is in no group")
             for group in groups:
-                ids = tuple(str(vuln_id) for vuln_id in group.get("ids") or [])
-                in_group = [records[vuln_id] for vuln_id in ids if vuln_id in records]
+                ids = tuple(dict.fromkeys(str(vuln_id) for vuln_id in group.get("ids") or []))
+                if not ids:
+                    raise UnreadableResults(f"{name} in {source} has a group with no IDs")
+                missing = [vuln_id for vuln_id in ids if vuln_id not in records]
+                if missing:
+                    raise UnreadableResults(f"{', '.join(missing)} is in a group and has no record")
+                in_group = [record for vuln_id in ids for record in records[vuln_id]]
                 found.append(
                     Finding(
                         ids=ids,
@@ -205,11 +225,24 @@ def read_results(path: Path) -> dict[str, Any]:
     file without the list is not read as a scan with no findings."""
     try:
         output = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
-        raise UnreadableResults(str(error)) from error
+    except (OSError, ValueError, RecursionError) as error:
+        # json raises RecursionError for lists or objects nested too deep.
+        raise UnreadableResults(str(error) or type(error).__name__) from error
     if not isinstance(output, dict) or not isinstance(output.get("results"), list):
         raise UnreadableResults(NOT_OSV_OUTPUT)
     return output
+
+
+def check_lockfiles(output: dict[str, Any], lockfiles: Sequence[str]) -> None:
+    """Raises LockfileNotRead for a lockfile that is not the source of a result with at least one package. A lockfile
+    is matched by the end of the source path, so that uv.lock matches /work/uv.lock and not /work/old-uv.lock."""
+    with_packages = [str((result.get("source") or {}).get("path", "")) for result in output["results"] if result.get("packages")]
+    for lockfile in lockfiles:
+        if not any(path == lockfile or path.endswith("/" + lockfile) for path in with_packages):
+            raise LockfileNotRead(
+                f"no packages were found in {lockfile}. OSV-Scanner reads a lockfile in a format that it does not know"
+                " as empty, so the lockfile was probably not read. The results are not judged."
+            )
 
 
 def _annotation(message: str) -> str:
@@ -220,15 +253,27 @@ def _annotation(message: str) -> str:
 
 def main(arguments: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("results", type=Path, help="OSV-Scanner's output, written with --format json")
+    parser.add_argument("results", type=Path, help="OSV-Scanner's output, written with --format json and --all-packages")
+    parser.add_argument(
+        "--lockfile",
+        action="append",
+        default=[],
+        help="a lockfile that has to have packages in the output, for example uv.lock (can be given more than once)",
+    )
     options = parser.parse_args(arguments)
     try:
-        found = findings(read_results(options.results))
+        output = read_results(options.results)
+        check_lockfiles(output, options.lockfile)
+        found = findings(output)
+    except LockfileNotRead as error:
+        print(f"check_osv_results: {error}", file=sys.stderr)
+        return EXIT_UNREADABLE
     except UnreadableResults as error:
         print(f"check_osv_results: {options.results} could not be read: {error}", file=sys.stderr)
         return EXIT_UNREADABLE
-    except (AttributeError, TypeError) as error:
-        # A value of another type than OSV-Scanner writes, for example a string where a list of records belongs.
+    except (AttributeError, TypeError, RecursionError) as error:
+        # A value of another type than OSV-Scanner writes, for example a string where a list of records belongs, or
+        # a value nested so deep that it cannot be turned into text.
         print(f"check_osv_results: {options.results} could not be read: {NOT_OSV_OUTPUT} ({error})", file=sys.stderr)
         return EXIT_UNREADABLE
     if not found:
@@ -251,9 +296,10 @@ def main(arguments: Sequence[str] | None = None) -> int:
         for finding in other:
             print(f"  {finding}")
     if failing:
-        print("\nUpdate the packages to a fixed version. The steps are in docs/package-updates.md.")
+        if any(not finding.is_malicious for finding in failing):
+            print("\nUpdate the packages to a fixed version. The steps are in docs/package-updates.md.")
         if any(finding.is_malicious for finding in failing):
-            print("A known malicious package has to be removed, or replaced with a version that is not affected.")
+            print("\nA known malicious package has to be removed, or replaced with a version that is not affected.")
         return EXIT_FAILS
     return 0
 

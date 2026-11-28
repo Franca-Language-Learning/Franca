@@ -11,10 +11,15 @@ results are not complete:
   - 130: an osv-scanner.toml file could not be read.
 
 These are in cmd/osv-scanner/internal/cmd/run.go of OSV-Scanner. With --format json or sarif, OSV-Scanner writes
-its log lines on stderr, and an error line has no prefix that tells it from an information line. For this reason
-OSV-Scanner is run with --verbosity error, and any text on stderr is an error. The scan fails when OSV-Scanner
-exits with a code above 1 or writes to stderr, and then the results are not judged. Whether a finding fails the job
-is decided afterwards by tools/check_osv_results.py.
+its log lines on stderr, and an error line looks the same as an information line. For this reason OSV-Scanner is run
+with --verbosity error, and any text on stderr is an error. The scan fails when OSV-Scanner exits with a code above 1
+or writes to stderr, and then the results are not judged. Whether a finding fails the job is decided afterwards by
+tools/check_osv_results.py.
+
+The JSON run lists the packages without findings too (--all-packages), so that a lockfile in which no packages were
+found can be noticed by tools/check_osv_results.py --lockfile. In GitHub Actions (GITHUB_ACTIONS=true), OSV-Scanner's error
+lines are written to the log between ::stop-commands:: lines, because they can quote file names and parser messages
+from a pull request, and a line in them could otherwise start a workflow command.
 
   python3 -I tools/run_osv_scanner.py <osv-scanner program> <json|sarif> <output file>
 
@@ -27,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import secrets
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -41,12 +47,15 @@ EXIT_MEANINGS = {
 
 
 def scan_command(program: str, output_format: str, output_file: str) -> list[str]:
-    """The OSV-Scanner command for the checkout in the current folder, with its subfolders."""
+    """The OSV-Scanner command for the checkout in the current folder, with its subfolders. The JSON output lists the
+    packages without findings too, so that a lockfile in which no packages were found can be noticed."""
+    listing = ["--all-packages"] if output_format == "json" else []
     return [
         program,
         "scan",
         "source",
         "--recursive",
+        *listing,
         "--verbosity",
         "error",
         "--format",
@@ -55,6 +64,20 @@ def scan_command(program: str, output_format: str, output_file: str) -> list[str
         output_file,
         ".",
     ]
+
+
+def _pass_on(errors: str) -> None:
+    """Writes OSV-Scanner's error lines to the log. In GitHub Actions, they are written to stdout between
+    ::stop-commands:: and the end token, so that the runner does not read workflow commands in them. The token is
+    random, so the text cannot end the pause itself. stdout is also where the error annotation from _report is
+    written, so the two stay in order."""
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        sys.stderr.write(errors)
+        return
+    token = secrets.token_hex(16)
+    print(f"::stop-commands::{token}")
+    print(errors.rstrip("\n"))
+    print(f"::{token}::", flush=True)
 
 
 def _report(message: str) -> int:
@@ -81,7 +104,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     except OSError as error:
         return _report(f"OSV-Scanner could not be started: {error}")
     if scan.stderr:
-        sys.stderr.write(scan.stderr)
+        _pass_on(scan.stderr)
     if scan.returncode > 1 or scan.returncode < 0:
         meaning = EXIT_MEANINGS.get(scan.returncode, "an error")
         return _report(f"OSV-Scanner stopped with exit code {scan.returncode} ({meaning}). The error is above.")

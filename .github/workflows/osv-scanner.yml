@@ -3,13 +3,17 @@
 # The jobs osv-scan and osv-scan-main run OSV-Scanner on the lockfiles in the repository (uv.lock and pnpm-lock.yaml
 # today), with Harden-Runner in block mode (story E01-013, re-check finding N2). OSV-Scanner is downloaded from its
 # release page and checked against the SHA-256 in tools/programs.txt, which Renovate updates. The vulnerabilities
-# ignored in an osv-scanner.toml file next to a lockfile are left out by OSV-Scanner. There is no such file yet.
+# ignored in an osv-scanner.toml file next to a lockfile are left out by OSV-Scanner. There is no such file yet. The
+# rules for these entries are checked by tools/check_osv_ignores.py in scripts/check.
 #
 # On a pull request and in the merge queue, the job fails when there is a known vulnerability rated high or critical
 # with a fixed version, or a known malicious package, and the other findings are listed in the log. The rule is in
 # tools/check_osv_results.py. On main and on the daily schedule, the results are uploaded to code scanning too, and the
 # same rule applies. OSV-Scanner is run with tools/run_osv_scanner.py, and the job fails when OSV-Scanner stops with an
-# error or logs one, for example for a lockfile that it could not read. Partial results are not judged.
+# error or logs one, for example for a lockfile that it could not read. Partial results are not judged. The job also
+# fails when no packages are found in a lockfile named with --lockfile, because OSV-Scanner reads a lockfile in a
+# format that it does not know as empty. The --lockfile names are compared with the lockfiles in the repository in a
+# test.
 #
 # The jobs scan-pr and scan-main call Google's reusable workflow, which has no Harden-Runner step. They are removed in
 # a later pull request, after the owner has replaced "scan-pr / osv-scan" with "OSV scan" in the required checks.
@@ -47,14 +51,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Scan the lockfiles and fail on a high finding with a fix
+      - name: Scan the lockfiles and check for high findings and malicious packages
         run: |
           osv_scanner="$(python3 -I tools/install_program.py osv-scanner)"
-          # OSV-Scanner exits with 1 when it finds a known vulnerability, also when it has logged an error. A higher
-          # exit code is an error, for example 128 when no lockfile is found. The step fails on an error of either
-          # kind before the results are read. The exit codes are in tools/run_osv_scanner.py.
+          # OSV-Scanner exits with 1 when it finds a known vulnerability, even when it has also logged an error. A
+          # higher exit code is an error, for example 128 when no lockfile is found. The step fails on an error of
+          # either kind before the results are read. The exit codes are in tools/run_osv_scanner.py.
           python3 -I tools/run_osv_scanner.py "$osv_scanner" json "$RUNNER_TEMP/osv-results.json"
-          python3 -I tools/check_osv_results.py "$RUNNER_TEMP/osv-results.json"
+          python3 -I tools/check_osv_results.py --lockfile pnpm-lock.yaml --lockfile uv.lock "$RUNNER_TEMP/osv-results.json"
 
   osv-scan-main:
     name: OSV scan of main
@@ -90,9 +94,9 @@ jobs:
         uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: ${{ runner.temp }}/osv-results.sarif
-      # After the upload, so that the results are in the Security tab when the rule fails the job.
-      - name: Fail on a high finding with a fix
-        run: python3 -I tools/check_osv_results.py "$RUNNER_TEMP/osv-results.json"
+      # After the upload, so that the results are in the Security tab when the job fails because of a finding.
+      - name: Check for high findings and malicious packages
+        run: python3 -I tools/check_osv_results.py --lockfile pnpm-lock.yaml --lockfile uv.lock "$RUNNER_TEMP/osv-results.json"
 
   scan-pr:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'

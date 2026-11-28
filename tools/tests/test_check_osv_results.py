@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -18,6 +20,7 @@ from typing import Any
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+WORKFLOW = ROOT / ".github" / "workflows" / "osv-scanner.yml"
 
 
 def load_tool() -> ModuleType:
@@ -120,6 +123,27 @@ def test_a_finding_with_a_score_and_a_label_is_listed_with_both() -> None:
     assert "GHSA-0022 in example-package 2.0.0 (PyPI, /work/uv.lock): CVSS 5.3, label HIGH, fixed in 2.0.1" == str(finding)
 
 
+def test_a_label_with_spaces_is_read() -> None:
+    assert blocking(scan(record("GHSA-0023", label=" HIGH "))) == ["GHSA-0023"]
+
+
+@pytest.mark.parametrize("max_severity", [True, "NaN", "inf"], ids=["true", "NaN", "infinity"])
+def test_a_score_that_is_not_a_number_is_no_score(max_severity: Any) -> None:
+    output = scan(record("GHSA-0024"))
+    output["results"][0]["packages"][0]["groups"][0]["max_severity"] = max_severity
+    (finding,) = osv.findings(output)
+    assert finding.score is None
+    assert "no severity given" in str(finding)
+
+
+def test_two_records_with_the_same_id_are_both_read() -> None:
+    # osv-scalibr removes repeated records today. If one came through, the record with the label and the fix would
+    # otherwise be replaced by the one without.
+    output = scan(record("GHSA-0025", label="HIGH"), record("GHSA-0025", fixed=None))
+    output["results"][0]["packages"][0]["groups"][0]["ids"] = ["GHSA-0025"]
+    assert blocking(output) == ["GHSA-0025"]
+
+
 def test_a_null_label_is_no_label() -> None:
     (finding,) = osv.findings(scan(record("GHSA-0018", database_specific={"severity": None})))
     assert finding.label is None
@@ -154,6 +178,21 @@ def test_a_malicious_package_is_named_as_such_in_the_log(capsys: pytest.CaptureF
         in printed
     )
     assert "remove" in printed
+    assert "fixed version. The steps" not in printed
+
+
+def test_with_a_high_finding_and_a_malicious_package_both_kinds_of_advice_are_given(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    output = scan(record("MAL-2026-0004", fixed=None))
+    output["results"] += scan(record("GHSA-0026", package="other-package"), max_severity="8.0", package="other-package")["results"]
+    results = tmp_path / "results.json"
+    results.write_text(json.dumps(output), encoding="utf-8")
+
+    assert osv.main([str(results)]) == 1
+    printed = capsys.readouterr().out
+    assert "Update the packages to a fixed version" in printed
+    assert "malicious package has to be removed" in printed
 
 
 def test_the_records_of_one_vulnerability_are_one_finding() -> None:
@@ -194,6 +233,16 @@ def test_a_record_in_no_group_cannot_be_read(capsys: pytest.CaptureFixture[str],
 
     assert osv.main([str(results)]) == osv.EXIT_UNREADABLE
     assert "GHSA-0021 is in no group" in capsys.readouterr().err
+
+
+def test_a_group_id_with_no_record_cannot_be_read(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    output = scan(record("GHSA-0027", label="LOW"), max_severity="3.0")
+    output["results"][0]["packages"][0]["groups"][0]["ids"].append("GHSA-0028")
+    results = tmp_path / "results.json"
+    results.write_text(json.dumps(output), encoding="utf-8")
+
+    assert osv.main([str(results)]) == osv.EXIT_UNREADABLE
+    assert "GHSA-0028 is in a group and has no record" in capsys.readouterr().err
 
 
 def test_no_results_means_no_findings() -> None:
@@ -271,6 +320,9 @@ def test_text_from_the_records_cannot_start_a_workflow_command(
         '{"results": [{"packages": "abc"}]}',
         '{"results": [{"packages": [{"vulnerabilities": ["x"]}]}]}',
         '{"results": [{"packages": [{"vulnerabilities": [{"id": "x", "affected": "x"}], "groups": [{"ids": ["x"]}]}]}]}',
+        '{"results": [{"packages": [{"vulnerabilities": [], "groups": [{"ids": ["x"], "max_severity": "9.8"}]}]}]}',
+        '{"results": [{"packages": [{"vulnerabilities": [], "groups": [{"ids": []}]}]}]}',
+        '{"results": ' + "[" * 100_000 + "]" * 100_000 + "}",
     ],
     ids=[
         "not JSON",
@@ -282,6 +334,9 @@ def test_text_from_the_records_cannot_start_a_workflow_command(
         "packages that are a string",
         "a vulnerability that is a string",
         "affected that is a string",
+        "a group ID with no record",
+        "a group with no IDs",
+        "deep nesting",
     ],
 )
 def test_output_that_cannot_be_read_is_reported(capsys: pytest.CaptureFixture[str], tmp_path: Path, content: str) -> None:
@@ -289,9 +344,67 @@ def test_output_that_cannot_be_read_is_reported(capsys: pytest.CaptureFixture[st
     results.write_text(content, encoding="utf-8")
 
     assert osv.main([str(results)]) == osv.EXIT_UNREADABLE
-    assert "could not be read" in capsys.readouterr().err
+    printed = capsys.readouterr().err
+    assert "could not be read" in printed
+    assert "Traceback" not in printed
 
 
 def test_a_missing_results_file_is_reported(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     assert osv.main([str(tmp_path / "missing.json")]) == osv.EXIT_UNREADABLE
     assert "could not be read" in capsys.readouterr().err
+
+
+# --- Lockfiles in which no packages were found
+
+
+def with_packages(path: str) -> dict[str, Any]:
+    """OSV-Scanner's output with --all-packages for a lockfile with one package that has no findings."""
+    package = {"package": {"name": "example-package", "version": "1.0.0", "ecosystem": "PyPI"}, "vulnerabilities": None, "groups": None}
+    return {"source": {"path": path, "type": "lockfile"}, "packages": [package]}
+
+
+def test_lockfiles_with_packages_and_no_findings_pass(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    results = tmp_path / "results.json"
+    output = {"results": [with_packages("/work/uv.lock"), with_packages("/work/client/pnpm-lock.yaml")]}
+    results.write_text(json.dumps(output), encoding="utf-8")
+
+    assert osv.main(["--lockfile", "uv.lock", "--lockfile", "pnpm-lock.yaml", str(results)]) == 0
+    assert "No known vulnerabilities" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "pnpm_result",
+    [None, {"source": {"path": "/work/pnpm-lock.yaml", "type": "lockfile"}, "packages": []}],
+    ids=["missing from the results", "no packages"],
+)
+def test_a_lockfile_with_no_packages_fails_the_job(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, pnpm_result: dict[str, Any] | None
+) -> None:
+    # OSV-Scanner reads a lockfile in a format that it does not know as empty, with no error.
+    output = {"results": [with_packages("/work/uv.lock"), *([pnpm_result] if pnpm_result else [])]}
+    results = tmp_path / "results.json"
+    results.write_text(json.dumps(output), encoding="utf-8")
+
+    assert osv.main(["--lockfile", "uv.lock", "--lockfile", "pnpm-lock.yaml", str(results)]) == osv.EXIT_UNREADABLE
+    printed = capsys.readouterr().err
+    assert "no packages were found in pnpm-lock.yaml" in printed
+    assert "Traceback" not in printed
+
+
+def test_a_lockfile_name_is_matched_as_a_whole_file_name(tmp_path: Path) -> None:
+    results = tmp_path / "results.json"
+    results.write_text(json.dumps({"results": [with_packages("/work/old-uv.lock")]}), encoding="utf-8")
+
+    assert osv.main(["--lockfile", "uv.lock", str(results)]) == osv.EXIT_UNREADABLE
+
+
+def test_the_workflow_names_each_lockfile_in_the_repository() -> None:
+    tracked = subprocess.run(
+        ["git", "ls-files", "*uv.lock", "*pnpm-lock.yaml"], cwd=ROOT, capture_output=True, text=True, check=True
+    ).stdout.split()
+    runs = [line for line in WORKFLOW.read_text(encoding="utf-8").splitlines() if "python3 -I tools/check_osv_results.py" in line]
+
+    assert tracked
+    assert len(runs) == 2
+    for line in runs:
+        assert sorted(re.findall(r"--lockfile (\S+)", line)) == sorted(tracked)

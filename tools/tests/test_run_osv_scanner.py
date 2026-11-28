@@ -53,6 +53,26 @@ def run(tmp_path: Path, program: Path, output_format: str = "json") -> int:
     return int(runner.main([str(program), output_format, str(tmp_path / f"results.{output_format}")]))
 
 
+def test_the_json_scan_lists_the_packages_without_findings_too(tmp_path: Path) -> None:
+    # With --all-packages, a lockfile in which OSV-Scanner found no packages is missing from the output, so that
+    # tools/check_osv_results.py --lockfile can notice it.
+    run(tmp_path, fake_scanner(tmp_path), "json")
+    arguments = json.loads((tmp_path / "arguments.json").read_text(encoding="utf-8"))
+    assert arguments == [
+        "scan",
+        "source",
+        "--recursive",
+        "--all-packages",
+        "--verbosity",
+        "error",
+        "--format",
+        "json",
+        "--output-file",
+        str(tmp_path / "results.json"),
+        ".",
+    ]
+
+
 def test_the_scan_is_recursive_with_only_errors_logged(tmp_path: Path) -> None:
     run(tmp_path, fake_scanner(tmp_path), "sarif")
     arguments = json.loads((tmp_path / "arguments.json").read_text(encoding="utf-8"))
@@ -113,6 +133,29 @@ def test_in_the_pipeline_the_failure_is_an_error_annotation(
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     run(tmp_path, fake_scanner(tmp_path, 128))
     assert "::error title=OSV-Scanner::" in capsys.readouterr().out
+
+
+def test_in_the_pipeline_the_error_lines_cannot_start_a_workflow_command(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The error lines can quote file names and parser messages from a pull request.
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    run(tmp_path, fake_scanner(tmp_path, 127, "Error during extraction: bad file\n::add-mask::x\n"))
+    lines = capsys.readouterr().out.splitlines()
+
+    start = lines.index("Error during extraction: bad file") - 1
+    token = lines[start].removeprefix("::stop-commands::")
+    assert lines[start] == f"::stop-commands::{token}"
+    assert len(token) >= 32
+    assert lines[start + 2 : start + 4] == ["::add-mask::x", f"::{token}::"]
+    assert lines[-1].startswith("::error title=OSV-Scanner::")
+
+
+def test_outside_the_pipeline_the_error_lines_are_written_as_they_are(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    run(tmp_path, fake_scanner(tmp_path, 127, "Error during extraction: bad file\n"))
+    printed = capsys.readouterr()
+    assert printed.err.startswith("Error during extraction: bad file\n")
+    assert "stop-commands" not in printed.out
 
 
 def test_the_workflow_runs_osv_scanner_through_the_script() -> None:

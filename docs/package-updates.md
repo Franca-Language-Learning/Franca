@@ -31,21 +31,23 @@ The uv version is pinned in `required-version` in `pyproject.toml`. The same ver
 
 The packages in `uv.lock` and `pnpm-lock.yaml` are checked with [OSV-Scanner](https://github.com/google/osv-scanner) in the workflow `.github/workflows/osv-scanner.yml`. OSV-Scanner is downloaded from its release page and checked against its SHA-256 in `tools/programs.txt`, like gitleaks. A lockfile that is added later is found too, because the checkout is scanned with its subfolders.
 
-- On a pull request and in the merge queue, the check is called "OSV scan". It fails when a package has a known vulnerability rated high or critical and a fixed version exists, or when a package is a known malicious package. Other findings are listed in the job's log and do not stop the merge. Because the lockfiles are scanned as they are, a new advisory for a package that is already merged also stops pull requests that do not change that package, until the package is updated.
+- On a pull request and in the merge queue, the check is called "OSV scan". It fails when a package has a known vulnerability rated high or critical and a fixed version exists, or when a package is a known malicious package. Other findings are listed in the job's log and do not stop the merge. When a new advisory is published for a package that is already merged, the check also fails on pull requests that do not change that package, until the package is updated.
 - On main, and on the daily schedule at 03:41 UTC, the results of the job "OSV scan of main" are uploaded to code scanning, where they can be read in the repository's Security tab. The same rule applies, so this job fails when a new advisory is published for a package that is already merged.
 
-A finding is rated high or critical when its CVSS score is 7.0 or more, or when the advisory database's own label is HIGH or CRITICAL on one of its records. The label is read when there is a lower score too. A known malicious package (an ID that starts with `MAL-`) fails the job whatever its severity, and whether or not there is a fixed version. The rule, with its details, is at the top of `tools/check_osv_results.py`.
+A finding is rated high or critical when its CVSS score is 7.0 or more, or when the advisory database's own label is HIGH or CRITICAL on one of its records. The label is read when there is a lower score too. A known malicious package, which has an ID or alias that starts with `MAL-`, fails the job whatever its severity, and whether or not there is a fixed version. The rule, with its details, is at the top of `tools/check_osv_results.py`.
 
-When OSV-Scanner cannot read a lockfile, or logs another error, the job fails and the results are not judged. The error is in the job's log, above the line that starts with `run_osv_scanner:`.
+When OSV-Scanner cannot read a lockfile, or logs another error, the job fails and the results are not judged. The error is in the job's log, above the line that starts with `run_osv_scanner:`. When OSV-Scanner finds no packages in `uv.lock` or `pnpm-lock.yaml`, the job fails too, because a lockfile in a format that OSV-Scanner does not know is read as empty. A lockfile that is added later has to be added to the `--lockfile` options in the workflow, and a test fails until it is.
 
-To fix a finding, update the package to the fixed version. If the fixed release is younger than seven days, follow "Installing a security fix sooner" above. A known malicious package has to be removed, or replaced with a version that is not affected. When a finding does not apply to Franca and no fix can be installed yet, it can be ignored in an `osv-scanner.toml` file next to the lockfile. There is no such file yet. An entry looks like this:
+To fix a finding, update the package to the fixed version. If the fixed release is younger than seven days, follow "Installing a security fix sooner" above. A known malicious package has to be removed, or replaced with a version that is not affected. When a finding does not apply to Franca and no fix can be installed yet, it can be ignored in an `osv-scanner.toml` file next to the lockfile, with a date when the exception ends (`effectiveUntil`). There is no such file yet. An entry looks like this:
 
 ```toml
 [[IgnoredVulns]]
 id = "GHSA-xxxx-xxxx-xxxx"
-ignoreUntil = 2027-01-31
+effectiveUntil = 2027-01-31
 reason = "The affected function is not used by Franca."
 ```
+
+A known malicious package cannot be ignored. An entry that ignores a vulnerability or a package needs an `effectiveUntil` date no more than 90 days after the day it is checked, and the older key `ignoreUntil` is not accepted. These rules are checked by `tools/check_osv_ignores.py`, which is run by `scripts/check` and in the pipeline. To keep an exception after its date, write a new date in a new pull request, so that the finding is looked at again.
 
 ## Container images
 
