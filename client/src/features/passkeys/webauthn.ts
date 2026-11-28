@@ -19,7 +19,7 @@ export function passkeysSupported(): boolean {
 
 /** The bytes of base64url text, with or without padding. The text is decoded by atob, so standard base64 ("+", "/"
  * and "=" padding) is accepted as well. For a character that is not base64, or for text that is one character
- * longer than a multiple of four, there is a DOMException named InvalidCharacterError from atob. */
+ * longer than a multiple of four, atob throws a DOMException named InvalidCharacterError. */
 export function fromBase64url(text: string): ArrayBuffer {
   const base64 = text.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (text.length % 4)) % 4);
   const binary = atob(base64);
