@@ -161,14 +161,62 @@ jobs:
     assert problems_in(tmp_path, ("other.yml", text)) == ["other.yml, job plain: the job has no Harden-Runner step"]
 
 
-def test_a_job_that_calls_a_reusable_workflow_is_not_reported(tmp_path: Path) -> None:
-    text = """\
+REUSABLE = """\
 on: push
 jobs:
   reused:
     uses: example/workflows/.github/workflows/scan.yml@0123456789abcdef0123456789abcdef01234567
 """
-    assert problems_in(tmp_path, ("other.yml", text)) == []
+
+
+def test_a_job_that_calls_a_reusable_workflow_is_reported(tmp_path: Path) -> None:
+    # The steps of a reusable workflow run in a job of their own, where no Harden-Runner step can be added.
+    assert problems_in(tmp_path, ("other.yml", REUSABLE)) == [
+        "other.yml, job reused: the job calls a reusable workflow, which has no Harden-Runner step"
+    ]
+
+
+def test_a_job_on_the_list_of_exceptions_may_call_a_reusable_workflow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(check_harden_runner, "REUSABLE_WORKFLOW_EXCEPTIONS", {("other.yml", "reused"): "a made-up reason"})
+
+    assert problems_in(tmp_path, ("other.yml", REUSABLE)) == []
+
+
+def test_an_exception_for_a_job_that_no_longer_calls_a_reusable_workflow_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(check_harden_runner, "REUSABLE_WORKFLOW_EXCEPTIONS", {("ci.yml", "build"): "a made-up reason"})
+
+    assert problems_in(tmp_path, workflow("egress-policy: block\nallowed-endpoints: github.com:443")) == [
+        "ci.yml, job build: the job is on the list of exceptions for reusable workflows, and it does not call one"
+    ]
+
+
+def test_an_exception_for_a_job_that_was_removed_is_reported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # An exception for a workflow file that is not in the repository is not reported, so these tests can use other files.
+    exceptions = {("other.yml", "removed"): "a made-up reason", ("not-here.yml", "reused"): "a made-up reason"}
+    monkeypatch.setattr(check_harden_runner, "REUSABLE_WORKFLOW_EXCEPTIONS", exceptions)
+
+    assert problems_in(tmp_path, ("other.yml", REUSABLE.replace("reused:", "removed-not:"))) == [
+        "other.yml, job removed-not: the job calls a reusable workflow, which has no Harden-Runner step",
+        "other.yml, job removed: the job is on the list of exceptions for reusable workflows, and it is not in the workflow",
+    ]
+
+
+def test_an_exception_needs_a_reason(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(check_harden_runner, "REUSABLE_WORKFLOW_EXCEPTIONS", {("other.yml", "reused"): " "})
+
+    assert problems_in(tmp_path, ("other.yml", REUSABLE)) == [
+        "other.yml, job reused: the job is on the list of exceptions for reusable workflows, and its reason is empty"
+    ]
+
+
+def test_the_exceptions_in_this_repository_are_the_two_google_jobs() -> None:
+    reason = "removed after the required check is swapped (N2)"
+    assert check_harden_runner.REUSABLE_WORKFLOW_EXCEPTIONS == {
+        ("osv-scanner.yml", "scan-pr"): reason,
+        ("osv-scanner.yml", "scan-main"): reason,
+    }
 
 
 def test_a_harden_runner_step_that_is_not_the_first_step_is_reported(tmp_path: Path) -> None:
@@ -255,4 +303,9 @@ def test_the_jobs_in_this_repository_pass() -> None:
 def test_the_jobs_in_this_repository_are_found() -> None:
     jobs = {(job.workflow, job.job_id) for job in check_harden_runner.harden_runner_jobs(ROOT)}
 
-    assert {("ci.yml", "container-bundle"), ("content-guard.yml", "content-guard"), ("release.yml", "images")} <= jobs
+    assert {
+        ("ci.yml", "container-bundle"),
+        ("content-guard.yml", "content-guard"),
+        ("osv-scanner.yml", "osv-scan"),
+        ("release.yml", "images"),
+    } <= jobs
