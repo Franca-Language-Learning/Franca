@@ -15,9 +15,11 @@ so a file that was added and removed again is found. The guard uses the Python s
 with -I, so PYTHONPATH, the user's site folder and files in the current folder are not loaded.
 
 Fingerprints of the private repository are HMAC-SHA-256 values made with a key that is kept out of this
-repository (see docs/repository-split.md). They are made from the files that Git tracks in franca-content, apart
-from the files listed in NOT_FINGERPRINTED. To refresh them, run in the top folder of a checkout of franca-content:
-  python3 -I <path to franca>/tools/content_guard.py --fingerprint . > <path to franca>/tools/content-fingerprints.txt
+repository (see docs/repository-split.md). They are made from the files in the Git index of franca-content, apart
+from the files listed in NOT_FINGERPRINTED and NOT_FINGERPRINTED_NAMES. Values that also match a file or a line in a
+checkout of this repository are left out, and their paths are printed. To refresh them, run in the top folder of a
+checkout of franca-content:
+  python3 -I <franca>/tools/content_guard.py --fingerprint . --public <franca> --output <franca>/tools/content-fingerprints.txt
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import unicodedata
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
@@ -44,18 +47,33 @@ MAX_BYTES = 2 * 1024 * 1024
 MIN_LINE_CHARS = 40
 MIN_FILE_BYTES = 64  # smaller files (empty files, one-line stubs) are too common to fingerprint
 # Files in the private repository that are not fingerprinted, as paths from the root of its checkout. A path that
-# ends in a slash is a folder with everything under it. These files hold no course material, and some of their lines
-# are the same as lines in this repository (the lines that pin an action in a workflow, for example). The keys in
-# secrets/ are not content either.
-NOT_FINGERPRINTED = (
-    ".github/", ".githooks/", "scripts/", "tools/", "tests/", "docs/", "secrets/",
-    "CLAUDE.md", "README.md", "pyproject.toml", "uv.lock", ".gitattributes", ".gitignore", "franca-schemas-commit.txt",
-)  # fmt: skip
-# Files that are not fingerprinted in any folder. The fixture pack has the real planner settings, so that the tests
-# use them.
+# ends in a slash is a folder with everything under it. The keys in secrets/ are not content. Lines that are the same
+# as lines in this repository, such as the line that pins an action in a workflow, are left out with --public.
+NOT_FINGERPRINTED = ("secrets/",)
+# File names that are left out in whatever folder they are in. The fixture pack has the real planner settings, so
+# that the tests use them.
 NOT_FINGERPRINTED_NAMES = {"course-config.yaml"}
+# The first line of a fingerprint file written by --fingerprint.
+FINGERPRINT_HEADER = "# Fingerprints of the private repository franca-content, made by  tools/content_guard.py --fingerprint"
+# A fingerprint file without values must have this line, so that an emptied file is not read as "no fingerprints".
+NO_FINGERPRINTS_LINE = "# No fingerprints"
 ZERO_SHA = "0" * 40
 GITLINK_MODE = "160000"
+SYMLINK_MODE = "120000"
+FILE_MODES = {"100644", "100755"}
+# Variables with the path of a repository or an index for Git. Git hooks have them, and with them, the files of
+# another repository would be read in place of franca-content or the public checkout.
+GIT_REPOSITORY_VARIABLES = frozenset(
+    {
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_NAMESPACE",
+    }
+)
 MARKER = "franca:" + "private"  # files in the private repository have this marker; in two parts so this file has not
 
 # Folders that hold private material. Those in ROOT_ONLY are refused at the top of the repository only, because
@@ -101,6 +119,10 @@ SECRET_PATTERNS = {
 
 class GuardError(Exception):
     """A problem that stops the guard from checking, as opposed to a file that fails the check."""
+
+
+class MissingKeyError(GuardError):
+    """The fingerprint file has values and there is no key. Pull requests from forks have no key."""
 
 
 # --- rules for one file version
@@ -277,15 +299,25 @@ def read_key(environ: dict[str, str] | None = None) -> bytes | None:
     return None
 
 
-def load_fingerprints(path: Path, key: bytes | None) -> Fingerprints:
+def load_fingerprints(path: Path, key: bytes | None, values_expected: bool = False) -> Fingerprints:
+    """The fingerprints in a fingerprint file.
+
+    A file without values is accepted when it has the line NO_FINGERPRINTS_LINE and values are not expected, as in
+    the tests. An empty file is an error, because a refresh that stopped can leave one.
+    """
     if not path.exists():
         raise GuardError(f"The fingerprint file {path} is missing.")
     lines = path.read_text(encoding="utf-8").splitlines()
     values = frozenset(line.strip() for line in lines if line.strip() and not line.startswith("#"))
     if not values:
-        return NO_FINGERPRINTS
-    if not key:
+        if not values_expected and any(line.startswith(NO_FINGERPRINTS_LINE) for line in lines):
+            return NO_FINGERPRINTS
         raise GuardError(
+            f"The fingerprint file {path} has no values. A refresh that stopped may have emptied it. Restore it with"
+            f"  git restore {path}  and refresh it with the command in docs/repository-split.md."
+        )
+    if not key:
+        raise MissingKeyError(
             "The fingerprint key is missing, so files cannot be compared with the private repository. Put the key in"
             f" {KEY_FILE} or in the variable FRANCA_FINGERPRINT_KEY (see docs/repository-split.md)."
         )
@@ -295,8 +327,8 @@ def load_fingerprints(path: Path, key: bytes | None) -> Fingerprints:
 def is_fingerprinted(path: str) -> bool:
     """Whether a file of the private repository is fingerprinted, by its path from the root of the checkout.
 
-    A path with an empty, "." or ".." part is fingerprinted, so a path such as docs/../packs/x is not left out as
-    part of docs/. Names are compared with their case, as Git compares them.
+    A path with an empty, "." or ".." part is fingerprinted, so a path such as secrets/../packs/x is not left out as
+    part of secrets/. Names are compared with their case, as Git records them in the index.
     """
     parts = path.split("/")
     if any(part in ("", ".", "..") for part in parts):
@@ -306,38 +338,206 @@ def is_fingerprinted(path: str) -> bool:
     return not any(path.startswith(rule) if rule.endswith("/") else path == rule for rule in NOT_FINGERPRINTED)
 
 
-def tracked_files(content_root: Path) -> list[str]:
-    """The paths of the files that Git tracks in a checkout of the private repository, from the root of the checkout.
+def _git_env() -> dict[str, str]:
+    """The environment for Git commands in another checkout, without the variables in GIT_REPOSITORY_VARIABLES."""
+    return {name: value for name, value in os.environ.items() if name not in GIT_REPOSITORY_VARIABLES}
 
-    Untracked files, such as the .venv folder made by uv sync, are left out. Stops with a GuardError when the folder
-    is not the top folder of a Git checkout, because the paths in NOT_FINGERPRINTED are matched from that folder.
+
+def checkout_entries(root: Path, hint: str) -> list[Entry]:
+    """The files in the Git index of a checkout, read from its top folder.
+
+    Stops with a GuardError when root is not the top folder of a Git checkout, when the index has a submodule or a
+    merge conflict, or when it has an entry that is neither a file nor a link. hint is the advice that is added to the
+    message when root is not a Git checkout.
     """
     try:
-        top = _decode(_git("-C", str(content_root), "rev-parse", "--show-toplevel")).strip()
-    except GuardError:
-        raise GuardError(f"{content_root} is not a Git checkout. Run the command in a checkout of franca-content.") from None
-    if Path(top).resolve() != content_root.resolve():
-        raise GuardError(f"{content_root} is not the top folder of its Git checkout. Run the command in the folder {top}.")
-    listing = _git("-C", str(content_root), "ls-files", "-z")
-    return [_decode(path) for path in listing.split(b"\0") if path]
+        top = _decode(_git("-C", str(root), "rev-parse", "--show-toplevel", env=_git_env())).strip()
+    except GuardError as error:
+        raise GuardError(f"{root} is not a Git checkout, or Git cannot read it ({error}). {hint}") from None
+    if Path(top).resolve() != root.resolve():
+        raise GuardError(f"{root} is not the top folder of its Git checkout. Run the command in the folder {top}.")
+    entries: list[Entry] = []
+    submodules, conflicts, others = [], [], []
+    for entry, stage in _stage_entries(_git("-C", str(root), "ls-files", "--stage", "-z", env=_git_env())):
+        if stage != "0":
+            conflicts.append(entry.path)
+        elif entry.mode == GITLINK_MODE:
+            submodules.append(entry.path)
+        elif entry.mode in FILE_MODES or entry.mode == SYMLINK_MODE:
+            entries.append(entry)
+        else:
+            others.append(f"{entry.path} (mode {entry.mode})")
+    if submodules:
+        raise GuardError(
+            f"The checkout {root} has submodules: {', '.join(submodules)}. Their files are in another repository, so"
+            " they cannot be fingerprinted. Put the files in franca-content itself, then run the command again."
+        )
+    if conflicts:
+        raise GuardError(f"These files in {root} have a merge conflict: {', '.join(sorted(set(conflicts)))}. Finish the merge first.")
+    if others:
+        raise GuardError(f"These entries in the index of {root} are not files: {', '.join(others)}.")
+    return entries
+
+
+def unstaged_changes(root: Path) -> list[str]:
+    """Tracked files whose version in the work tree is not the version in the index, so it is not fingerprinted."""
+    listing = _git("-C", str(root), "diff", "--name-only", "-z", env=_git_env())
+    return sorted(_decode(path) for path in listing.split(b"\0") if path)
+
+
+def _checkout_blobs(root: Path, shas: Iterable[str]) -> Iterator[tuple[str, bytes]]:
+    """Reads files from the object store of a checkout, one at a time, so that large media files are not all in memory
+    at once. git cat-file sends each object as soon as it is asked for."""
+    command = ["git", *GIT_SETTINGS, "-C", str(root), "cat-file", "--batch"]
+    with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=_git_env()) as process:
+        assert process.stdin is not None and process.stdout is not None
+        for sha in dict.fromkeys(shas):
+            process.stdin.write(f"{sha}\n".encode())
+            process.stdin.flush()
+            header = process.stdout.readline().split()
+            if len(header) < 3 or header[1] == b"missing":
+                raise GuardError(f"object {sha} could not be read from {root}")
+            data = process.stdout.read(int(header[2]))
+            process.stdout.read(1)  # the newline after each object
+            yield sha, data
+        process.stdin.close()
+
+
+def fingerprint_sources(root: Path, key: bytes, *, private: bool) -> dict[str, set[str]]:
+    """The fingerprint values of the files in the Git index of a checkout, each with the paths it came from.
+
+    For the private repository (private=True), the files in NOT_FINGERPRINTED and NOT_FINGERPRINTED_NAMES are left
+    out and the lines of text files are fingerprinted. For the public checkout, the lines of all files are
+    fingerprinted, because the guard compares the lines of all files. Links are not followed. The version in the index
+    is read, so a file left out of a sparse checkout or deleted from the work tree is still fingerprinted.
+    """
+    if private:
+        hint = "Run the command in a checkout of franca-content."
+    else:
+        hint = "Give --public the path of a checkout of franca."
+    paths_by_sha: dict[str, list[str]] = {}
+    for entry in checkout_entries(root, hint):
+        if entry.mode != SYMLINK_MODE and (not private or is_fingerprinted(entry.path)):
+            paths_by_sha.setdefault(entry.sha, []).append(entry.path)
+    prints = Fingerprints(key=key, values=frozenset())
+    sources: dict[str, set[str]] = {}
+    for sha, data in _checkout_blobs(root, paths_by_sha):
+        file_values = {prints.of_file(data)} if len(data) >= MIN_FILE_BYTES else set()
+        line_values: set[str] | None = None
+        for path in paths_by_sha[sha]:
+            values = set(file_values)
+            if not private or Path(path).suffix.lower() in TEXT_EXTENSIONS_FOR_FINGERPRINTS:
+                if line_values is None:
+                    line_values = {v for line in data.decode("utf-8", errors="replace").splitlines() for v in prints.of_line(line)}
+                values |= line_values
+            for value in values:
+                sources.setdefault(value, set()).add(path)
+    return sources
 
 
 def make_fingerprints(content_root: Path, key: bytes) -> set[str]:
-    """Fingerprints of the files that Git tracks in a checkout of the private repository, and of the long lines in its
-    text files, apart from the files in NOT_FINGERPRINTED and NOT_FINGERPRINTED_NAMES. Links are not followed."""
-    prints = Fingerprints(key=key, values=frozenset())
-    values: set[str] = set()
-    for relative in sorted(tracked_files(content_root)):
-        file = content_root / relative
-        if not is_fingerprinted(relative) or file.is_symlink() or not file.is_file():
-            continue
-        data = file.read_bytes()
-        if len(data) >= MIN_FILE_BYTES:
-            values.add(prints.of_file(data))
-        if file.suffix.lower() in TEXT_EXTENSIONS_FOR_FINGERPRINTS:
-            for line in data.decode("utf-8", errors="replace").splitlines():
-                values |= prints.of_line(line)
-    return values
+    """Fingerprints of the files in the Git index of a checkout of the private repository, and of their long lines.
+
+    Files in NOT_FINGERPRINTED and NOT_FINGERPRINTED_NAMES are left out. Links are not followed. Stops with a
+    GuardError when the checkout has a submodule.
+    """
+    return set(fingerprint_sources(content_root, key, private=True))
+
+
+@dataclass(frozen=True)
+class LeftOut:
+    """Values that were left out because a private file and a public file have the same text."""
+
+    public_path: str
+    private_path: str
+    whole_file: bool
+
+    def describe(self) -> str:
+        if self.whole_file:
+            return f"{self.public_path} is a copy of {self.private_path}"
+        return f"{self.public_path} has lines that are in {self.private_path}"
+
+
+def leave_out_public(private: dict[str, set[str]], public: dict[str, set[str]]) -> tuple[set[str], list[LeftOut]]:
+    """The private values that are not public, and the public and private paths of the values that were left out."""
+    shared = private.keys() & public.keys()
+    whole_file: dict[tuple[str, str], bool] = {}
+    for value in shared:
+        for pair in ((public_path, private_path) for public_path in public[value] for private_path in private[value]):
+            whole_file[pair] = whole_file.get(pair, False) or value.startswith("file:")
+    left_out = [LeftOut(public_path, private_path, copy) for (public_path, private_path), copy in sorted(whole_file.items())]
+    return set(private.keys() - shared), left_out
+
+
+def write_fingerprint_file(path: Path, values: set[str]) -> None:
+    """Writes the values to a temporary file next to path and then renames it, so a run that stops does not change path."""
+    text = FINGERPRINT_HEADER + "\n" + "".join(f"{value}\n" for value in sorted(values))
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as file:
+            file.write(text)
+        os.chmod(temporary, path.stat().st_mode & 0o777 if path.exists() else 0o644)
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+
+
+def public_sources(public_root: Path, content_root: Path, key: bytes) -> dict[str, set[str]]:
+    """The fingerprint values of a checkout of franca, after checking that it is one and not franca-content."""
+    if _same_checkout(content_root, public_root):
+        raise GuardError(f"{public_root} is the same checkout as {content_root}. Give --public the path of a checkout of franca.")
+    sources = fingerprint_sources(public_root, key, private=False)
+    if not _tracks(public_root, "tools/content_guard.py"):
+        raise GuardError(f"{public_root} is not a checkout of franca: tools/content_guard.py is not tracked in it.")
+    return sources
+
+
+def refresh_fingerprints(content_root: Path, public_root: Path | None, output: Path | None, key: bytes) -> None:
+    """Makes the fingerprints of franca-content, leaves out the values that are in the public checkout, and writes them
+    to output, or to standard output when output is None. Messages for the person running it go to standard error."""
+    public = public_sources(public_root, content_root, key) if public_root is not None else {}
+    private = fingerprint_sources(content_root, key, private=True)
+    if not private:
+        raise GuardError("No files were fingerprinted. Check that the folder is a full checkout of franca-content.")
+    values, left_out = leave_out_public(private, public)
+    if left_out:
+        print(
+            f"{len(private) - len(values)} values were left out because the same file or line is in the public checkout"
+            f" {public_root}. Check that none of these public files has course material (public path first):",
+            file=sys.stderr,
+        )
+        for item in left_out:
+            print(f"  {item.describe()}", file=sys.stderr)
+    if not values:
+        raise GuardError("All the values are also in the public checkout. Check that --public is a checkout of franca.")
+    changed = unstaged_changes(content_root)
+    if changed:
+        print(
+            "The version of each file in the Git index is fingerprinted. These files have changes that are not staged, so"
+            f" the changes are not fingerprinted: {', '.join(changed)}",
+            file=sys.stderr,
+        )
+    if output is None:
+        print(FINGERPRINT_HEADER)
+        print("\n".join(sorted(values)))
+    else:
+        write_fingerprint_file(output, values)
+        print(f"{len(values)} values were written to {output}.", file=sys.stderr)
+
+
+def _same_checkout(a: Path, b: Path) -> bool:
+    def top(root: Path) -> Path:
+        return Path(_decode(_git("-C", str(root), "rev-parse", "--show-toplevel", env=_git_env())).strip()).resolve()
+
+    try:
+        return top(a) == top(b)
+    except GuardError:
+        return False
+
+
+def _tracks(root: Path, path: str) -> bool:
+    return bool(_git("-C", str(root), "ls-files", "-z", "--", path, env=_git_env()))
 
 
 # --- reading file versions from Git
@@ -364,8 +564,8 @@ class Message:
 GIT_SETTINGS = ["-c", "log.diffMerges=separate", "-c", "log.showSignature=false", "-c", "core.quotePath=false"]
 
 
-def _git(*args: str, stdin: bytes | None = None) -> bytes:
-    result = subprocess.run(["git", *GIT_SETTINGS, *args], input=stdin, capture_output=True)
+def _git(*args: str, stdin: bytes | None = None, env: dict[str, str] | None = None) -> bytes:
+    result = subprocess.run(["git", *GIT_SETTINGS, *args], input=stdin, capture_output=True, env=env)
     if result.returncode != 0:
         message = result.stderr.decode("utf-8", errors="replace").strip()
         raise GuardError(f"git {' '.join(args[:3])} failed: {message}")
@@ -421,14 +621,17 @@ def staged_entries() -> list[Entry]:
     return list(_raw_entries(_git("diff", "--cached", "--raw", "-z", "--no-renames", "--no-abbrev", "--diff-filter=ACMRT")))
 
 
-def index_entries() -> list[Entry]:
-    entries = []
-    for record in _git("ls-files", "--stage", "-z").split(b"\0"):
+def _stage_entries(raw: bytes) -> Iterator[tuple[Entry, str]]:
+    """Parses `git ls-files --stage -z` output: each file with its stage, which is 0 unless there is a merge conflict."""
+    for record in raw.split(b"\0"):
         if record:
             meta, _, path = record.partition(b"\t")
-            mode, sha, _stage = meta.split()
-            entries.append(Entry(path=_decode(path), mode=mode.decode(), sha=sha.decode()))
-    return entries
+            mode, sha, stage = meta.split()
+            yield Entry(path=_decode(path), mode=mode.decode(), sha=sha.decode()), stage.decode()
+
+
+def index_entries() -> list[Entry]:
+    return [entry for entry, _stage in _stage_entries(_git("ls-files", "--stage", "-z"))]
 
 
 def commit_entries(rev_args: list[str]) -> list[Entry]:
@@ -633,9 +836,10 @@ def _contents_for(args: argparse.Namespace) -> Found:
 
 
 def _fingerprints_for(args: argparse.Namespace) -> Fingerprints:
+    values_expected = args.fingerprints.resolve() == DEFAULT_FINGERPRINTS.resolve()
     try:
-        return load_fingerprints(args.fingerprints, read_key())
-    except GuardError:
+        return load_fingerprints(args.fingerprints, read_key(), values_expected)
+    except MissingKeyError:
         if args.ci and is_fork_pull_request(*_ci_event()):
             print(
                 "This pull request is from a fork, so it has no fingerprint key. The merge queue checks the fingerprints.", file=sys.stderr
@@ -653,18 +857,29 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--ci", action="store_true", help="check the commits of the current GitHub Actions event")
     mode.add_argument("--index", action="store_true", help="check every file in the index")
     mode.add_argument("--history", action="store_true", help="check every file version and message in every commit and ref")
-    mode.add_argument("--fingerprint", metavar="CONTENT_FOLDER", help="print the fingerprints of a checkout of franca-content")
-    parser.add_argument("--fingerprints", type=Path, default=DEFAULT_FINGERPRINTS)
+    mode.add_argument("--fingerprint", metavar="CONTENT_FOLDER", help="make the fingerprints of a checkout of franca-content")
+    parser.add_argument("--fingerprints", type=Path, default=DEFAULT_FINGERPRINTS, help="the fingerprint file to check with")
+    public = parser.add_mutually_exclusive_group()
+    public.add_argument(
+        "--public", metavar="FRANCA_FOLDER", type=Path, help="with --fingerprint: leave out values that are in this checkout of franca"
+    )
+    public.add_argument("--skip-public", action="store_true", help="with --fingerprint: keep the values that are also in franca")
+    parser.add_argument("--output", type=Path, help="with --fingerprint: write the fingerprint file here, once the values are made")
     args = parser.parse_args(argv)
+    if not args.fingerprint and (args.public or args.skip_public or args.output):
+        parser.error("--public, --skip-public and --output are used with --fingerprint only")
 
     try:
         if args.fingerprint:
+            if args.public is None and not args.skip_public:
+                raise GuardError(
+                    "The fingerprint command needs --public with the path of a checkout of franca, so that values that are"
+                    " also in the public repository are left out. To keep them, use --skip-public instead."
+                )
             key = read_key()
             if not key:
                 raise GuardError(f"The fingerprint key is missing. Put it in {KEY_FILE} or in FRANCA_FINGERPRINT_KEY.")
-            values = make_fingerprints(Path(args.fingerprint), key)
-            print("# Fingerprints of the private repository franca-content, made by  tools/content_guard.py --fingerprint")
-            print("\n".join(sorted(values)))
+            refresh_fingerprints(Path(args.fingerprint), args.public, args.output, key)
             return 0
         prints = _fingerprints_for(args)
         return _report(check_found(_contents_for(args), prints))

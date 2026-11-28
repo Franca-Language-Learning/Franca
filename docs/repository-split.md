@@ -38,27 +38,40 @@ The fingerprints for the copy check are in `tools/content-fingerprints.txt`, as 
 
 When the fingerprint file has values, the guard needs the key and stops with a message if it is missing. Pull requests from forks get no Actions secrets, so the fingerprints are skipped in their check. They are checked in the merge queue before the merge, if the merge queue is turned on for `main`. On a developer's computer, the key is read from `~/.config/franca/fingerprint-key` or from the variable `FRANCA_FINGERPRINT_KEY`.
 
-To refresh the fingerprints, run this in the top folder of a checkout of `franca-content`:
+To refresh the fingerprints:
 
-```sh
-python3 -I ../franca/tools/content_guard.py --fingerprint . > ../franca/tools/content-fingerprints.txt
-```
+1. In the checkout of `franca`, switch to `main` and run `git pull`, so that the checkout has the latest public files.
+2. In the top folder of a checkout of `franca-content`, run:
 
-The command stops with a message if the folder is not the top folder of a Git checkout.
+   ```sh
+   python3 -I ../franca/tools/content_guard.py --fingerprint . --public ../franca --output ../franca/tools/content-fingerprints.txt
+   ```
 
-### Files that are not fingerprinted
+3. Read the list of left-out values that is printed (see below). If a public file in the list has course material, stop and tell the product owner, because the material is already public.
+4. Commit `tools/content-fingerprints.txt` in `franca` on a new branch and open a pull request.
 
-The fingerprints are made from the files that Git tracks in `franca-content`. Files that Git does not track are left out, such as the `.venv` folder made by `uv sync` and the caches of the test tools. There are thousands of them, and some of their lines are the same as lines in this repository.
+The fingerprint file is written after the values are made. If the command stops with a message, for example because the folder is not the top folder of a Git checkout, the fingerprint file is not changed. Do not redirect the output into the fingerprint file with `>`, because the shell empties the file before the command starts. The guard stops with a message when the fingerprint file has no values, so an emptied file is noticed. A fingerprint file for a test that is meant to have no values has the line `# No fingerprints`.
 
-Some tracked files are left out as well, because they hold no course material and some of their lines are the same as lines in this repository. One example is the line in a workflow that pins `actions/checkout`. If their values were in the fingerprint file, the guard would refuse files of this repository that have the same line.
+### Which files are fingerprinted
+
+The fingerprints are made from the files in the Git index of `franca-content`, which are the files that Git tracks, in the version that was last staged. Files that Git does not track are left out, such as the files in the `.venv` folder made by `uv sync` and in the caches of the test tools. Because the version in the index is read, a file that a sparse checkout left out of the work tree, or that was deleted from the work tree, is still fingerprinted. Files with changes that are not staged are listed when the command finishes, because those changes are not fingerprinted.
+
+Tracked links are not followed. If the checkout has a submodule or a merge conflict, the command stops with a message that names the paths.
+
+These tracked files are left out:
 
 | Left out | Where it is matched |
 |---|---|
-| The folders `.github/`, `.githooks/`, `scripts/`, `tools/`, `tests/`, `docs/` and `secrets/`, with everything in them | At the top of the checkout |
-| The files `CLAUDE.md`, `README.md`, `pyproject.toml`, `uv.lock`, `.gitattributes`, `.gitignore` and `franca-schemas-commit.txt` | At the top of the checkout |
+| The folder `secrets/`, with everything in it | At the top of the checkout |
 | `course-config.yaml` | In any folder |
 
-A file or folder with one of these names in another folder is fingerprinted. For example, a `README.md` or a `tools/` folder inside a pack folder is fingerprinted. The planner settings in `course-config.yaml` are left out because the fixture pack in this repository has the same settings, so that the tests use them. The keys in `secrets/` are not content. The lists are `NOT_FINGERPRINTED` and `NOT_FINGERPRINTED_NAMES` in `tools/content_guard.py`.
+The keys in `secrets/` are not content. The planner settings in `course-config.yaml` are left out because the fixture pack in this repository has the same settings, so that the tests use them. The lists are `NOT_FINGERPRINTED` and `NOT_FINGERPRINTED_NAMES` in `tools/content_guard.py`.
+
+### Values that are also in this repository
+
+Some files in `franca-content` have lines that are the same as lines in this repository, such as the line in a workflow that pins `actions/checkout`. If their values were in the fingerprint file, the guard would refuse the files of this repository that have the same line. With `--public`, the values of the files in the given checkout of `franca` are made as well, and the private values that match one of them are left out. Each pair of paths is then printed, the public file first and then the private file it matches, with no text from the files. A pair is shown as "is a copy of" when the whole file is the same, and as "has lines that are in" otherwise.
+
+The command stops if `--public` is missing. With `--skip-public`, all the values are kept. That option is meant for tests, because without the step, files of this repository are likely to be refused by the guard.
 
 The folders where icons and documentation screenshots may be kept are listed in `tools/content-guard-allowed-media.txt`. A file that matches one of those entries has to be a real PNG or ICO file.
 

@@ -232,9 +232,22 @@ def content_checkout(root: Path, files: dict[str, str]) -> Path:
     return root
 
 
+def public_checkout(root: Path, files: dict[str, str]) -> Path:
+    """A made-up checkout of franca: the guard's own file and these files, committed."""
+    content_checkout(root, {"tools/content_guard.py": "# a stand-in for the guard\n", **files})
+    git(root, "commit", "-q", "-m", "start")
+    return root
+
+
 def text_with_long_lines(line: str = LONG_LINE) -> str:
     """Text that is fingerprinted as a whole file and line by line, if the file is fingerprinted at all."""
     return f"prompt: {line}\nanswer: {line[::-1]}\n"
+
+
+def values_of(text: str) -> set[str]:
+    """The values of a text file: the whole file and its long lines."""
+    fp = guard.Fingerprints(key=KEY, values=frozenset())
+    return {v for line in text.splitlines() for v in fp.of_line(line)} | {fp.of_file(text.encode())}
 
 
 def test_fingerprints_are_made_from_a_content_folder(tmp_path: Path) -> None:
@@ -266,8 +279,7 @@ def test_untracked_files_and_the_virtual_environment_are_not_fingerprinted(tmp_p
     for name in ("notes.yaml", ".venv/lib/python3.12/site-packages/x/schema.json", ".pytest_cache/README.md"):
         (root / name).parent.mkdir(parents=True, exist_ok=True)
         (root / name).write_text(text_with_long_lines(other), encoding="utf-8")
-    fp = guard.Fingerprints(key=KEY, values=frozenset())
-    assert guard.make_fingerprints(root, KEY) == fp.of_line(lesson) | {fp.of_file(lesson.encode())}
+    assert guard.make_fingerprints(root, KEY) == values_of(lesson)
 
 
 def test_a_tracked_link_is_not_followed(tmp_path: Path) -> None:
@@ -280,13 +292,23 @@ def test_a_tracked_link_is_not_followed(tmp_path: Path) -> None:
     assert guard.make_fingerprints(root, KEY) == set()
 
 
-NOT_FINGERPRINTED_PATHS = [
+NOT_FINGERPRINTED_PATHS = ["secrets/fingerprint-key", "secrets/sub/other-key", "course-config.yaml", "packs/nl-be/course-config.yaml"]
+
+
+@pytest.mark.parametrize("path", NOT_FINGERPRINTED_PATHS)
+def test_paths_in_the_list_are_not_fingerprinted(tmp_path: Path, path: str) -> None:
+    root = content_checkout(tmp_path / "content", {path: text_with_long_lines()})
+    assert guard.make_fingerprints(root, KEY) == set()
+
+
+FINGERPRINTED_PATHS = [
+    # Tooling and notes at the top of franca-content are fingerprinted like the rest. Lines that are also in this
+    # repository are left out with --public instead.
     ".github/workflows/check.yml",
-    ".github/renovate.json",
     ".githooks/pre-commit",
     "scripts/check",
     "tools/refresh.py",
-    "tests/test_packs.py",
+    "tests/fixtures/lesson.yaml",
     "docs/notes.md",
     "docs/sub/deeper.md",
     "CLAUDE.md",
@@ -296,65 +318,315 @@ NOT_FINGERPRINTED_PATHS = [
     ".gitattributes",
     ".gitignore",
     "franca-schemas-commit.txt",
-    "secrets/fingerprint-key",
-    "course-config.yaml",
-    "packs/nl-be/course-config.yaml",
-]
-
-
-@pytest.mark.parametrize("path", NOT_FINGERPRINTED_PATHS)
-def test_files_without_course_material_are_not_fingerprinted(tmp_path: Path, path: str) -> None:
-    root = content_checkout(tmp_path / "content", {path: text_with_long_lines()})
-    assert guard.make_fingerprints(root, KEY) == set()
-
-
-FINGERPRINTED_PATHS = [
-    "packs/nl-be/README.md",  # a file name that is left out at the root only
-    "packs/nl-be/CLAUDE.md",
-    "packs/nl-be/pyproject.toml",
-    "packs/nl-be/tools/words.yaml",  # a folder name that is left out at the root only
-    "packs/nl-be/docs/notes.md",
-    "packs/docs/notes.md",
+    "packs/nl-be/README.md",
+    "packs/nl-be/tools/words.yaml",
+    "packs/secrets.md",
+    "Secrets/notes.md",  # Git records Secrets/ as a different folder when no secrets/ folder is tracked
     "harvest/scripts/source.txt",
-    "Docs/notes.md",  # a different folder for Git, whatever the file system does with the case
-    "docs-old/notes.md",
-    "docs.md",
-    "README.md.yaml",
+    "course-config.yaml.bak",
 ]
 
 
 @pytest.mark.parametrize("path", FINGERPRINTED_PATHS)
-def test_course_material_with_names_like_the_left_out_files_is_fingerprinted(tmp_path: Path, path: str) -> None:
+def test_files_outside_the_list_are_fingerprinted(tmp_path: Path, path: str) -> None:
     text = text_with_long_lines()
     root = content_checkout(tmp_path / "content", {path: text})
     assert guard.Fingerprints(key=KEY, values=frozenset()).of_file(text.encode()) in guard.make_fingerprints(root, KEY)
 
 
-@pytest.mark.parametrize(
-    "path", ["docs/../packs/nl-be/lesson.yaml", "./docs/notes.md", "/docs/notes.md", "docs//notes.md", "tools/./x.yaml"]
-)
+@pytest.mark.parametrize("path", ["secrets/../packs/nl-be/lesson.yaml", "./secrets/key", "/secrets/key", "secrets//key", "secrets/./key"])
 def test_a_path_with_dots_or_empty_parts_is_fingerprinted(path: str) -> None:
-    # git ls-files does not give such paths. If one came from somewhere else, it is not left out as part of docs/.
+    # git ls-files does not give such paths. If one came from somewhere else, it is not left out as part of secrets/.
     assert guard.is_fingerprinted(path)
 
 
-def test_the_fingerprint_command_needs_a_git_checkout(tmp_path: Path) -> None:
+# --- files that are tracked but not in the work tree
+
+
+def committed_checkout(root: Path, files: dict[str, str]) -> Path:
+    content_checkout(root, files)
+    git(root, "commit", "-q", "-m", "start")
+    return root
+
+
+def test_a_file_in_a_folder_left_out_by_a_sparse_checkout_is_fingerprinted(tmp_path: Path) -> None:
+    lesson = text_with_long_lines()
+    root = committed_checkout(tmp_path / "content", {"packs/nl-be/lesson.yaml": lesson, "packs/fr/lesson.yaml": "x: 1\n"})
+    git(root, "sparse-checkout", "set", "packs/fr")
+    assert not (root / "packs" / "nl-be" / "lesson.yaml").exists()
+    assert values_of(lesson) <= guard.make_fingerprints(root, KEY)
+
+
+def test_a_tracked_file_deleted_from_the_work_tree_is_fingerprinted(tmp_path: Path) -> None:
+    lesson = text_with_long_lines()
+    root = committed_checkout(tmp_path / "content", {"packs/nl-be/lesson.yaml": lesson})
+    (root / "packs" / "nl-be" / "lesson.yaml").unlink()
+    assert guard.make_fingerprints(root, KEY) == values_of(lesson)
+    assert guard.unstaged_changes(root) == ["packs/nl-be/lesson.yaml"]
+
+
+def test_a_skip_worktree_file_removed_from_the_work_tree_is_fingerprinted(tmp_path: Path) -> None:
+    lesson = text_with_long_lines()
+    root = committed_checkout(tmp_path / "content", {"packs/nl-be/lesson.yaml": lesson})
+    git(root, "update-index", "--skip-worktree", "packs/nl-be/lesson.yaml")
+    (root / "packs" / "nl-be" / "lesson.yaml").unlink()
+    assert guard.make_fingerprints(root, KEY) == values_of(lesson)
+
+
+def test_the_staged_version_is_fingerprinted_and_unstaged_changes_are_named(tmp_path: Path) -> None:
+    lesson = text_with_long_lines()
+    root = committed_checkout(tmp_path / "content", {"packs/nl-be/lesson.yaml": lesson})
+    (root / "packs" / "nl-be" / "lesson.yaml").write_text(text_with_long_lines("Een nieuwe zin die nog niet in de index van Git staat."))
+    assert guard.make_fingerprints(root, KEY) == values_of(lesson)
+    assert guard.unstaged_changes(root) == ["packs/nl-be/lesson.yaml"]
+
+
+def test_a_submodule_stops_the_fingerprint_command(tmp_path: Path) -> None:
+    other = committed_checkout(tmp_path / "other", {"lesson.yaml": text_with_long_lines()})
+    sha = git(other, "rev-parse", "HEAD").strip()
+    root = content_checkout(tmp_path / "content", {"packs/fr/lesson.yaml": "x: 1\n"})
+    git(root, "update-index", "--add", "--cacheinfo", f"160000,{sha},packs/nl-be")
+    with pytest.raises(guard.GuardError, match=r"submodule.*packs/nl-be"):
+        guard.make_fingerprints(root, KEY)
+
+
+def test_a_merge_conflict_stops_the_fingerprint_command(tmp_path: Path) -> None:
+    root = committed_checkout(tmp_path / "content", {"packs/nl-be/lesson.yaml": "a: 1\n"})
+    git(root, "checkout", "-q", "-b", "other")
+    (root / "packs" / "nl-be" / "lesson.yaml").write_text("a: 2\n")
+    git(root, "commit", "-q", "-am", "two")
+    git(root, "checkout", "-q", "main")
+    (root / "packs" / "nl-be" / "lesson.yaml").write_text("a: 3\n")
+    git(root, "commit", "-q", "-am", "three")
+    subprocess.run(["git", "-C", str(root), "merge", "-q", "other"], capture_output=True)
+    with pytest.raises(guard.GuardError, match=r"merge conflict.*packs/nl-be/lesson\.yaml"):
+        guard.make_fingerprints(root, KEY)
+
+
+@pytest.mark.parametrize("variable", ["GIT_INDEX_FILE", "GIT_DIR"])
+def test_git_variables_from_a_hook_do_not_change_the_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, variable: str) -> None:
+    # Git hooks run with GIT_INDEX_FILE and GIT_DIR. They belong to the repository of the hook, not to franca-content.
+    lesson = text_with_long_lines()
+    root = committed_checkout(tmp_path / "content", {"packs/nl-be/lesson.yaml": lesson})
+    other = committed_checkout(tmp_path / "other", {"notes.md": "x\n"})
+    monkeypatch.setenv(variable, str(other / ".git" / ("index" if variable == "GIT_INDEX_FILE" else "")))
+    assert guard.make_fingerprints(root, KEY) == values_of(lesson)
+
+
+def test_the_fingerprint_command_needs_a_git_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # With the ceiling, Git does not look for a checkout above the temporary folder, which matters when TMPDIR is in one.
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
     folder = tmp_path / "plain"
     folder.mkdir()
     (folder / "lesson.yaml").write_text(text_with_long_lines(), encoding="utf-8")
-    with pytest.raises(guard.GuardError, match="not a Git checkout"):
+    with pytest.raises(guard.GuardError, match="not a Git checkout") as error:
         guard.make_fingerprints(folder, KEY)
-    result = run_guard(tmp_path, "--fingerprint", str(folder), env={"FRANCA_FINGERPRINT_KEY": "test"})
+    assert "not a git repository" in str(error.value)  # Git's own reason
+    env = {"FRANCA_FINGERPRINT_KEY": "test", "GIT_CEILING_DIRECTORIES": str(tmp_path)}
+    result = run_guard(tmp_path, "--fingerprint", str(folder), "--skip-public", env=env)
     assert result.returncode == 2
     assert "not a Git checkout" in result.stderr
     assert result.stdout == ""
 
 
 def test_the_fingerprint_command_needs_the_top_folder_of_the_checkout(tmp_path: Path) -> None:
-    # Paths are matched from the root of the checkout, so a subfolder would give the wrong paths.
+    # Paths are matched from the root of the checkout, so the paths from a subfolder would be wrong.
     root = content_checkout(tmp_path / "content", {"packs/docs/notes.md": text_with_long_lines()})
     with pytest.raises(guard.GuardError, match="top folder"):
         guard.make_fingerprints(root / "packs", KEY)
+
+
+# --- the fingerprint command, with the values that are also in the public repository left out
+
+
+WORKFLOW_LINE = "      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2"
+WORKFLOW = f"jobs:\n  check:\n    steps:\n{WORKFLOW_LINE}\n"
+LESSON = text_with_long_lines()
+SETUP = f"{WORKFLOW_LINE}\n"
+
+
+def private_values() -> set[str]:
+    """The values that are kept when the public checkout of the fixture is left out: the lesson, and docs/setup.md as
+    a whole file, because only its line is public."""
+    return values_of(LESSON) | {guard.Fingerprints(key=KEY, values=frozenset()).of_file(SETUP.encode())}
+
+
+def fingerprint_command(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return run_guard(cwd, "--fingerprint", ".", *args, env={"FRANCA_FINGERPRINT_KEY": KEY.decode()})
+
+
+def written_values(path: Path) -> set[str]:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == guard.FINGERPRINT_HEADER
+    return set(lines[1:])
+
+
+@pytest.fixture
+def checkouts(tmp_path: Path) -> tuple[Path, Path]:
+    """A made-up franca-content with a lesson and a workflow, and a made-up franca with the same workflow line."""
+    content = committed_checkout(
+        tmp_path / "content", {"packs/nl-be/lesson.yaml": LESSON, ".github/workflows/check.yml": WORKFLOW, "docs/setup.md": SETUP}
+    )
+    public = public_checkout(
+        tmp_path / "franca", {".github/workflows/check.yml": WORKFLOW, "scripts/pins.py": f"PIN = '''\n{WORKFLOW_LINE}\n'''\n"}
+    )
+    return content, public
+
+
+def test_values_that_are_also_in_the_public_checkout_are_left_out(checkouts: tuple[Path, Path], tmp_path: Path) -> None:
+    content, public = checkouts
+    output = tmp_path / "prints.txt"
+    result = fingerprint_command(content, "--public", str(public), "--output", str(output))
+    assert result.returncode == 0, result.stderr
+    assert written_values(output) == private_values()
+    assert result.stdout == ""
+
+
+def test_the_left_out_values_are_reported_by_path_without_their_text(checkouts: tuple[Path, Path], tmp_path: Path) -> None:
+    content, public = checkouts
+    result = fingerprint_command(content, "--public", str(public), "--output", str(tmp_path / "prints.txt"))
+    report = result.stderr
+    assert "  .github/workflows/check.yml is a copy of .github/workflows/check.yml\n" in report
+    assert "  .github/workflows/check.yml has lines that are in docs/setup.md\n" in report
+    assert "  scripts/pins.py has lines that are in .github/workflows/check.yml\n" in report
+    assert "packs/nl-be/lesson.yaml" not in report
+    assert "actions/checkout" not in report and LONG_LINE not in report
+
+
+def test_the_fingerprint_command_stops_without_the_public_checkout(checkouts: tuple[Path, Path], tmp_path: Path) -> None:
+    content, _ = checkouts
+    output = tmp_path / "prints.txt"
+    result = fingerprint_command(content, "--output", str(output))
+    assert result.returncode == 2
+    assert "--public" in result.stderr and "--skip-public" in result.stderr
+    assert not output.exists()
+    result = fingerprint_command(content, "--skip-public", "--output", str(output))
+    assert result.returncode == 0, result.stderr
+    assert values_of(LESSON) | values_of(WORKFLOW) <= written_values(output)
+
+
+def test_public_and_skip_public_cannot_be_used_together(checkouts: tuple[Path, Path]) -> None:
+    content, public = checkouts
+    assert fingerprint_command(content, "--public", str(public), "--skip-public").returncode == 2
+
+
+@pytest.mark.parametrize("option", [("--public", "."), ("--skip-public",), ("--output", "x.txt")])
+def test_the_fingerprint_options_need_the_fingerprint_command(repo: Path, option: tuple[str, ...]) -> None:
+    result = run_guard(repo, "--index", *option)
+    assert result.returncode == 2
+    assert "--fingerprint" in result.stderr
+
+
+def test_the_public_checkout_must_not_be_the_content_checkout(checkouts: tuple[Path, Path]) -> None:
+    content, _ = checkouts
+    result = fingerprint_command(content, "--public", ".")
+    assert result.returncode == 2
+    assert "same checkout" in result.stderr
+
+
+def test_the_public_checkout_must_be_a_checkout_of_franca(checkouts: tuple[Path, Path], tmp_path: Path) -> None:
+    content, _ = checkouts
+    other = committed_checkout(tmp_path / "other", {"notes.md": "x\n"})
+    result = fingerprint_command(content, "--public", str(other))
+    assert result.returncode == 2
+    assert "tools/content_guard.py" in result.stderr
+
+
+def test_a_run_that_fingerprints_nothing_is_an_error(tmp_path: Path) -> None:
+    content = committed_checkout(tmp_path / "content", {"secrets/fingerprint-key": "a" * 64 + "\n"})
+    output = tmp_path / "prints.txt"
+    result = fingerprint_command(content, "--skip-public", "--output", str(output))
+    assert result.returncode == 2
+    assert "No files were fingerprinted" in result.stderr
+    assert not output.exists()
+
+
+def test_a_run_whose_values_are_all_public_is_an_error(tmp_path: Path) -> None:
+    content = committed_checkout(tmp_path / "content", {".github/workflows/check.yml": WORKFLOW})
+    public = public_checkout(tmp_path / "franca", {".github/workflows/check.yml": WORKFLOW})
+    result = fingerprint_command(content, "--public", str(public), "--output", str(tmp_path / "prints.txt"))
+    assert result.returncode == 2
+    assert "also in the public checkout" in result.stderr
+
+
+def test_a_failed_refresh_does_not_change_the_fingerprint_file(checkouts: tuple[Path, Path], tmp_path: Path) -> None:
+    content, public = checkouts
+    output = tmp_path / "prints.txt"
+    output.write_text(f"{guard.FINGERPRINT_HEADER}\nline:0123456789abcdef01234567\n", encoding="utf-8")
+    before = output.read_bytes()
+    result = run_guard(
+        content / "packs",
+        "--fingerprint",
+        ".",
+        "--public",
+        str(public),
+        "--output",
+        str(output),
+        env={"FRANCA_FINGERPRINT_KEY": KEY.decode()},
+    )
+    assert result.returncode == 2
+    assert "top folder" in result.stderr
+    assert output.read_bytes() == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["content", "franca", "prints.txt"]  # no temporary file is left
+
+
+def test_a_refresh_replaces_the_fingerprint_file(checkouts: tuple[Path, Path], tmp_path: Path) -> None:
+    content, public = checkouts
+    output = tmp_path / "prints.txt"
+    output.write_text(f"{guard.FINGERPRINT_HEADER}\nline:0123456789abcdef01234567\n", encoding="utf-8")
+    assert fingerprint_command(content, "--public", str(public), "--output", str(output)).returncode == 0
+    assert written_values(output) == private_values()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["content", "franca", "prints.txt"]
+
+
+def test_unstaged_changes_are_named_by_the_fingerprint_command(checkouts: tuple[Path, Path], tmp_path: Path) -> None:
+    content, public = checkouts
+    (content / "packs" / "nl-be" / "lesson.yaml").write_text("x: 2\n")
+    result = fingerprint_command(content, "--public", str(public), "--output", str(tmp_path / "prints.txt"))
+    assert result.returncode == 0, result.stderr
+    assert "not staged" in result.stderr and "packs/nl-be/lesson.yaml" in result.stderr
+
+
+# --- the fingerprint file
+
+
+@pytest.mark.parametrize("text", ["", "\n", f"{guard.FINGERPRINT_HEADER}\n"])
+def test_a_fingerprint_file_without_values_stops_the_guard(tmp_path: Path, text: str) -> None:
+    # When a refresh that was redirected with > stops, the file is left empty. Without this check, copies of course
+    # material would pass the guard.
+    file = tmp_path / "prints.txt"
+    file.write_text(text, encoding="utf-8")
+    with pytest.raises(guard.GuardError, match="has no values"):
+        guard.load_fingerprints(file, key=KEY)
+
+
+def test_a_fingerprint_file_that_says_it_has_no_values_is_accepted(tmp_path: Path) -> None:
+    file = tmp_path / "prints.txt"
+    file.write_text("# No fingerprints in this test.\n", encoding="utf-8")
+    assert guard.load_fingerprints(file, key=None) == guard.NO_FINGERPRINTS
+    with pytest.raises(guard.GuardError, match="has no values"):
+        guard.load_fingerprints(file, key=None, values_expected=True)
+
+
+def test_an_empty_fingerprint_file_stops_the_check_of_a_fork_pull_request(repo: Path, tmp_path: Path) -> None:
+    # A pull request from a fork has no key, so the fingerprints are skipped. An emptied file is still an error.
+    prints = tmp_path / "prints.txt"
+    prints.write_text("", encoding="utf-8")
+    base = git(repo, "rev-parse", "HEAD").strip()
+    commit(repo, "a.txt", b"a\n")
+    event = tmp_path / "event.json"
+    pr = {"base": {"sha": base, "repo": {"full_name": "org/franca"}}, "head": {"repo": {"full_name": "someone/franca"}}}
+    event.write_text(json.dumps({"pull_request": pr}))
+    env = {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": str(event)}
+    result = run_guard(repo, "--ci", "--fingerprints", str(prints), env=env)
+    assert result.returncode == 2
+    assert "has no values" in result.stderr
+
+
+def test_the_fingerprint_file_of_this_repository_has_values() -> None:
+    lines = guard.DEFAULT_FINGERPRINTS.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == guard.FINGERPRINT_HEADER
+    assert [line for line in lines if not line.startswith("#")]
 
 
 def test_fingerprints_without_a_key_stop_the_guard(tmp_path: Path) -> None:
