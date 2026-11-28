@@ -50,7 +50,8 @@ line-length = 140
 target-version = "py314"
 src = ["src", "tests"]
 # The installer runs with the python3 of Debian 13 (3.13) in the Franca WSL system, and imports the updater's code.
-per-file-target-version = { "../installer/linux/*.py" = "py313", "../infra/updater/franca_updater.py" = "py313" }
+# The content guard runs in Git hooks with the python3 of the computer, so it is kept to Python 3.13 syntax as well.
+per-file-target-version = { "../installer/linux/*.py" = "py313", "../infra/updater/franca_updater.py" = "py313", "../tools/content_guard.py" = "py313" }
 
 [tool.ruff.lint]
 # E/F/W: errors and pyflakes; I: import order; B: bugbear; S: security (bandit rules); UP: modern syntax.
