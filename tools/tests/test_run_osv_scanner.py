@@ -33,6 +33,13 @@ def load_tool() -> ModuleType:
 runner = load_tool()
 
 
+@pytest.fixture(autouse=True)
+def outside_the_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The tests run as on a developer's computer, also in the pipeline. The tests for the pipeline turn
+    GITHUB_ACTIONS back on."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+
 def fake_scanner(tmp_path: Path, exit_code: int = 0, errors: str = "") -> Path:
     """A made-up OSV-Scanner that writes its arguments to arguments.json, prints the errors on stderr and exits with
     the exit code."""
