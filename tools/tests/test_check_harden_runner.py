@@ -211,12 +211,8 @@ def test_an_exception_needs_a_reason(tmp_path: Path, monkeypatch: pytest.MonkeyP
     ]
 
 
-def test_the_exceptions_in_this_repository_are_the_two_google_jobs() -> None:
-    reason = "removed after the required check is swapped (N2)"
-    assert check_harden_runner.REUSABLE_WORKFLOW_EXCEPTIONS == {
-        ("osv-scanner.yml", "scan-pr"): reason,
-        ("osv-scanner.yml", "scan-main"): reason,
-    }
+def test_there_are_no_exceptions_in_this_repository() -> None:
+    assert check_harden_runner.REUSABLE_WORKFLOW_EXCEPTIONS == {}
 
 
 def test_a_harden_runner_step_that_is_not_the_first_step_is_reported(tmp_path: Path) -> None:

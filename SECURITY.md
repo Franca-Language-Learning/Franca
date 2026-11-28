@@ -12,7 +12,7 @@ Security fixes are made on the main branch and published as a new release. Older
 
 Please report a vulnerability privately through GitHub, and not in a public issue or pull request.
 
-1. Open the [form for a private report](https://github.com/Franca-Language-Learning/Franca/security/advisories/new). You can also open it from the Security tab of the repository, with the **Report a vulnerability** button.
+1. Open the [form for a private report](https://github.com/Franca-Language-Learning/Franca/security/advisories/new). You can also open it from the **Security and quality** tab of the repository, with the **Report a vulnerability** button.
 2. Fill in the form and submit it.
 
 The report can be read by you and the owner. It is not public. You need a GitHub account to use the form. There is no other way to report at the moment.

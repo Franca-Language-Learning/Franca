@@ -14,9 +14,6 @@
 # fails when no packages are found in a lockfile named with --lockfile, because OSV-Scanner reads a lockfile in a
 # format that it does not know as empty. The --lockfile names are compared with the lockfiles in the repository in a
 # test.
-#
-# The jobs scan-pr and scan-main call Google's reusable workflow, which has no Harden-Runner step. They are removed in
-# a later pull request, after the owner has replaced "scan-pr / osv-scan" with "OSV scan" in the required checks.
 name: OSV-Scanner
 
 on:
@@ -94,22 +91,6 @@ jobs:
         uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: ${{ runner.temp }}/osv-results.sarif
-      # After the upload, so that the results are in the Security tab when the job fails because of a finding.
+      # After the upload, so that the results are in the Security and quality tab when the job fails because of a finding.
       - name: Check for high findings and malicious packages
         run: python3 -I tools/check_osv_results.py --lockfile pnpm-lock.yaml --lockfile uv.lock "$RUNNER_TEMP/osv-results.json"
-
-  scan-pr:
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@32d3cd482bdadfb38b186c0ad1b031902d55d932 # v2.7.1
-
-  scan-main:
-    if: github.event_name == 'push' || github.event_name == 'schedule'
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@32d3cd482bdadfb38b186c0ad1b031902d55d932 # v2.7.1
