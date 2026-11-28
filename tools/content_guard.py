@@ -16,10 +16,11 @@ with -I, so PYTHONPATH, the user's site folder and files in the current folder a
 
 Fingerprints of the private repository are HMAC-SHA-256 values made with a key that is kept out of this
 repository (see docs/repository-split.md). They are made from the files in the Git index of franca-content, apart
-from the files listed in NOT_FINGERPRINTED and NOT_FINGERPRINTED_NAMES. Values that also match a file or a line in
-origin/main of a checkout of this repository are left out, and their paths are printed. A course file whose text is
-in a public file outside the fixture pack stops the refresh. To refresh them, run git fetch in the checkout of this
-repository, then run in the top folder of a checkout of franca-content:
+from the files listed in NOT_FINGERPRINTED and NOT_FINGERPRINTED_NAMES. The values of a file in TOOLING_PATHS that
+also match a file or a line in origin/main of a checkout of this repository are left out, and their paths are
+printed. So is one line of another file that is also in the fixture pack. The refresh stops when any other file of
+franca-content has text in origin/main. To refresh them, run git fetch in the checkout of this repository, then run
+in the top folder of a checkout of franca-content:
   python3 -I <franca>/tools/content_guard.py --fingerprint . --public <franca> --output <franca>/tools/content-fingerprints.txt
 """
 
@@ -63,7 +64,21 @@ GITLINK_MODE = "160000"
 SYMLINK_MODE = "120000"
 FILE_MODES = {"100644", "100755"}
 LFS_POINTER = b"version https://git-lfs"  # the first bytes of a Git LFS pointer file
-DEFAULT_PUBLIC_REF = "origin/main"
+# The layout of a Git LFS pointer file, from the Git LFS specification. A text file that only starts with LFS_POINTER
+# is not a pointer.
+LFS_POINTER_FORMAT = re.compile(
+    rb"\Aversion https://git-lfs\.github\.com/spec/v1\n"
+    rb"(?:ext-[0-9]-[a-z0-9]+ sha256:[0-9a-f]{64}\n)*"
+    rb"oid sha256:[0-9a-f]{64}\nsize [0-9]+\n\Z"
+)
+LFS_POINTER_MAX_BYTES = 1024  # pointer files are about 130 bytes
+# The full name of the ref, because Git finds a local branch or tag called origin/main before the remote-tracking ref.
+DEFAULT_PUBLIC_REF = "refs/remotes/origin/main"
+# Files of franca-content that may have text that is also in franca, as paths from the top of its checkout. A path that
+# ends in a slash is a folder with everything under it. Course text can be in any folder of franca-content, so the
+# refresh stops when any other file has text in the public commit (one line in the fixture pack is accepted). This
+# list is about the matches only. The files in it are fingerprinted like the others.
+TOOLING_PATHS = (".github/", "pyproject.toml", "uv.lock", "renovate.json", ".gitattributes", ".gitignore")
 # Variables with the path of a repository or an index for Git. Git hooks have them, and with them, the files of
 # another repository would be read in place of franca-content or the public checkout.
 GIT_REPOSITORY_VARIABLES = frozenset(
@@ -341,6 +356,14 @@ def is_fingerprinted(path: str) -> bool:
     return not any(path.startswith(rule) if rule.endswith("/") else path == rule for rule in NOT_FINGERPRINTED)
 
 
+def is_tooling(path: str) -> bool:
+    """Whether a file of the private repository is in TOOLING_PATHS, by its path from the root of the checkout.
+
+    Names are compared with their case, so .GITHUB/ is not .github/.
+    """
+    return any(path.startswith(rule) if rule.endswith("/") else path == rule for rule in TOOLING_PATHS)
+
+
 def _git_env() -> dict[str, str]:
     """The environment for Git commands in another checkout, without the variables in GIT_REPOSITORY_VARIABLES."""
     return {name: value for name, value in os.environ.items() if name not in GIT_REPOSITORY_VARIABLES}
@@ -444,41 +467,71 @@ def fingerprint_sources(root: Path, key: bytes) -> dict[str, set[str]]:
     return _values_of(root, [e for e in entries if e.mode != SYMLINK_MODE and is_fingerprinted(e.path)], key, private=True)
 
 
-def _values_of(root: Path, entries: list[Entry], key: bytes, *, private: bool) -> dict[str, set[str]]:
-    """The fingerprint values of these files of a checkout, each with the paths it came from.
+def _file_contents(root: Path, entries: list[Entry], *, private: bool) -> Iterator[tuple[list[str], bytes]]:
+    """The content of these files of a checkout, each with the paths that have it.
 
-    For the private repository, the lines of text files are fingerprinted. For the public checkout, the lines of all
-    files are fingerprinted, because the guard compares the lines of all files.
+    For the private repository, the content of a file stored with Git LFS is read with git lfs smudge. Stops with a
+    GuardError, after the other files are read, when the content of a Git LFS file cannot be read.
     """
     paths_by_sha: dict[str, list[str]] = {}
     for entry in entries:
         paths_by_sha.setdefault(entry.sha, []).append(entry.path)
-    prints = Fingerprints(key=key, values=frozenset())
-    sources: dict[str, set[str]] = {}
     unreadable: list[str] = []
     for sha, blob in _checkout_blobs(root, paths_by_sha):
         data: bytes | None = blob
-        if private and blob.startswith(LFS_POINTER):
+        if private and len(blob) < LFS_POINTER_MAX_BYTES and LFS_POINTER_FORMAT.match(blob):
             data = _lfs_content(root, paths_by_sha[sha][0], blob)
         if data is None:
             unreadable += paths_by_sha[sha]
-            continue
-        file_values = {prints.of_file(data)} if len(data) >= MIN_FILE_BYTES else set()
-        line_values: set[str] | None = None
-        for path in paths_by_sha[sha]:
-            values = set(file_values)
-            if not private or Path(path).suffix.lower() in TEXT_EXTENSIONS_FOR_FINGERPRINTS:
-                if line_values is None:
-                    line_values = {v for line in data.decode("utf-8", errors="replace").splitlines() for v in prints.of_line(line)}
-                values |= line_values
-            for value in values:
-                sources.setdefault(value, set()).add(path)
+        else:
+            yield paths_by_sha[sha], data
     if unreadable:
         raise GuardError(
             f"These files are stored with Git LFS and their content cannot be read: {', '.join(sorted(unreadable))}."
             " Install Git LFS and run  git lfs pull  in the checkout, then run the command again."
         )
+
+
+def _has_line_values(path: str, *, private: bool) -> bool:
+    """Whether the lines of a file are fingerprinted. For the public checkout, the lines of all files are, because the
+    guard compares the lines of all files."""
+    return not private or Path(path).suffix.lower() in TEXT_EXTENSIONS_FOR_FINGERPRINTS
+
+
+def _values_of(root: Path, entries: list[Entry], key: bytes, *, private: bool) -> dict[str, set[str]]:
+    """The fingerprint values of these files of a checkout, each with the paths it came from."""
+    prints = Fingerprints(key=key, values=frozenset())
+    sources: dict[str, set[str]] = {}
+    for paths, data in _file_contents(root, entries, private=private):
+        file_values = {prints.of_file(data)} if len(data) >= MIN_FILE_BYTES else set()
+        line_values: set[str] | None = None
+        for path in paths:
+            values = set(file_values)
+            if _has_line_values(path, private=private):
+                if line_values is None:
+                    line_values = {v for line in data.decode("utf-8", errors="replace").splitlines() for v in prints.of_line(line)}
+                values |= line_values
+            for value in values:
+                sources.setdefault(value, set()).add(path)
     return sources
+
+
+def matched_lines(root: Path, values_by_path: dict[str, set[str]], key: bytes) -> dict[str, int]:
+    """For files of a checkout of the private repository, the number of their lines that have one of the given values.
+
+    A line has more than one value (see _line_variants), so the values are counted by the line they came from. Lines
+    with the same values are counted once.
+    """
+    entries = [e for e in checkout_entries(root, "Run the command in a checkout of franca-content.") if e.path in values_by_path]
+    prints = Fingerprints(key=key, values=frozenset())
+    counts: dict[str, int] = {}
+    for paths, data in _file_contents(root, entries, private=True):
+        lines = data.decode("utf-8", errors="replace").splitlines()
+        for path in paths:
+            wanted = values_by_path[path]
+            matched = {frozenset(hit) for line in lines if (hit := prints.of_line(line) & wanted)}
+            counts[path] = len(matched) if _has_line_values(path, private=True) else 0
+    return counts
 
 
 def make_fingerprints(content_root: Path, key: bytes) -> set[str]:
@@ -492,19 +545,25 @@ def make_fingerprints(content_root: Path, key: bytes) -> set[str]:
 
 @dataclass(frozen=True)
 class LeftOut:
-    """Values that were left out because a private file and a public file have the same text."""
+    """A public file and a private file that have the same text, and the values they have in common."""
 
     public_path: str
     private_path: str
-    whole_file: bool
+    values: frozenset[str]
 
     @property
-    def leaked(self) -> bool:
-        """A course file of the private repository has text in a public file outside the fixture pack."""
-        return _private_path(self.private_path.lower()) and not self.in_fixture_pack
+    def whole_file(self) -> bool:
+        """Whether the two files are the same."""
+        return any(value.startswith("file:") for value in self.values)
+
+    @property
+    def tooling(self) -> bool:
+        """Whether the private file is in TOOLING_PATHS, so that the match is expected."""
+        return is_tooling(self.private_path)
 
     @property
     def in_fixture_pack(self) -> bool:
+        """Whether the public file is in the made-up pack for the tests."""
         return self.public_path.lower().startswith(PUBLIC_PREFIXES)
 
     def describe(self) -> str:
@@ -514,14 +573,31 @@ class LeftOut:
 
 
 def leave_out_public(private: dict[str, set[str]], public: dict[str, set[str]]) -> tuple[set[str], list[LeftOut]]:
-    """The private values that are not public, and the public and private paths of the values that were left out."""
+    """The private values that are not public, and the pairs of a public and a private path that have values in common."""
     shared = private.keys() & public.keys()
-    whole_file: dict[tuple[str, str], bool] = {}
+    pairs: dict[tuple[str, str], set[str]] = {}
     for value in shared:
         for pair in ((public_path, private_path) for public_path in public[value] for private_path in private[value]):
-            whole_file[pair] = whole_file.get(pair, False) or value.startswith("file:")
-    left_out = [LeftOut(public_path, private_path, copy) for (public_path, private_path), copy in sorted(whole_file.items())]
+            pairs.setdefault(pair, set()).add(value)
+    left_out = [LeftOut(public_path, private_path, frozenset(values)) for (public_path, private_path), values in sorted(pairs.items())]
     return set(private.keys() - shared), left_out
+
+
+def unexpected_matches(content_root: Path, left_out: list[LeftOut], key: bytes) -> list[LeftOut]:
+    """The pairs for which the refresh stops, because the private file is not in TOOLING_PATHS and may be course material.
+
+    A file may have one line in the fixture pack, such as the schema comment at the top of a lesson. Its pairs with the
+    fixture pack are in the result when the fixture pack has the whole file, or more than one of its lines. The lines
+    are counted over all the files of the fixture pack. The other pairs of a file outside TOOLING_PATHS are in the
+    result in any case.
+    """
+    fixture_values: dict[str, set[str]] = {}
+    for item in left_out:
+        if not item.tooling and item.in_fixture_pack:
+            fixture_values.setdefault(item.private_path, set()).update(item.values)
+    lines = matched_lines(content_root, fixture_values, key) if fixture_values else {}
+    too_much = {path for path, values in fixture_values.items() if lines.get(path, 0) != 1 or any(v.startswith("file:") for v in values)}
+    return [item for item in left_out if not item.tooling and (not item.in_fixture_pack or item.private_path in too_much)]
 
 
 def write_fingerprint_file(path: Path, values: set[str]) -> None:
@@ -538,8 +614,9 @@ def write_fingerprint_file(path: Path, values: set[str]) -> None:
         raise
 
 
-def _ref_entries(root: Path, ref: str) -> list[Entry]:
-    """The files in a commit of a checkout, such as origin/main. Stops with a GuardError when the commit cannot be read."""
+def _ref_entries(root: Path, ref: str) -> tuple[str, list[Entry]]:
+    """The commit that a ref of a checkout points to, and the files in it. Stops with a GuardError when the commit
+    cannot be read."""
     try:
         commit = _decode(_git("-C", str(root), "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", env=_git_env())).strip()
     except GuardError:
@@ -552,7 +629,21 @@ def _ref_entries(root: Path, ref: str) -> list[Entry]:
             meta, _, path = record.partition(b"\t")
             mode, _type, sha = meta.split()
             entries.append(Entry(path=_decode(path), mode=mode.decode(), sha=sha.decode()))
-    return entries
+    return commit, entries
+
+
+def _remote_description(root: Path, ref: str) -> str:
+    """A sentence with the URL of the remote of a remote-tracking ref (origin for other refs), without a user name or
+    password in it."""
+    parts = ref.split("/")
+    name = parts[2] if len(parts) > 3 and parts[:2] == ["refs", "remotes"] else "origin"
+    try:
+        url = _decode(_git("-C", str(root), "config", "--get", f"remote.{name}.url", env=_git_env())).strip()
+    except GuardError:  # git config exits with 1 when the setting is missing
+        url = ""
+    if not url:
+        return f"Remote {name} has no URL."
+    return f"The URL of remote {name} is {re.sub(r'(?<=://)[^/@]*@', '', url)}."
 
 
 def _first_commits(root: Path, *revisions: str) -> set[str]:
@@ -564,15 +655,20 @@ def public_sources(public_root: Path, public_ref: str, content_root: Path, key: 
     """The fingerprint values of the files in a commit of a checkout of franca, such as origin/main.
 
     The commit is read and not the index, so a copy that is staged or committed only in the local checkout does not
-    count as public. Before any file is read, the checkout is checked: it has to be a checkout of franca, with
-    tools/content_guard.py and no file that the guard keeps out of franca, and its first commit must not be one of
-    the first commits of franca-content. So a clone or worktree of franca-content is refused.
+    count as public. The commit and the URL of the remote are printed. Before any file is read, the checkout is
+    checked: it has to be a checkout of franca, with tools/content_guard.py and no file that the guard keeps out of
+    franca, and it must have no first commit in common with HEAD of franca-content. So a clone or worktree of
+    franca-content is refused.
     """
     hint = "Give --public the path of a checkout of franca."
     _check_top_folder(public_root, hint)
     if _same_checkout(content_root, public_root):
         raise GuardError(f"{public_root} is the same checkout as {content_root}. {hint}")
-    entries = _ref_entries(public_root, public_ref)
+    commit, entries = _ref_entries(public_root, public_ref)
+    print(
+        f"The public values are read from {public_ref} in {public_root}, commit {commit}. {_remote_description(public_root, public_ref)}",
+        file=sys.stderr,
+    )
     paths = [entry.path for entry in entries]
     if "tools/content_guard.py" not in paths:
         raise GuardError(f"{public_root} is not a checkout of franca: tools/content_guard.py is not in {public_ref}. {hint}")
@@ -582,8 +678,11 @@ def public_sources(public_root: Path, public_ref: str, content_root: Path, key: 
             f"{public_ref} in {public_root} has files that the guard keeps out of franca: {', '.join(kept_out[:10])}"
             f"{f' and {len(kept_out) - 10} more' if len(kept_out) > 10 else ''}. It may be a copy of franca-content. {hint}"
         )
-    if _first_commits(public_root, public_ref) & _first_commits(content_root, "--all"):
-        raise GuardError(f"{public_root} has the same first commit as {content_root}, so it is a copy of franca-content. {hint}")
+    if _first_commits(public_root, commit) & _first_commits(content_root, "HEAD"):
+        raise GuardError(
+            f"{public_root} and {content_root} have a first commit in common. Either --public is a copy of franca-content,"
+            f" or franca-content has history from franca. {hint}"
+        )
     return _values_of(public_root, [e for e in entries if e.mode != SYMLINK_MODE], key, private=False)
 
 
@@ -593,26 +692,32 @@ def refresh_fingerprints(
     """Makes the fingerprints of franca-content, leaves out the values that are in the public commit, and writes them
     to output, or to standard output when output is None. Messages for the person running it go to standard error.
 
-    Stops without writing when a course file of franca-content has text in a public file outside the fixture pack.
+    Stops without writing when a file of franca-content that may be course material has text in the public commit
+    (see unexpected_matches).
     """
     public = public_sources(public_root, public_ref, content_root, key) if public_root is not None else {}
     private = fingerprint_sources(content_root, key)
     if not private:
         raise GuardError("No files were fingerprinted. Check that the folder is a full checkout of franca-content.")
     values, left_out = leave_out_public(private, public)
-    leaks = [item for item in left_out if item.leaked]
-    if leaks:
+    if stops := unexpected_matches(content_root, left_out, key):
         raise GuardError(
-            f"These public files in {public_ref} have text from course files of franca-content (public path first):\n"
-            + "".join(f"  {item.describe()}\n" for item in leaks)
-            + "Tell the product owner before the fingerprints are refreshed. The fingerprint file was not changed."
+            f"The refresh was stopped, because files in {public_ref} have text from files of franca-content that may be"
+            " course material (public path first):\n"
+            + "".join(f"  {item.describe()}\n" for item in stops)
+            + "Only the files in TOOLING_PATHS in tools/content_guard.py may have text that is also in franca. A file of"
+            " franca-content may have one line in packs/fixture/, but not more than one line and not the whole file."
+            " Tell the product owner before the fingerprints are refreshed. The fingerprint file was not changed."
         )
     for heading, items in (
-        ("files of franca, such as tooling", [item for item in left_out if not item.in_fixture_pack]),
-        ("the fixture pack", [item for item in left_out if item.in_fixture_pack]),
+        (
+            "the same file or line is in franca and in tooling files of franca-content, listed in TOOLING_PATHS",
+            [item for item in left_out if item.tooling],
+        ),
+        ("one line of a file of franca-content is in the fixture pack", [item for item in left_out if not item.tooling]),
     ):
         if items:
-            print(f"Values left out because the same file or line is in {heading} (public path first):", file=sys.stderr)
+            print(f"Values left out because {heading} (public path first):", file=sys.stderr)
             for item in items:
                 print(f"  {item.describe()}", file=sys.stderr)
     if not values:

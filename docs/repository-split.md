@@ -40,14 +40,14 @@ When the fingerprint file has values, the guard needs the key and stops with a m
 
 To refresh the fingerprints:
 
-1. In the checkout of `franca`, run `git fetch`, so that `origin/main` is the latest public commit. The public values are read from that commit, not from the files in the checkout.
+1. In the checkout of `franca`, run `git fetch`, so that `origin/main` is the latest public commit. The public values are read from that commit (`refs/remotes/origin/main`), not from the files in the checkout.
 2. In the top folder of a checkout of `franca-content`, run:
 
    ```sh
    python3 -I ../franca/tools/content_guard.py --fingerprint . --public ../franca --output ../franca/tools/content-fingerprints.txt
    ```
 
-3. Read the list of paths that is printed for the left-out values (see below). The command stops if a course file of `franca-content` has text in a public file outside `packs/fixture/`. Tell the product owner if that happens.
+3. Read what is printed. The first line has the public commit and the URL of its remote. Check that the URL is the address of `Franca-Language-Learning/Franca`. Then there is a list of paths for the left-out values (see below). If the command stops because a file of `franca-content` has text in the public commit, tell the product owner.
 4. Read the list of files that are not added to Git or have changes that are not staged, if there is one. Their new text is not fingerprinted. Add and commit them in `franca-content`, then run the command again.
 5. Commit `tools/content-fingerprints.txt` in `franca` on a new branch and open a pull request.
 
@@ -72,17 +72,37 @@ The keys in `secrets/` are not content. The planner settings in `course-config.y
 
 ### Values that are also in this repository
 
-Some files in `franca-content` have lines that are the same as lines in this repository, such as the line in a workflow that pins `actions/checkout`. If their values were in the fingerprint file, the guard would refuse the files of this repository that have the same line. With `--public`, the values of the files in `origin/main` of the given checkout of `franca` are made as well, and the private values that match one of them are left out. Another commit can be given with `--public-ref`. Each pair of paths is then printed, the public file first and then the private file it matches, with no text from the files. A pair is shown as "is a copy of" when the whole file is the same, and as "has lines that are in" otherwise. The pairs with the fixture pack are printed in a group of their own.
+Some files in `franca-content` have lines that are the same as lines in this repository, such as the line in a workflow that pins `actions/checkout`. If their values were in the fingerprint file, the guard would refuse the files of this repository that have the same line. With `--public`, the values of the files in `origin/main` of the given checkout of `franca` are made as well. Another commit can be given with `--public-ref`. The commit and the URL of the remote are printed, so that a fork or an old commit can be noticed.
 
-A match between a course file and a public file is handled differently. If a file under `packs/`, `harvest/` or another private folder of `franca-content` has text in a public file outside `packs/fixture/`, the command stops and the fingerprint file is not changed. The text may already be public, and leaving its values out would let more copies through.
+A private value that is the same as a public value is left out in two cases:
+
+- the private file is on the list of tooling files below
+- the public file is in `packs/fixture/` and has one line of the private file, such as the schema comment at the top of a lesson
+
+Otherwise the command stops with the pairs of paths, and the fingerprint file is not changed. So the command stops when the fixture pack has a whole file of `franca-content`, or more than one line of it. The lines are counted over all the files in `packs/fixture/`. Course text can be in any folder of `franca-content`, such as `tests/` or `notes/`. For that reason the command also stops when a file that is not on the list has text in a public file outside `packs/fixture/`. The text may already be public. If its values were left out, the guard would not refuse more copies.
+
+The tooling files are listed in `TOOLING_PATHS` in `tools/content_guard.py`. A path that ends in `/` is a folder with everything in it. The paths are matched from the top of the checkout of `franca-content`, with their case.
+
+| Path in `franca-content` | What it is |
+|---|---|
+| `.github/` | Workflows and other GitHub files |
+| `pyproject.toml` | The Python project file at the top |
+| `uv.lock` | The locked Python packages |
+| `renovate.json` | Renovate's file at the top |
+| `.gitattributes` | Git's file for line endings and Git LFS |
+| `.gitignore` | The files that Git ignores |
+
+The files on the list are fingerprinted like the other files. The list is about the matches only. If a refresh stops because of a file of `franca-content` that has no course text, ask for a review before the file is added to the list.
+
+For the left-out values, each pair of paths is printed, the public file first and then the private file, with no text from the files. A pair is shown as "is a copy of" when the whole file is the same, and as "has lines that are in" otherwise. The pairs with tooling files and the pairs with the fixture pack are printed in two groups.
 
 Before any public file is read, the checkout given with `--public` is checked, and the command stops in these cases:
 
 - the commit has no `tools/content_guard.py`
 - the commit has files that the guard keeps out of `franca`
-- the first commit of its history is also a first commit of `franca-content`
+- the commit and `HEAD` of `franca-content` have a first commit in common
 
-So a clone or a worktree of `franca-content` is refused.
+So a clone or a worktree of `franca-content` is refused. Because of the last check, the command also stops if `franca-content` has history from `franca`, for example because it was made from a copy of `franca`.
 
 The command stops if `--public` is missing. With `--skip-public`, all the values are kept. That option is meant for tests, because without `--public`, files of this repository are likely to be refused by the guard.
 
