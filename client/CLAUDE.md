@@ -9,3 +9,4 @@
 - Interface text follows the writing rules in the language-standard skill and is reviewed by an independent agent.
 - The API types in `src/api/schema.d.ts` are generated from `contracts/openapi.yaml` by `scripts/update-contract` (or `pnpm --filter @franca/client generate:api`). The pipeline fails if they are out of date.
 - Tests use a mock API made from the contract (`src/mocks/`). A request that no handler answers fails the test. To give a specific answer in a test, use `server.use(http.get(...))`.
+- Property tests are written with fast-check (`fc.assert` in Vitest's `it`). Give `size: "max"` with a `maxLength`, because fast-check generates small values by default. Scorecard's Fuzzing check counts a `.ts` file that imports fast-check.

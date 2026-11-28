@@ -10,12 +10,19 @@ const BASE_URL = globalThis.location?.origin ?? "http://localhost";
 const ANTI_FORGERY_COOKIES = ["__Host-franca_csrf", "franca_csrf"];
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-function readCookie(name: string): string | undefined {
-  const cookies = typeof document === "undefined" ? "" : document.cookie;
+/** The value of the cookie with this name in a list of cookies in the form of document.cookie. A value can contain
+ * "=", so the name ends at the first "=". If two cookies have the name, the first one in the list is used. */
+export function cookieValue(cookies: string, name: string): string | undefined {
+  const prefix = `${name}=`;
   return cookies
     .split(";")
-    .map((part) => part.trim().split("="))
-    .find(([key]) => key === name)?.[1];
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(prefix))
+    ?.slice(prefix.length);
+}
+
+function readCookie(name: string): string | undefined {
+  return cookieValue(typeof document === "undefined" ? "" : document.cookie, name);
 }
 
 function antiForgeryToken(): string | undefined {

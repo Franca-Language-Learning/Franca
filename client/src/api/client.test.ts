@@ -1,7 +1,14 @@
+import fc from "fast-check";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import { server } from "../mocks/server";
-import { ApiError, getHealth, getMe, isNotSignedIn, needsRecentSignIn, signOut } from "./client";
+import { ApiError, cookieValue, getHealth, getMe, isNotSignedIn, needsRecentSignIn, signOut } from "./client";
+
+// A cookie value is made of the characters that RFC 6265 allows (cookie-octet), which include "=".
+const cookieOctet = fc.constantFrom(
+  ...Array.from({ length: 0x7e - 0x21 + 1 }, (_, i) => String.fromCharCode(0x21 + i)).filter((character) => !'",;\\'.includes(character)),
+);
+const cookieValueText = fc.string({ unit: cookieOctet, minLength: 1, maxLength: 40, size: "max" });
 
 describe("API client", () => {
   it("reads the health response as described in the contract", async () => {
@@ -72,5 +79,55 @@ describe("anti-forgery token", () => {
     await signOut();
     expect(asked).toEqual(["health", "sign-out fresh-token"]);
     document.cookie = "franca_csrf=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
+  });
+
+  it("sends the cookie's value unchanged for any value made of RFC 6265 cookie-octet characters", async () => {
+    const otherCookies = fc.uniqueArray(fc.tuple(fc.stringMatching(/^x[a-z0-9]{0,7}$/), cookieValueText), {
+      maxLength: 3,
+      size: "max",
+      selector: ([name]) => name,
+    });
+    await fc.assert(
+      fc.asyncProperty(cookieValueText, otherCookies, async (token, others) => {
+        const names = ["franca_csrf", ...others.map(([name]) => name)];
+        for (const [name, value] of others) document.cookie = `${name}=${value}; path=/`;
+        document.cookie = `franca_csrf=${token}; path=/`;
+        let sent: string | null = null;
+        server.use(
+          http.post("*/api/v1/auth/sign-out", ({ request }) => {
+            sent = request.headers.get("X-CSRF-Token");
+            return new HttpResponse(null, { status: 204 });
+          }),
+        );
+        try {
+          await signOut();
+          expect(sent).toBe(token);
+        } finally {
+          for (const name of names) document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+        }
+      }),
+      { numRuns: 50 },
+    );
+  });
+});
+
+describe("cookieValue", () => {
+  // The other names include names that start or end with franca_csrf, such as franca_csrf_old.
+  const otherName = fc.oneof(
+    fc.stringMatching(/^x[a-z0-9]{0,7}$/),
+    fc.stringMatching(/^franca_csrf[a-z0-9_]{1,4}$/),
+    fc.stringMatching(/^[a-z]{1,4}franca_csrf$/),
+  );
+  const otherCookies = fc.uniqueArray(fc.tuple(otherName, cookieValueText), { maxLength: 4, size: "max", selector: ([name]) => name });
+
+  it("finds the value of the named cookie at any place in the list", () => {
+    fc.assert(
+      fc.property(cookieValueText, otherCookies, fc.nat(), (token, others, place) => {
+        const cookies = others.map(([name, value]) => `${name}=${value}`);
+        cookies.splice(place % (cookies.length + 1), 0, `franca_csrf=${token}`);
+        expect(cookieValue(cookies.join("; "), "franca_csrf")).toBe(token);
+      }),
+      { numRuns: 200 },
+    );
   });
 });
